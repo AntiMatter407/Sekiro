@@ -14,7 +14,9 @@
 /Tools/*/runner2/
 /Tools/__pycache__/
 /Tools/**/__pycache__/
-/Extracted/
+/Extracted/*
+!/Extracted/README.md
+!/Extracted/Sekiro_common_anims.json
 /Content/
 /.idea/
 /.vs/

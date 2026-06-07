@@ -61,3 +61,17 @@
 
 @.claude/docs/context-management.md
 所有对话、解释、建议必须使用**简体中文**。
+
+## 项目记忆（跨机器同步）
+
+@.claude/memory/MEMORY.md
+
+记忆文件位于 `.claude/memory/`，在仓库内版本控制，可在不同机器间同步。
+内容包括：项目概览、结构定义、用户偏好、当前工作进度。
+
+## 当前实施计划
+
+@Docs/implementation-plan.md
+
+SekiroImport C++ 插件重构计划（JSON→UE资产直接导入，对齐Blender管线）。
+进度：Phase 0+1+2 完成，Phase 3/4/5 待实施。

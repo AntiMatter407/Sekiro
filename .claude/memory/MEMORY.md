@@ -1,0 +1,4 @@
+- [项目概览](project_overview.md) — 只狼→UE5.2迁移项目的核心目标和范围
+- [项目结构](project_structure.md) — 目录结构定义与C++/Lua职责划分
+- [偏好设置](feedback_preferences.md) — 中文输出、active文件位置
+- [动画管线](animation_pipeline.md) — TAE→DAE转换管线、坐标系转换、当前状态
