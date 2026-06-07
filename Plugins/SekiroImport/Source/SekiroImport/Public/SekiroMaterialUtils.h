@@ -5,7 +5,7 @@
 #include "SekiroMaterialUtils.generated.h"
 
 UCLASS()
-class SEKIROTOOLS_API USekiroMaterialUtils : public UBlueprintFunctionLibrary
+class SEKIROIMPORT_API USekiroMaterialUtils : public UBlueprintFunctionLibrary
 {
     GENERATED_BODY()
 

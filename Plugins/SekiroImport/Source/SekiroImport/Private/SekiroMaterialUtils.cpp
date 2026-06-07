@@ -5,11 +5,14 @@
 #include "MaterialEditingLibrary.h"
 #include "Engine/Texture.h"
 
+// Forward declaration — defined below
+static UMaterialExpression* SafeGetMaterialPropertyInputNode(UMaterial* Material, EMaterialProperty Property);
+
 bool USekiroMaterialUtils::ConnectAlphaToOpacity(UMaterial* Material)
 {
     if (!Material) return false;
 
-    UMaterialExpression* Expr = UMaterialEditingLibrary::GetMaterialPropertyInputNode(
+    UMaterialExpression* Expr = SafeGetMaterialPropertyInputNode(
         Material, EMaterialProperty::MP_BaseColor);
     UMaterialExpressionTextureSample* TexSample = Cast<UMaterialExpressionTextureSample>(Expr);
     if (!TexSample) return false;
@@ -57,6 +60,16 @@ static EMaterialSamplerType SamplerForProperty(EMaterialProperty Prop)
     }
 }
 
+// Safe accessor: bypasses UE5.2 bug where GetMaterialPropertyInputNode
+// dereferences nullptr for unrecognized EMaterialProperty values (e.g. MP_SpecularColor).
+static UMaterialExpression* SafeGetMaterialPropertyInputNode(UMaterial* Material, EMaterialProperty Property)
+{
+    FExpressionInput* ExpressionInput = Material->GetExpressionInputForProperty(Property);
+    if (!ExpressionInput)
+        return nullptr;
+    return ExpressionInput->Expression;
+}
+
 void USekiroMaterialUtils::FixTextureSamplersInMaterial(UMaterial* Material)
 {
     if (!Material) return;
@@ -66,7 +79,7 @@ void USekiroMaterialUtils::FixTextureSamplersInMaterial(UMaterial* Material)
         { MP_BaseColor,         SAMPLERTYPE_Color },
         { MP_Normal,            SAMPLERTYPE_Normal },
         { MP_Metallic,          SAMPLERTYPE_LinearGrayscale },
-        { MP_SpecularColor,     SAMPLERTYPE_LinearGrayscale },
+        { MP_Specular,          SAMPLERTYPE_LinearGrayscale },
         { MP_Roughness,         SAMPLERTYPE_LinearGrayscale },
         { MP_AmbientOcclusion,  SAMPLERTYPE_LinearGrayscale },
         { MP_EmissiveColor,     SAMPLERTYPE_Color },
@@ -75,7 +88,7 @@ void USekiroMaterialUtils::FixTextureSamplersInMaterial(UMaterial* Material)
 
     for (const auto& P : Props)
     {
-        UMaterialExpression* Expr = UMaterialEditingLibrary::GetMaterialPropertyInputNode(Material, P.Prop);
+        UMaterialExpression* Expr = SafeGetMaterialPropertyInputNode(Material, P.Prop);
         UMaterialExpressionTextureSample* TexSample = Cast<UMaterialExpressionTextureSample>(Expr);
         if (TexSample && TexSample->Texture)
             TexSample->SamplerType = P.Sampler;

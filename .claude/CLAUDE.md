@@ -60,3 +60,4 @@
 ## 上下文管理
 
 @.claude/docs/context-management.md
+所有对话、解释、建议必须使用**简体中文**。

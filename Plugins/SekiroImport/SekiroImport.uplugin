@@ -1,0 +1,16 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "1.0",
+    "FriendlyName": "Sekiro Import",
+    "Description": "直接从JSON文件导入Sekiro模型、骨骼、动画和材质资产，绕过Blender→FBX中间步骤",
+    "Category": "Editor",
+    "CreatedBy": "Sekiro Team",
+    "Modules": [
+        {
+            "Name": "SekiroImport",
+            "Type": "Editor",
+            "LoadingPhase": "Default"
+        }
+    ]
+}

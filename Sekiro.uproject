@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "5.2",
+	"EngineAssociation": "{B9E1B801-4D57-6DB4-1AB1-E1BFCDC9081D}",
 	"Category": "",
 	"Description": "",
 	"Modules": [
@@ -11,10 +11,6 @@
 		}
 	],
 	"Plugins": [
-		{
-			"Name": "SekiroTools",
-			"Enabled": true
-		},
 		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,
