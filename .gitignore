@@ -5,6 +5,7 @@
 /TempBuild/
 /**/Binaries/
 /**/Intermediate/
+/**/obj/
 /Plugins/*/Binaries/
 /Plugins/*/Intermediate/
 /Tools/**/bin/
@@ -27,4 +28,3 @@
 *.pyc
 *.dcx
 /Platforms/
-/.vsconfig
