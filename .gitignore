@@ -7,11 +7,14 @@
 /**/Intermediate/
 /Plugins/*/Binaries/
 /Plugins/*/Intermediate/
-/Tools/*/bin/
-/Tools/*/obj/
-/Tools/*/publish/
-/Tools/*/runner/
-/Tools/*/runner2/
+/Tools/**/bin/
+/Tools/**/obj/
+/Tools/**/publish/
+/Tools/**/publish2/
+/Tools/**/runner/
+/Tools/**/runner2/
+/Tools/FlverToFbx/Sekiro_model_*.json
+/Tools/FlverToFbx/*.pyc
 /Tools/__pycache__/
 /Tools/**/__pycache__/
 /Extracted/*
@@ -23,3 +26,5 @@
 /.vsconfig/
 *.pyc
 *.dcx
+/Platforms/
+/.vsconfig
