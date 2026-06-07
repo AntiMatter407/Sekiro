@@ -24,7 +24,7 @@
 /Content/
 /.idea/
 /.vs/
-/.vsconfig/
+/.vsconfig
 *.pyc
 *.dcx
 /Platforms/
