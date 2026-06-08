@@ -5,6 +5,20 @@
 /// Sekiro使用米(m), UE使用厘米(cm)
 inline constexpr float SekiroToUEScale = 100.0f;
 
+/// Cloth关键词检测（对齐 Blender 管线 CLOTH_KEYWORDS, common_blender.py:393）
+inline bool SekiroContainsClothKeyword(const FString& Str)
+{
+    static const TCHAR* Keywords[] = {
+        TEXT("cloth"), TEXT("fray"), TEXT("tiling"), TEXT("bandage"),
+        TEXT("muffler"), TEXT("rope"), TEXT("skirt"), TEXT("cape"), TEXT("hair")
+    };
+    for (const TCHAR* Kw : Keywords)
+    {
+        if (Str.Contains(Kw)) return true;
+    }
+    return false;
+}
+
 /// 中间骨骼数据（已转换到UE坐标系）
 struct FSekiroImportBone
 {

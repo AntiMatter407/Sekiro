@@ -27,20 +27,6 @@ static FQuat YUpQuatIdentity(const FQuat& Q)
 // MTD → BlendMode 推导（对齐 Blender 管线 CLOTH_KEYWORDS 逻辑）
 // ============================================================================
 
-/// 检查字符串是否包含Cloth关键词（对齐 Blender 管线 CLOTH_KEYWORDS）
-static bool ContainsClothKeyword(const FString& Str)
-{
-    static const TCHAR* Keywords[] = {
-        TEXT("cloth"), TEXT("fray"), TEXT("tiling"), TEXT("bandage"),
-        TEXT("muffler"), TEXT("rope"), TEXT("skirt"), TEXT("cape"), TEXT("hair")
-    };
-    for (const TCHAR* Kw : Keywords)
-    {
-        if (Str.Contains(Kw)) return true;
-    }
-    return false;
-}
-
 /// 从MTD路径推导BlendMode（当MTDInfo.BlendMode为空时的回退）
 static FString DeriveBlendModeFromMTD(const FString& MatName, const FString& MTDPath)
 {
@@ -49,7 +35,7 @@ static FString DeriveBlendModeFromMTD(const FString& MatName, const FString& MTD
     const FString MtdBase = FPaths::GetBaseFilename(MTDPath).ToLower();
     const FString MatLower = MatName.ToLower();
 
-    const bool bIsCloth = ContainsClothKeyword(MatLower) || MtdBase.Contains(TEXT("cloth"));
+    const bool bIsCloth = SekiroContainsClothKeyword(MatLower) || MtdBase.Contains(TEXT("cloth"));
     const bool bIsDecal = MtdBase.Contains(TEXT("decal"));
 
     if (bIsCloth)  return TEXT("Masked");

@@ -22,7 +22,7 @@ import sys
 
 HOST = "127.0.0.1"
 PORT = 9877
-TIMEOUT = 300.0
+TIMEOUT = 600.0
 
 
 async def send_request(method, params=None, msg_id="1"):
@@ -183,7 +183,7 @@ async def compile_cpp():
     import os
     import time
 
-    ubt = r"D:\Program Files\Epic Games\UE_5.2\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
+    ubt = r"F:\UnrealEngine-5.2\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
     project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
     log_file = os.path.expandvars(r"%LOCALAPPDATA%\UnrealBuildTool\Log.txt")
 
@@ -417,7 +417,7 @@ async def cmd_editor_start(args):
     import subprocess
     import os
 
-    ue_exe = r"D:\Program Files\Epic Games\UE_5.2\Engine\Binaries\Win64\UnrealEditor.exe"
+    ue_exe = r"F:\UnrealEngine-5.2\Engine\Binaries\Win64\UnrealEditor.exe"
     project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
 
     if not os.path.exists(ue_exe):

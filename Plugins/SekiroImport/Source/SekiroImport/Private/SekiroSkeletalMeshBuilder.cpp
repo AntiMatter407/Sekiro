@@ -15,10 +15,11 @@
 #include "Misc/Paths.h"
 
 // ============================================================================
-// ExportRoot方向转换：RotZ(180°) * RotX(90°)
+// ExportRoot方向转换：RotX(90°) * RotZ(180°)
+// 匹配Blender层级 ExportRoot(RotZ 180°) → Armature(RotX 90°)
 // 与SekiroSkeletonBuilder.cpp一致，用于将Y-up数据转换到UE5空间
 // ============================================================================
-static const FQuat MeshOrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
+static const FQuat MeshOrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
 
 // ============================================================================
 // 骨骼名映射
@@ -304,6 +305,12 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             Face.WedgeIndex[2] = CurWedge + 2;
             Face.MatIndex = Section.MaterialIndex;
             Face.SmoothingGroups = 0;
+
+            // 逐角点法线（对齐绕序反转: Wedge0=Tri.X, Wedge1=Tri.Z, Wedge2=Tri.Y）
+            Face.TangentZ[0] = FVector3f(MeshOrientQ.RotateVector(FVector(V0.Normal)).GetSafeNormal());
+            Face.TangentZ[1] = FVector3f(MeshOrientQ.RotateVector(FVector(V2.Normal)).GetSafeNormal());
+            Face.TangentZ[2] = FVector3f(MeshOrientQ.RotateVector(FVector(V1.Normal)).GetSafeNormal());
+
             ImportData.Faces.Add(Face);
         }
 
@@ -369,11 +376,14 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
     }
 
     // 保存LOD0原始导入数据（首次导入，非Reimport，无需合并旧数据）
+    // 注意：必须先在BulkData中设置版本号，再调用SaveLODImportedData，
+    // 因为SaveLODImportedData会立即读取版本号设置bIsBuildDataAvailable标志。
+    // 版本号必须>=SkeletalMeshBuildRefactor，否则Build()会跳过LOD构建。
     SkeletalMesh->InvalidateDeriveDataCacheGUID();
-    SkeletalMesh->SaveLODImportedData(0, ImportData);
     SkeletalMesh->SetLODImportedDataVersions(0,
         ESkeletalMeshGeoImportVersions::LatestVersion,
         ESkeletalMeshSkinningImportVersions::LatestVersion);
+    SkeletalMesh->SaveLODImportedData(0, ImportData);
 
     // 调用USkeletalMesh::Build()构建LOD源数据和渲染数据
     SkeletalMesh->Build();
@@ -385,6 +395,20 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
     // Build()不会调用CalculateInvRefMatrices(), 必须在保存前显式计算,
     // 否则序列化的RefBasesInvMatrix为空, 缩略图渲染时check()失败
     SkeletalMesh->CalculateInvRefMatrices();
+
+    // Build()不会自动设置ImportedBounds, 必须从顶点数据显式计算,
+    // 否则包围盒为(0,0,0)会导致视口相机朝向异常、渲染剔除、缩略图空白
+    {
+        FBox BoundingBox(ForceInit);
+        for (const FVector3f& Point : ImportData.Points)
+        {
+            BoundingBox += FVector(Point);
+        }
+        SkeletalMesh->SetImportedBounds(FBoxSphereBounds(BoundingBox));
+    }
+
+    // 通知编辑器资产已修改（触发视口刷新、缩略图更新等）
+    SkeletalMesh->PostEditChange();
 
     // ============== LOD构建后验证 ==============
     {
@@ -401,6 +425,29 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
                 const FSkelMeshSection& Sec = LOD0.Sections[s];
                 UE_LOG(LogSekiroImport, Warning, TEXT("  LOD.Sec[%d]: Material=%d, Verts=%d, Tris=%d, BoneMap=%d, bDisabled=%d"),
                     s, Sec.MaterialIndex, Sec.NumVertices, Sec.NumTriangles, Sec.BoneMap.Num(), Sec.bDisabled);
+                // 打印BoneMap前5个条目：section-local index → global bone name
+                for (int32 bm = 0; bm < FMath::Min(5, Sec.BoneMap.Num()); ++bm)
+                {
+                    int32 GlobalBoneIdx = Sec.BoneMap[bm];
+                    FName BoneName = (GlobalBoneIdx >= 0 && GlobalBoneIdx < RefSkel.GetNum())
+                        ? RefSkel.GetBoneName(GlobalBoneIdx) : FName(TEXT("INVALID"));
+                    UE_LOG(LogSekiroImport, Warning, TEXT("    BoneMap[%d]=%d (%s)"), bm, GlobalBoneIdx, *BoneName.ToString());
+                }
+                if (Sec.BoneMap.Num() > 5) UE_LOG(LogSekiroImport, Warning, TEXT("    ... +%d more"), Sec.BoneMap.Num() - 5);
+            }
+
+            // 检查每个Section的BoneMap是否包含有效索引
+            for (int32 s = 0; s < LOD0.Sections.Num(); ++s)
+            {
+                const FSkelMeshSection& Sec = LOD0.Sections[s];
+                for (int32 bm = 0; bm < Sec.BoneMap.Num(); ++bm)
+                {
+                    if (Sec.BoneMap[bm] < 0 || Sec.BoneMap[bm] >= RefSkel.GetNum())
+                    {
+                        UE_LOG(LogSekiroImport, Error, TEXT("  [BONEMAP ERROR] Sec[%d].BoneMap[%d]=%d 超出骨架范围 [0,%d)!"),
+                            s, bm, Sec.BoneMap[bm], RefSkel.GetNum());
+                    }
+                }
             }
 
             // LOD诊断: 基本健全性检查

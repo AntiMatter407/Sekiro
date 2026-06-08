@@ -80,8 +80,8 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
         BoneNameToAnimIdx.Add(Clip.BoneNames[i], i);
     }
 
-    // OrientQ = RotZ(180°) * RotX(90°)，与SkeletonBuilder一致
-    static const FQuat OrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
+    // OrientQ = RotX(90°) * RotY(180°)，与SkeletonBuilder一致
+    static const FQuat OrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
 
     // 逐骨骼分配键值数组
     TArray<TArray<FVector>> AllPosKeys;
@@ -128,7 +128,7 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
             FTransform WorldHKX;
             if (ParentIdx >= 0 && ParentIdx < SkeletonBoneCount)
             {
-                // 从ParentWorldUE逆推ParentWorldHKX
+                // 从ParentWorldUE逆推ParentWorldHKX (左乘逆，对应Pass2左乘)
                 const FQuat OrientQInv = OrientQ.Inverse();
                 FTransform ParentWorldHKX;
                 ParentWorldHKX.SetTranslation(OrientQInv.RotateVector(WorldUE[ParentIdx].GetTranslation()));
@@ -141,7 +141,7 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
                 WorldHKX = LocalHKX;
             }
 
-            // Pass 2: OrientQ → World UE
+            // Pass 2: OrientQ → World UE (左乘，对齐SkeletonBuilder)
             WorldUE[BoneIdx].SetTranslation(OrientQ.RotateVector(WorldHKX.GetTranslation()));
             WorldUE[BoneIdx].SetRotation(OrientQ * WorldHKX.GetRotation());
             WorldUE[BoneIdx].SetScale3D(WorldHKX.GetScale3D());

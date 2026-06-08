@@ -32,9 +32,11 @@ public:
     /// @param MeshBoneNames 所有网格BoneIdxToName中引用的骨骼名集合（用于判断零位骨骼是否被使用）
     static void AppendModelOnlyBones(TArray<FSekiroImportBone>& AnimBones, const TArray<FSekiroImportBone>& ModelBones, const TSet<FName>& MeshBoneNames);
 
-    /// 施加ExportRoot旋转 (RotZ(180)*RotX(90)) 到所有WorldTransform后重新推导Local
-    /// 对应Blender管线 ExportRoot(Z=180) + Armature(X=90) 父级变换
-    /// @param Bones 骨骼数组（含World变换，Y-up cm空间，将被修改为UE5空间）
+    /// 施加ExportRoot旋转 (RotZ(180)*RotX(90)) + 插入ExportRoot虚拟根骨骼
+    /// 对应Blender管线 ExportRoot(Z=180) + Armature(X=90) 父级变换。
+    /// 插入ExportRoot避免将OrientQ烘焙到Master的LocalQuat导致渲染异常。
+    /// @param Bones 骨骼数组（含World变换，Y-up cm空间，将插入ExportRoot并转换为UE5空间）
+    /// @post Bones[0] = ExportRoot, Bones.Num() = 输入 + 1
     static void ApplyExportRootOrientation(TArray<FSekiroImportBone>& Bones);
 
 private:

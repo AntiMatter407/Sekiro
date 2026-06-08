@@ -20,7 +20,7 @@
 #include "UObject/SavePackage.h"
 
 // ExportRoot方向转换，与SekiroSkeletonBuilder.cpp一致
-static const FQuat DiagOrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
+static const FQuat DiagOrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
 
 // ============================================================================
 // 工具：写诊断文件
@@ -162,7 +162,7 @@ static void DumpVertSkinning(const FSekiroModelData& ModelData, const FReference
 
 static void DumpAnimTracks(const FSekiroAnimationClip& Clip, const FReferenceSkeleton& RefSkel, const FString& Dir)
 {
-    static const FQuat OrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
+    static const FQuat OrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
 
     // 构建骨骼名→动画骨骼索引查找表
     TMap<FName, int32> BoneNameToAnimIdx;
@@ -210,7 +210,7 @@ static void DumpAnimTracks(const FSekiroAnimationClip& Clip, const FReferenceSke
                 WorldHKX = LocalHKX;
             }
 
-            // Pass 2: OrientQ → World UE
+            // Pass 2: OrientQ → World UE (左乘，对齐SkeletonBuilder)
             WorldUE[BoneIdx].SetTranslation(OrientQ.RotateVector(WorldHKX.GetTranslation()));
             WorldUE[BoneIdx].SetRotation(OrientQ * WorldHKX.GetRotation());
             WorldUE[BoneIdx].SetScale3D(WorldHKX.GetScale3D());
