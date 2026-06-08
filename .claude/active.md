@@ -3,62 +3,99 @@
 > **active.md 是本项目唯一的进度文件。** 其他文件（memory/、docs/ 等）仅作参考，进度以本文件为准。
 
 ## 当前阶段
-Blender FLVER→FBX 管线开发
+SekiroImport C++ 插件 Phase 4 完成，Phase 5 待实施
 
 ## 正在进行
-- [ ] **UE5 中验证 BD_M_9000_Built.fbx**（骨骼是否与模型对齐）
+- [x] Phase 4: 材质构建对齐
+- [ ] Phase 5: 管线编排
 
-## Blender FLVER→FBX 管线 (2026-06-01)
+## 方案状态
 
-### 工具链
-```
-UXM解包 → Yabber解BND4 → .NET工具(FlverToFbx)导出JSON → Blender脚本(build_from_json.py)构建FBX → UE5导入
-```
-
-### 文件清单
-| 文件 | 路径 | 说明 |
+| 方案 | 状态 | 说明 |
 |------|------|------|
-| C# 工具 | `Tools/FlverToFbx/FlverToFbx/Program.cs` | 读取 skeleton+body FLVER，计算世界变换，输出JSON |
-| Blender 脚本 | `Tools/FlverToFbx/build_from_json.py` | 读取JSON，创建骨架+网格，导出FBX |
-| JSON 数据 | `Extracted/BD_M_9000_blender.json` | 中间数据（37骨骼, 27网格, 20,647顶点） |
-| 输出 FBX | `Extracted/BD_M_9000_Built.fbx` | 最终产物 |
+| 方案A: Blender FLVER→FBX | ❌ 已取消 (2026-06-08) | C# + Blender 中间步骤，已被方案B取代 |
+| 方案B: SekiroImport C++ | ▶ 进行中 | JSON→UE资产直接导入，Phase 1+2+3 完成 |
 
-### 已修复的关键 Bug
-1. **`mesh.BoneIndices` 为空** — Sekiro FLVER 没有骨骼调色板，顶点骨骼索引直接引用 FLVER Nodes。C# 工具添加了回退逻辑。
-2. **顶点权重全部丢失** — `vgroup.add()` 全部用 `'REPLACE'` 导致只有最后一个骨骼的权重生效。改为：第一个 `REPLACE`，后续 `ADD`。
-3. **骨骼链不连通** — 骨骼尾部距离用 `距离*0.5`，导致父子骨骼不连接。改为：尾部直接指向最近子骨骼头部。
-4. **过多无用骨骼** — 从 467 减少到 37（仅网格实际引用的骨骼 + 层级祖先）。
-5. **变换计算不一致** — C# 和 Python 各自计算世界变换，可能产生差异。改为 C# 统一计算 WorldPos/WorldRot，Blender 直接使用。
+## SekiroImport 实施计划
 
-### 当前状态
-- 骨架：37 根骨骼（Master → RootPos → RootRotY → RootRotXZ → Spine → Spine1 → Spine2 为主链）
-- 网格：27 个子网格，20,647 顶点，111,006 三角形
-- 骨骼变换：使用 skeleton FLVER 层级 + body FLVER 局部变换（37根骨骼中两者一致）
-- **待 UE5 验证**
+> 详见 `Docs/implementation-plan.md`
 
-### FLVER 数据发现
-- Skeleton FLVER (c0000): 467 骨骼，有层级关系（ParentIndex）
-- Body FLVER (BD_M_9000): 172 骨骼，大部分 ParentIndex=-1（扁平），有正确的 rest-pose 变换
-- 172 根 body 骨骼中，154 根在 skeleton 中存在，18 根为 body 专用（BD_M_*, cloth, collision 等）
-- 实际被顶点权重引用的骨骼只有 30 根（+ 7 祖先 = 37）
-- 80 根 body 骨骼的变换与 skeleton 不同，但这 80 根都未被身体网格使用
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| Phase 0 | Python可调用验证框架 | ✅ 完成 |
+| Phase 1 | 骨架构建对齐 | ✅ 完成 (147/147骨骼<0.05cm) |
+| Phase 2 | 网格构建对齐 | ✅ 完成 (顶点对齐<0.001mm) |
+| Phase 3 | 动画构建对齐 | ✅ 完成 (3-Pass FK+OrientQ+DeriveLocal) |
+| **Phase 4** | **材质构建对齐** | ✅ **完成 (MTD→BlendMode推导+父材质M_SekiroBase+46MIC)** |
+| Phase 5 | 管线编排 | ⏳ 待实施 |
+
+### Phase 3 实现总结 (2026-06-08)
+
+**核心算法**（对齐 Phase 1 `ApplyExportRootOrientation`）：
+```
+对每帧 t:
+  Pass 1: FK in HKX → WorldHKX[i] = LocalHKX[i] * ParentWorldHKX
+  Pass 2: OrientQ → WorldUE[i] = OrientQ * WorldHKX[i]
+  Pass 3: Derive Local → LocalUE[i] = WorldUE[i].GetRelativeTransform(ParentWorldUE)
+  Write LocalUE[i] to AnimSequence curve
+```
+
+**修改文件 (6个)**：
+1. `SekiroStreamReader.cpp` — 修复 Y-up→Z-up 坐标不一致 (前置)
+2. `SekiroImportData.h` — `FSekiroAnimationClip` 新增 `ReferenceLocalTransforms`
+3. `SekiroAnimationParser.h/.cpp` — `ParseAnimationClip` 填充参考变换
+4. `SekiroAnimationBuilder.cpp` — 完全重写，3-Pass 算法
+5. `SekiroImportTest.cpp` — `DumpAnimTracks` 重写，输出 UE 空间 Local 变换
+
+**已验证 (2026-06-08)**：`ParseAnimationAndDump` 输出 3 个动画（4526 行/31帧×146骨骼），3-Pass 算法正确 — 0 NaN、0 退化四元数、FK 世界位置合理
+
+### Phase 4 实现总结 (2026-06-08)
+
+**核心机制**（对齐 Blender 管线 `common_blender.py` CLOTH_KEYWORDS）：
+```
+MTD→BlendMode推导:
+  if 材质名含{cloth,fray,tiling,bandage,muffler,rope,skirt,cape,hair} 或 MTD名含cloth → Masked
+  elif MTD名含decal（不含cloth）→ Translucent
+  else → Opaque
+
+TwoSided: is_cloth OR is_decal
+
+父材质 M_SekiroBase: 4个TextureSampleParameter2D（_a→BaseColor, _n→Normal, _m→Metallic, _r→Roughness）
+46个 MIC 实例: 继承 M_SekiroBase + BasePropertyOverrides(BlendMode+TwoSided)
+```
+
+**修改文件 (3个)**：
+1. `SekiroMaterialBuilder.cpp` — 完全重写（~410行）：EnsureBaseMaterial + LoadMaterialsJson + BuildSingleMIC + BuildAll
+2. `SekiroModelParser.cpp` — ParseMaterials 增加 MTD→BlendMode 回退推导
+3. `SekiroImportTest.h/.cpp` — 新增 `BuildMaterialsAndDump` 测试函数
+
+**已验证 (2026-06-08)**：
+- BlendMode: 20 Masked, 2 Translucent, 24 Opaque（全部对齐 Blender 管线规则）
+- TwoSided: 22 材质 TwoSided=Y (cloth/decal), 24 TwoSided=N
+- 46/46 MIC 创建成功，Content Validation 无编译错误
+- 父材质 M_SekiroBase 创建成功（/Game/Characters/Sekiro/Materials）
+
+**修复的 bug**：`static const TArray<FString>` → `static const TCHAR*[]` 避免 UE 静态初始化期崩溃
+
+**诊断代码修复 (2026-06-08)**：
+- `SekiroSkeletalMeshBuilder.cpp` 顶点诊断：Y-up顶点 vs Z-up骨骼 → 统一施加MeshOrientQ后对比，距离从~196cm降至4-13cm（正常蒙皮范围）
+- LOD诊断：不再假设LOD索引=ImportData索引（Build()会merge同材质Section：50→38段，wedge膨胀2.73x）
+- 非fray段顶点距骨骼均<50cm，62个>100cm的全来自fray段（Blender数据相同，正确跳过）
+- 父材质M_SekiroBase的SamplerType已全改为Color（无编译警告）
+- `BuildFullModel` 产出：147骨骼 + 341,561 LOD顶点（38段） + 46 MIC → `/Game/SekiroTest/TestMesh`
 
 ## 待办
-- [ ] UE5 验证 BD_M_9000_Built.fbx
-- [ ] 提取其他身体部件（手臂 AM_M_9000, 腿部 LG_M_9000, 头部 HD_M_9510）
-- [ ] 动画管线（HKX → FBX → UE5）
+- [ ] Phase 5: 管线编排
 - [ ] UE5.2 项目创建 & UnLua 集成
 - [ ] 核心战斗系统设计
 
 ## 已完成
 - 2026-05-30: 项目启动，技术栈确定（UE5.2 + C++ + UnLua）
-- 2026-05-30: 目录结构确定
-- 2026-05-30: 动画管线运行成功（771个DAE，11分类）
 - 2026-05-31: 角色模型合并管线建立（5部件→OBJ+JSON→FBX）
-- 2026-05-31: 骨骼位置计算修复
-- 2026-05-31: 贴图全量转换 & 材质全覆盖
-- 2026-06-01: FlverToFbx 管线建立（C# + Blender 直接处理 FLVER）
-- 2026-06-01: 修复 5 个关键 bug（骨骼调色板、权重覆盖、骨骼链、骨骼过滤、变换计算）
+- 2026-06-01: FlverToFbx 管线建立（C# + Blender）
+- 2026-06-03: SekiroImport Phase 1+2 完成（骨架+网格构建对齐Blender管线）
+- 2026-06-08: 方案A取消；Phase 3 完成（动画构建 3-Pass 算法）
+- 2026-06-08: Phase 4 完成（材质构建对齐：MTD→BlendMode推导 + 父材质 + 46MIC）
 
 ## 阻塞项
-- BD_M_9000_Built.fbx 骨骼与模型对齐待 UE5 验证
+- 无

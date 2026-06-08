@@ -132,7 +132,7 @@ void FSekiroAnimationParser::ParseFrameBoneTransforms(const TArray<TSharedPtr<FJ
 // 单个动画片段解析
 // ============================================================================
 
-bool FSekiroAnimationParser::ParseAnimationClip(const TSharedPtr<FJsonObject>& AnimObj, int32 BoneCount, FSekiroAnimationClip& OutClip)
+bool FSekiroAnimationParser::ParseAnimationClip(const TSharedPtr<FJsonObject>& AnimObj, int32 BoneCount, const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip)
 {
     OutClip.Name = AnimObj->GetStringField(TEXT("Name"));
     OutClip.Duration = (float)AnimObj->GetNumberField(TEXT("Duration"));
@@ -144,6 +144,13 @@ bool FSekiroAnimationParser::ParseAnimationClip(const TSharedPtr<FJsonObject>& A
     for (int32 b = 0; b < BoneCount; ++b)
     {
         OutClip.BoneNames.Add(FName());  // 将由调用者填充（或从ParseResult.Bones获取）
+    }
+
+    // 复制参考姿态Local变换到Clip（Y-up HKX空间, cm缩放）
+    OutClip.ReferenceLocalTransforms.Reserve(FMath::Min(BoneCount, SkeletonBones.Num()));
+    for (int32 b = 0; b < FMath::Min(BoneCount, SkeletonBones.Num()); ++b)
+    {
+        OutClip.ReferenceLocalTransforms.Add(FTransform(SkeletonBones[b].LocalRotation, SkeletonBones[b].LocalTranslation, SkeletonBones[b].LocalScale));
     }
 
     // 解析帧数据
@@ -291,7 +298,7 @@ bool FSekiroAnimationParser::ParseFromFile(const FString& FilePath, FParseResult
         }
 
         FSekiroAnimationClip Clip;
-        if (ParseAnimationClip(*AnimObjPtr, BoneCount, Clip))
+        if (ParseAnimationClip(*AnimObjPtr, BoneCount, OutResult.Bones, Clip))
         {
             // 填充BoneNames（从骨架数据复制）
             Clip.BoneNames.Reset(BoneCount);

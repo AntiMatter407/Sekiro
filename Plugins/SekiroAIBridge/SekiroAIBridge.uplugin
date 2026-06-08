@@ -1,0 +1,22 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "FriendlyName": "Sekiro AI Bridge",
+    "Description": "TCP JSON-RPC 2.0接口，允许外部AI操控虚幻引擎编辑器（创建Blueprint、调用Python、编译代码、操作资产等）",
+    "Category": "Editor",
+    "CreatedBy": "Sekiro Team",
+    "Modules": [
+        {
+            "Name": "SekiroAIBridge",
+            "Type": "Editor",
+            "LoadingPhase": "Default"
+        }
+    ],
+    "Plugins": [
+        {
+            "Name": "PythonScriptPlugin",
+            "Enabled": true
+        }
+    ]
+}

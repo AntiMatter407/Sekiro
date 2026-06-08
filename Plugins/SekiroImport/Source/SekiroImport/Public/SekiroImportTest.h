@@ -34,4 +34,18 @@ public:
 	/// 全流程：解析→构建→输出所有诊断文件（不做资产保存）
 	UFUNCTION(BlueprintCallable, Category="SekiroImport|Test")
 	static bool RunFullPipelineAndDump(const FString& ModelJson, const FString& AnimJson, const FString& OutputDir);
+
+	/// Phase 4: 构建材质并输出诊断（验证 BlendMode + TwoSided 推导 + 材质实例创建）
+	UFUNCTION(BlueprintCallable, Category="SekiroImport|Test")
+	static bool BuildMaterialsAndDump(const FString& ModelJson, const FString& OutputDir);
+
+	/// 完整导入：骨架+网格+材质，保存到Content Browser供肉眼验证
+	UFUNCTION(BlueprintCallable, Category="SekiroImport|Test")
+	static bool BuildFullModel(const FString& ModelJson, const FString& AnimJson);
+
+	/// Phase 5: 管线编排 — 导入骨架+网格+纹理+材质+动画（全流程）
+	UFUNCTION(BlueprintCallable, Category="SekiroImport|Pipeline")
+	static bool RunImportPipeline(const FString& ModelJson, const FString& AnimJson,
+		const FString& OutputBasePath = TEXT("/Game/Characters/Sekiro"),
+		bool bImportAnimations = false);
 };

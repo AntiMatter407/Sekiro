@@ -274,13 +274,13 @@ bool FSekiroStreamReader::ParseTransformObj(FVector& OutPos, FQuat& OutRot, FVec
                 {
                     float X, Y, Z;
                     if (ParseFloatArray3(X, Y, Z))
-                        OutPos = FVector(X * 100.0f, Z * 100.0f, -Y * 100.0f); // Y-up→Z-up, m→cm
+                        OutPos = FVector(X * 100.0f, Y * 100.0f, Z * 100.0f); // m→cm, 保持Y-up
                 }
                 else if (FName[0] == 'R')
                 {
                     float X, Y, Z, W;
                     if (ParseFloatArray4(X, Y, Z, W))
-                        OutRot = FQuat(X, Z, -Y, W); // 四元数: xyzw → x, z, -y, w
+                        OutRot = FQuat(X, Y, Z, W); // 四元数不变, 保持Y-up
                 }
                 else if (FName[0] == 'S')
                 {
@@ -604,6 +604,11 @@ bool FSekiroStreamReader::ParseOneAnimation(const TArray<FSekiroImportBone>& Ske
     for (const FSekiroImportBone& B : SkeletonBones)
         OutClip.BoneNames.Add(B.Name);
 
+    // 复制参考姿态Local变换到Clip
+    OutClip.ReferenceLocalTransforms.Reserve(BoneCount);
+    for (const FSekiroImportBone& B : SkeletonBones)
+        OutClip.ReferenceLocalTransforms.Add(FTransform(B.LocalRotation, B.LocalTranslation, B.LocalScale));
+
     const TArray<TSharedPtr<FJsonValue>>* FramesArr = nullptr;
     if (!AnimObj->TryGetArrayField(TEXT("Frames"), FramesArr))
         return false;
@@ -636,11 +641,11 @@ bool FSekiroStreamReader::ParseOneAnimation(const TArray<FSekiroImportBone>& Ske
 
             const TArray<TSharedPtr<FJsonValue>>* P;
             if ((*XfObj)->TryGetArrayField(TEXT("P"), P) && P->Num() >= 3)
-                Pos = FVector((float)(*P)[0]->AsNumber() * 100.0f, (float)(*P)[2]->AsNumber() * 100.0f, -(float)(*P)[1]->AsNumber() * 100.0f);
+                Pos = FVector((float)(*P)[0]->AsNumber() * 100.0f, (float)(*P)[1]->AsNumber() * 100.0f, (float)(*P)[2]->AsNumber() * 100.0f); // m→cm, 保持Y-up
 
             const TArray<TSharedPtr<FJsonValue>>* R;
             if ((*XfObj)->TryGetArrayField(TEXT("R"), R) && R->Num() >= 4)
-                Rot = FQuat((float)(*R)[0]->AsNumber(), (float)(*R)[2]->AsNumber(), -(float)(*R)[1]->AsNumber(), (float)(*R)[3]->AsNumber());
+                Rot = FQuat((float)(*R)[0]->AsNumber(), (float)(*R)[1]->AsNumber(), (float)(*R)[2]->AsNumber(), (float)(*R)[3]->AsNumber()); // 四元数不变, 保持Y-up
 
             const TArray<TSharedPtr<FJsonValue>>* S;
             if ((*XfObj)->TryGetArrayField(TEXT("S"), S) && S->Num() >= 3)

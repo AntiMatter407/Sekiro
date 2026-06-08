@@ -28,16 +28,8 @@ struct FSekiroImportVertex
     uint16 BoneIndices[4] = { 0, 0, 0, 0 };
     float BoneWeights[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-    // 去除零权重的骨骼影响数（最多4个）
-    int32 GetNumInfluences() const
-    {
-        int32 Count = 0;
-        for (int32 i = 0; i < 4; ++i)
-        {
-            if (BoneWeights[i] > 0.0f) ++Count;
-        }
-        return Count;
-    }
+    // 骨骼影响数（固定4，零权重由循环内 Weight>0 检查过滤）
+    int32 GetNumInfluences() const { return 4; }
 };
 
 /// 网格体Section（一个材质槽对应一个Section）
@@ -78,5 +70,6 @@ struct FSekiroAnimationClip
     int32 FrameCount = 0;
     float SampleRate = 30.0f;
     TArray<FName> BoneNames;               // 按骨架骨骼索引顺序排列的骨骼名（146个）
-    TArray<TArray<FTransform>> FrameData;  // [FrameIndex][BoneIndex]
+    TArray<FTransform> ReferenceLocalTransforms; // 参考姿态Local变换 (Y-up HKX空间, cm缩放)
+    TArray<TArray<FTransform>> FrameData;  // [FrameIndex][BoneIndex] Y-up HKX空间, cm缩放
 };

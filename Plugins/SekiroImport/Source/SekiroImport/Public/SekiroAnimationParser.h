@@ -44,7 +44,11 @@ private:
         TArray<FSekiroImportBone>& OutBones);
 
     /// 解析单个动画片段
-    static bool ParseAnimationClip(const TSharedPtr<FJsonObject>& AnimObj, int32 BoneCount, FSekiroAnimationClip& OutClip);
+    /// @param AnimObj 动画JSON对象
+    /// @param BoneCount 骨骼数量
+    /// @param SkeletonBones 参考姿态骨骼（用于填充Clip的ReferenceLocalTransforms）
+    /// @param OutClip 输出的动画片段
+    static bool ParseAnimationClip(const TSharedPtr<FJsonObject>& AnimObj, int32 BoneCount, const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip);
 
     /// 解析单帧的骨骼变换数组
     static void ParseFrameBoneTransforms(const TArray<TSharedPtr<FJsonValue>>& BoneTransformArray, int32 ExpectedBoneCount, TArray<FTransform>& OutTransforms);

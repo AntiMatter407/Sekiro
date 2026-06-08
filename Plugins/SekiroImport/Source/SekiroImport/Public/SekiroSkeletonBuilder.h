@@ -29,7 +29,8 @@ public:
     /// 模型中有但动画中没有的骨骼（如オブジェクト002），需要加入骨架以供蒙皮引用
     /// @param AnimBones 动画骨骼列表（已合并ModelWorldTransform），追加到此数组
     /// @param ModelBones 模型JSON的全部骨骼（含WorldPos和ParentName）
-    static void AppendModelOnlyBones(TArray<FSekiroImportBone>& AnimBones, const TArray<FSekiroImportBone>& ModelBones);
+    /// @param MeshBoneNames 所有网格BoneIdxToName中引用的骨骼名集合（用于判断零位骨骼是否被使用）
+    static void AppendModelOnlyBones(TArray<FSekiroImportBone>& AnimBones, const TArray<FSekiroImportBone>& ModelBones, const TSet<FName>& MeshBoneNames);
 
     /// 施加ExportRoot旋转 (RotZ(180)*RotX(90)) 到所有WorldTransform后重新推导Local
     /// 对应Blender管线 ExportRoot(Z=180) + Armature(X=90) 父级变换

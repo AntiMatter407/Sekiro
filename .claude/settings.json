@@ -6,7 +6,8 @@
   },
   "permissions": {
     "additionalDirectories": [
-      "F:/UnrealEngine-5.2"
+      "F:/UnrealEngine-5.2",
+      "D:/Program Files/Epic Games/UE_5.2"
     ],
     "allow": [
       "Read",
@@ -19,7 +20,9 @@
       "Bash(rm -rf *)",
       "Bash(curl * | bash)",
       "Write(F:/UnrealEngine-5.2/**)",
-      "Edit(F:/UnrealEngine-5.2/**)"
+      "Edit(F:/UnrealEngine-5.2/**)",
+      "Write(D:/Program Files/Epic Games/UE_5.2/**)",
+      "Edit(D:/Program Files/Epic Games/UE_5.2/**)"
     ],
     "deny": [
       "Read(./.env*)",

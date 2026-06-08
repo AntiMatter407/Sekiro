@@ -23,6 +23,40 @@ static FQuat YUpQuatIdentity(const FQuat& Q)
     return Q; // Y-up四元数保持不变，旋转在Builder施加
 }
 
+// ============================================================================
+// MTD → BlendMode 推导（对齐 Blender 管线 CLOTH_KEYWORDS 逻辑）
+// ============================================================================
+
+/// 检查字符串是否包含Cloth关键词（对齐 Blender 管线 CLOTH_KEYWORDS）
+static bool ContainsClothKeyword(const FString& Str)
+{
+    static const TCHAR* Keywords[] = {
+        TEXT("cloth"), TEXT("fray"), TEXT("tiling"), TEXT("bandage"),
+        TEXT("muffler"), TEXT("rope"), TEXT("skirt"), TEXT("cape"), TEXT("hair")
+    };
+    for (const TCHAR* Kw : Keywords)
+    {
+        if (Str.Contains(Kw)) return true;
+    }
+    return false;
+}
+
+/// 从MTD路径推导BlendMode（当MTDInfo.BlendMode为空时的回退）
+static FString DeriveBlendModeFromMTD(const FString& MatName, const FString& MTDPath)
+{
+    if (MTDPath.IsEmpty()) return FString();
+
+    const FString MtdBase = FPaths::GetBaseFilename(MTDPath).ToLower();
+    const FString MatLower = MatName.ToLower();
+
+    const bool bIsCloth = ContainsClothKeyword(MatLower) || MtdBase.Contains(TEXT("cloth"));
+    const bool bIsDecal = MtdBase.Contains(TEXT("decal"));
+
+    if (bIsCloth)  return TEXT("Masked");
+    if (bIsDecal)  return TEXT("Translucent");
+    return TEXT("Opaque");
+}
+
 // 保持旧函数名兼容
 FVector FSekiroModelParser::SekiroToUnrealVector(const FVector& V) { return ScaleYUpVector(V); }
 FVector3f FSekiroModelParser::SekiroToUnrealVector(const FVector3f& V) { return ScaleYUpVector(V); }
@@ -209,6 +243,12 @@ void FSekiroModelParser::ParseMaterials(const TArray<TSharedPtr<FJsonValue>>& Ma
             const TSharedPtr<FJsonObject>& MTDInfo = *MTDInfoObjPtr;
             MTDInfo->TryGetStringField(TEXT("ShaderPath"), Mat.ShaderPath);
             MTDInfo->TryGetStringField(TEXT("BlendMode"), Mat.BlendMode);
+        }
+
+        // MTD→BlendMode 推导（当MTDInfo为空时的回退）
+        if (Mat.BlendMode.IsEmpty() && !Mat.MTDPath.IsEmpty())
+        {
+            Mat.BlendMode = DeriveBlendModeFromMTD(Mat.Name, Mat.MTDPath);
         }
 
         // AvailableTextures

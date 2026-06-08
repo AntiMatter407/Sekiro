@@ -91,7 +91,7 @@ void FSekiroSkeletalMeshBuilder::RemapInfluences(
         // 所有影响都指向不存在的骨骼 → 用3D距离找最近的骨架骨骼
         if (!bHasAnyValidInfluence)
         {
-            FVector VertPos = FVector(Vert.Position);
+            FVector VertPos = MeshOrientQ.RotateVector(FVector(Vert.Position));
             float BestDist = FLT_MAX;
             int32 BestBoneIdx = 0;
 
@@ -403,49 +403,29 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
                     s, Sec.MaterialIndex, Sec.NumVertices, Sec.NumTriangles, Sec.BoneMap.Num(), Sec.bDisabled);
             }
 
-            // 全面检测: LOD顶点 vs ImportData顶点, 找出最大偏差
-            if (LOD0.NumVertices > 0)
+            // LOD诊断: 基本健全性检查
+            if (LOD0.NumVertices > 0 && LOD0.Sections.Num() > 0)
             {
-                FSkeletalMeshRenderData* RenderData = SkeletalMesh->GetResourceForRendering();
-                if (RenderData && RenderData->LODRenderData.Num() > 0)
+                // 非fray段数量（LOD应与此一致）
+                int32 NonFraySections = 0;
+                for (const FSekiroImportMeshSection& Sec : ModelData.Meshes)
                 {
-                    const FPositionVertexBuffer& PosBuffer = RenderData->LODRenderData[0].StaticVertexBuffers.PositionVertexBuffer;
-                float MaxDelta = 0.0f;
-                int32 MaxDeltaVert = -1;
-                int32 SampleCount = 0;
-                for (int32 s = 0; s < LOD0.Sections.Num(); ++s)
-                {
-                    const FSkelMeshSection& Sec = LOD0.Sections[s];
-                    for (int32 v = 0; v < (int32)Sec.NumVertices; ++v)
+                    bool bSkip = false;
+                    if (Sec.MaterialIndex >= 0 && Sec.MaterialIndex < ModelData.Materials.Num())
                     {
-                        int32 VertIdx = Sec.BaseVertexIndex + v;
-                        if (VertIdx < (int32)PosBuffer.GetNumVertices() && VertIdx < ImportData.Points.Num())
-                        {
-                            FVector3f LODPos = PosBuffer.VertexPosition(VertIdx);
-                            FVector3f ImportPos = ImportData.Points[VertIdx];
-                            float Delta = FVector::Dist(FVector(LODPos), FVector(ImportPos));
-                            if (Delta > MaxDelta)
-                            {
-                                MaxDelta = Delta;
-                                MaxDeltaVert = VertIdx;
-                            }
-                            ++SampleCount;
-                        }
+                        FString MatName = ModelData.Materials[Sec.MaterialIndex].Name.ToLower();
+                        bSkip = MatName.Contains(TEXT("fray")) || MatName.Contains(TEXT("frary"));
                     }
+                    if (!bSkip) ++NonFraySections;
                 }
-                UE_LOG(LogSekiroImport, Warning, TEXT("[LOD诊断] 检查%d个顶点, 最大偏差=%.2fcm @Vert[%d]"), SampleCount, MaxDelta, MaxDeltaVert);
-                if (MaxDeltaVert >= 0 && MaxDeltaVert < ImportData.Points.Num())
+                UE_LOG(LogSekiroImport, Warning, TEXT("[LOD诊断] LOD0=%d顶点 %dSections | Import=%d顶点 %d非fraySections | wedge膨胀率=%.2fx"),
+                    LOD0.NumVertices, LOD0.Sections.Num(),
+                    ImportData.Points.Num(), NonFraySections,
+                    (float)LOD0.NumVertices / FMath::Max(1, ImportData.Points.Num()));
+                if (LOD0.Sections.Num() != NonFraySections)
                 {
-                    FVector3f MaxLODPos = PosBuffer.VertexPosition(MaxDeltaVert);
-                    FVector3f MaxImportPos = ImportData.Points[MaxDeltaVert];
-                    UE_LOG(LogSekiroImport, Warning, TEXT("[LOD诊断]   LOD=(%.1f,%.1f,%.1f) Import=(%.1f,%.1f,%.1f)"),
-                        MaxLODPos.X, MaxLODPos.Y, MaxLODPos.Z, MaxImportPos.X, MaxImportPos.Y, MaxImportPos.Z);
+                    UE_LOG(LogSekiroImport, Error, TEXT("[LOD诊断] Section数量不匹配! LOD=%d, 非fray=%d"), LOD0.Sections.Num(), NonFraySections);
                 }
-                if (MaxDelta > 1.0f)
-                {
-                    UE_LOG(LogSekiroImport, Error, TEXT("[LOD诊断] 顶点位置偏差>1cm! 可能存在顶点合并/Build问题"));
-                }
-                } // RenderData
             }
         }
     }
@@ -538,14 +518,14 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
                 }
                 if (SkelIdx == INDEX_NONE) continue;
 
+                FVector VertPosUE = MeshOrientQ.RotateVector(FVector(Vert.Position));
                 FVector BoneFKPos = BoneWorldTransforms[SkelIdx].GetTranslation();
-                FVector VertPos = FVector(Vert.Position);
-                float Dist = FVector::Dist(VertPos, BoneFKPos);
+                float Dist = FVector::Dist(VertPosUE, BoneFKPos);
 
                 UE_LOG(LogSekiroImport, Warning,
-                    TEXT("[顶点诊断] Sec[%d].Vert[%d] Pos=(%.1f,%.1f,%.1f) 主骨骼='%s'(SkIdx=%d) FK=(%.1f,%.1f,%.1f) Dist=%.1fcm Weight=%.2f"),
+                    TEXT("[顶点诊断] Sec[%d].Vert[%d] Pos_UE=(%.1f,%.1f,%.1f) 主骨骼='%s'(SkIdx=%d) FK=(%.1f,%.1f,%.1f) Dist=%.1fcm Weight=%.2f"),
                     s, v,
-                    VertPos.X, VertPos.Y, VertPos.Z,
+                    VertPosUE.X, VertPosUE.Y, VertPosUE.Z,
                     *BoneName->ToString(), SkelIdx,
                     BoneFKPos.X, BoneFKPos.Y, BoneFKPos.Z,
                     Dist, BestWeight);

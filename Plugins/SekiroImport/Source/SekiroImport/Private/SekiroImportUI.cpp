@@ -63,7 +63,7 @@ void SSekiroImportDialog::Construct(const FArguments& InArgs)
                 + SHorizontalBox::Slot().FillWidth(1).Padding(0, 0, 4, 0)
                 [
                     SAssignNew(ModelJsonPathBox, SEditableTextBox)
-                    .HintText(LOCTEXT("ModelJsonHint", "e.g. Extracted/Sekiro_model.json"))
+                    .HintText(LOCTEXT("ModelJsonHint", "e.g. Extracted/Sekiro_model_hkx.json"))
                 ]
                 + SHorizontalBox::Slot().AutoWidth()
                 [

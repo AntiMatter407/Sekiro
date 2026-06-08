@@ -16,6 +16,7 @@
 #include "ReferenceSkeleton.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetImportTask.h"
 #include "HAL/FileManager.h"
 
@@ -408,7 +409,13 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
                 if (FSekiroModelParser::ParseFromFile(Settings.ModelJsonPath, ModelForBones) && ModelForBones.Bones.Num() > 0)
                 {
                     FSekiroSkeletonBuilder::MergeModelWorldTransforms(SkeletonBones, ModelForBones.Bones);
-                    FSekiroSkeletonBuilder::AppendModelOnlyBones(SkeletonBones, ModelForBones.Bones);
+                    {
+                        TSet<FName> MeshBoneNames;
+                        for (const FSekiroImportMeshSection& Sec : ModelForBones.Meshes)
+                            for (const auto& Pair : Sec.BoneIdxToName)
+                                MeshBoneNames.Add(Pair.Value);
+                        FSekiroSkeletonBuilder::AppendModelOnlyBones(SkeletonBones, ModelForBones.Bones, MeshBoneNames);
+                    }
                     REPORT_PROGRESS(TEXT("S2: 动画%d骨骼 + 模型WorldPos合并 + %dModelOnly追加"), AnimParseResult.Bones.Num(), SkeletonBones.Num() - AnimParseResult.Bones.Num());
                 }
                 else

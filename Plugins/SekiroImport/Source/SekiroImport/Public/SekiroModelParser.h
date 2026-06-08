@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "SekiroImportData.h"
 
-/// 模型JSON解析器：读取Sekiro_model.json，输出FSekiroModelData
+/// 模型JSON解析器：读取Sekiro_model_hkx.json，输出FSekiroModelData
 class SEKIROIMPORT_API FSekiroModelParser
 {
 public:

@@ -321,7 +321,7 @@ USkeleton* FSekiroSkeletonBuilder::Build(const TArray<FSekiroImportBone>& Bones,
 // 追加Model-Only骨骼
 // ============================================================================
 
-void FSekiroSkeletonBuilder::AppendModelOnlyBones(TArray<FSekiroImportBone>& AnimBones, const TArray<FSekiroImportBone>& ModelBones)
+void FSekiroSkeletonBuilder::AppendModelOnlyBones(TArray<FSekiroImportBone>& AnimBones, const TArray<FSekiroImportBone>& ModelBones, const TSet<FName>& MeshBoneNames)
 {
     // 构建动画骨骼名快速查找集
     TSet<FName> AnimBoneNames;
@@ -333,7 +333,16 @@ void FSekiroSkeletonBuilder::AppendModelOnlyBones(TArray<FSekiroImportBone>& Ani
     for (const FSekiroImportBone& B : ModelBones)
     {
         if (!AnimBoneNames.Contains(B.Name))
+        {
+            // 跳过未被任何网格引用的孤立零位骨骼（如HD_L/R，WorldPos=(0,0,0)且无父骨骼）
+            // 被网格实际使用的零位骨骼（如オブジェクト002）必须保留，否则蒙皮缺失
+            if (B.WorldTranslation.IsNearlyZero() && B.ParentName.IsNone() && !MeshBoneNames.Contains(B.Name))
+            {
+                UE_LOG(LogSekiroImport, Log, TEXT("AppendModelOnlyBones: 跳过孤立零位骨骼 '%s'（未被网格引用）"), *B.Name.ToString());
+                continue;
+            }
             ModelOnlyBones.Add(B);
+        }
     }
 
     if (ModelOnlyBones.Num() == 0)
