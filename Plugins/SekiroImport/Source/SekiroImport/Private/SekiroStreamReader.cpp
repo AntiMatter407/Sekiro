@@ -17,12 +17,12 @@ static FString CharArrayToFString(const TArray<char>& Chars)
 // 静态入口
 // ============================================================================
 
-int32 FSekiroStreamReader::ParseAll(const FString& FilePath, TArray<FSekiroImportBone>& OutBones, FOnAnimationParsed Callback, int32 MaxAnimations)
+int32 FSekiroStreamReader::ParseAll(const FString& FilePath, TArray<FSekiroImportBone>& OutBones, FOnAnimationParsed Callback, int32 MaxAnimations, const FString& NamePrefixFilter)
 {
     FSekiroStreamReader Reader;
     if (!Reader.Open(FilePath)) return 0;
     if (!Reader.ParseRootSkeleton(OutBones)) return 0;
-    int32 Count = Reader.ParseAnimationsArray(OutBones, Callback, MaxAnimations);
+    int32 Count = Reader.ParseAnimationsArray(OutBones, Callback, MaxAnimations, NamePrefixFilter);
     Reader.Close();
     return Count;
 }
@@ -512,7 +512,7 @@ bool FSekiroStreamReader::ParseRootSkeleton(TArray<FSekiroImportBone>& OutBones)
 // 流式动画解析
 // ============================================================================
 
-int32 FSekiroStreamReader::ParseAnimationsArray(const TArray<FSekiroImportBone>& SkeletonBones, FOnAnimationParsed Callback, int32 MaxAnimations)
+int32 FSekiroStreamReader::ParseAnimationsArray(const TArray<FSekiroImportBone>& SkeletonBones, FOnAnimationParsed Callback, int32 MaxAnimations, const FString& NamePrefixFilter)
 {
     // 当前位置在BoneLocalTransforms数组']'之后
     // 继续扫描根对象字段，寻找"Animations"
@@ -552,7 +552,7 @@ int32 FSekiroStreamReader::ParseAnimationsArray(const TArray<FSekiroImportBone>&
                     if (MaxAnimations > 0 && ParsedCount >= MaxAnimations) break;
 
                     FSekiroAnimationClip Clip;
-                    if (ParseOneAnimation(SkeletonBones, Clip))
+                    if (ParseOneAnimation(SkeletonBones, Clip, NamePrefixFilter))
                     {
                         if (!Callback.Execute(Clip))
                             break; // 回调返回false，停止解析
@@ -582,11 +582,30 @@ int32 FSekiroStreamReader::ParseAnimationsArray(const TArray<FSekiroImportBone>&
 // 单个动画解析（捕获文本 → FJsonSerializer → FSekiroAnimationClip）
 // ============================================================================
 
-bool FSekiroStreamReader::ParseOneAnimation(const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip)
+bool FSekiroStreamReader::ParseOneAnimation(const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip, const FString& NamePrefixFilter)
 {
     FString AnimText;
     int32 Len = CaptureObjectText(AnimText);
     if (Len == 0) return false;
+
+    // 快速名称过滤：在原始JSON文本中查找Name字段（避免FJsonSerializer解析帧数据）
+    if (!NamePrefixFilter.IsEmpty())
+    {
+        int32 NameIdx = AnimText.Find(TEXT("\"Name\":\""));
+        if (NameIdx != INDEX_NONE)
+        {
+            NameIdx += 8; // 跳过 "Name":"
+            int32 NameEnd = AnimText.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, NameIdx);
+            if (NameEnd != INDEX_NONE)
+            {
+                FString AnimName = AnimText.Mid(NameIdx, NameEnd - NameIdx);
+                if (!AnimName.StartsWith(NamePrefixFilter))
+                {
+                    return false; // 名称不匹配，跳过（已避免昂贵的JSON解析）
+                }
+            }
+        }
+    }
 
     TSharedPtr<FJsonObject> AnimObj;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(AnimText);

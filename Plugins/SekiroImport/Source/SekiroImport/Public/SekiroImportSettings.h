@@ -54,6 +54,10 @@ public:
     UPROPERTY(config, EditAnywhere, Category="Options", meta=(ClampMin="0"))
     int32 MaxAnimations = 0;
 
+    /// 动画名称前缀过滤（仅导入以此为前缀的动画，空=全部）
+    UPROPERTY(config, EditAnywhere, Category="Options|Animation")
+    FString AnimationPrefixFilter;
+
     /// 已有资产处理方式
     UPROPERTY(config, EditAnywhere, Category="Options")
     ESekiroOverwriteMode OverwriteMode = ESekiroOverwriteMode::Overwrite;

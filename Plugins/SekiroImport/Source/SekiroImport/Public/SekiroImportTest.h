@@ -44,8 +44,10 @@ public:
 	static bool BuildFullModel(const FString& ModelJson, const FString& AnimJson);
 
 	/// Phase 5: 管线编排 — 导入骨架+网格+纹理+材质+动画（全流程）
+	/// @param AnimationPrefixFilter 动画名称前缀过滤（如 "Sekiro_a000"），空=全部
 	UFUNCTION(BlueprintCallable, Category="SekiroImport|Pipeline")
 	static bool RunImportPipeline(const FString& ModelJson, const FString& AnimJson,
 		const FString& OutputBasePath = TEXT("/Game/Characters/Sekiro"),
-		bool bImportAnimations = false);
+		bool bImportAnimations = false,
+		const FString& AnimationPrefixFilter = TEXT(""));
 };

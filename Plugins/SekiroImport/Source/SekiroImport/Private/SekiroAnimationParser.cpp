@@ -191,7 +191,7 @@ bool FSekiroAnimationParser::ParseAnimationClip(const TSharedPtr<FJsonObject>& A
 // 主解析入口（骨架+动画）
 // ============================================================================
 
-bool FSekiroAnimationParser::ParseFromFile(const FString& FilePath, FParseResult& OutResult, int32 MaxAnimations)
+bool FSekiroAnimationParser::ParseFromFile(const FString& FilePath, FParseResult& OutResult, int32 MaxAnimations, const FString& NamePrefixFilter)
 {
     UE_LOG(LogSekiroImport, Log, TEXT("开始解析动画JSON: %s"), *FilePath);
 
@@ -216,7 +216,7 @@ bool FSekiroAnimationParser::ParseFromFile(const FString& FilePath, FParseResult
             return true;
         });
 
-        int32 AnimCount = FSekiroStreamReader::ParseAll(FilePath, OutResult.Bones, Callback, MaxAnimations);
+        int32 AnimCount = FSekiroStreamReader::ParseAll(FilePath, OutResult.Bones, Callback, MaxAnimations, NamePrefixFilter);
 
         UE_LOG(LogSekiroImport, Log, TEXT("流式解析完成: %d骨骼, %d动画"), OutResult.Bones.Num(), AnimCount);
         return OutResult.Bones.Num() > 0;
@@ -300,6 +300,12 @@ bool FSekiroAnimationParser::ParseFromFile(const FString& FilePath, FParseResult
         FSekiroAnimationClip Clip;
         if (ParseAnimationClip(*AnimObjPtr, BoneCount, OutResult.Bones, Clip))
         {
+            // 名称前缀过滤（全量加载路径）
+            if (!NamePrefixFilter.IsEmpty() && !Clip.Name.StartsWith(NamePrefixFilter))
+            {
+                continue;
+            }
+
             // 填充BoneNames（从骨架数据复制）
             Clip.BoneNames.Reset(BoneCount);
             for (int32 b = 0; b < BoneCount; ++b)

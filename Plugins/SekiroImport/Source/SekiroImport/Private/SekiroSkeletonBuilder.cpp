@@ -190,59 +190,29 @@ bool FSekiroSkeletonBuilder::ValidateHierarchyOrder(const TArray<FSekiroImportBo
 
 void FSekiroSkeletonBuilder::ApplyExportRootOrientation(TArray<FSekiroImportBone>& Bones)
 {
-    // 对应Blender管线: ExportRoot(Z=180°) → Armature(X=90°) → Master → ...
-    // 世界变换组合: RotX(90°) * RotY(180°) → 顶点映射 (-X, Z, Y)
-    //   - ExportRoot(父): RotY(180°)  旧Y-up的Z轴(forward)映射为UE5的Y轴(forward)
-    //   - Armature(子):  RotX(90°)   旋转X轴完成Y-up→Z-up坐标转换
-    static const FQuat ExportRootRot = FQuat(FVector(0, 1, 0), PI);          // RotY(180°) — 旧Z轴→新Y轴
-    static const FQuat ArmatureRot  = FQuat(FVector(1, 0, 0), PI / 2.0);     // RotX(90°)
-    static const FQuat OrientQ      = ArmatureRot * ExportRootRot;            // = RotX(90°) * RotY(180°)
+    // Havok Y-up → UE5 Z-up 坐标转换，无需额外骨骼
+    // RotZ(180°) * RotX(90°): 先RotX(90°)完成Y→Z转换，再RotZ(180°)翻转朝向使角色面朝+X
+    const FQuat OrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
 
-    // Step 1: 将OrientQ应用到所有骨骼的World变换，使它们与旋转后的顶点在同一坐标空间
+    // 验证OrientQ: Y-up(0,1,0) → Z-up(0,0,1)
+    {
+        FVector TestUp = OrientQ.RotateVector(FVector(0, 1, 0));
+        UE_LOG(LogSekiroImport, Warning, TEXT("[OrientQ校验] Y-up(0,1,0) → (%.2f,%.2f,%.2f) %s"),
+            TestUp.X, TestUp.Y, TestUp.Z,
+            FMath::IsNearlyEqual(TestUp.Z, 1.0f, 0.01f) ? TEXT("✓ 正确(Z-up)") : TEXT("✗ 错误!"));
+    }
+
+    // 直接将OrientQ应用到所有骨骼的World变换
     for (FSekiroImportBone& Bone : Bones)
     {
         Bone.WorldTranslation = OrientQ.RotateVector(Bone.WorldTranslation);
         Bone.WorldRotation = OrientQ * Bone.WorldRotation;
     }
 
-    // Step 2: 插入ExportRoot（索引0）+ Armature（索引1），复刻Blender双骨骼层级
-    //   ExportRoot:  World=RotY(180°),  无父骨骼,  Local将在DeriveLocalFromWorld中=RotY(180°)
-    //   Armature:    World=RotX(90°)*RotY(180°), 子骨骼父, Local将在DeriveLocalFromWorld中=RotX(90°)
-    FSekiroImportBone ExportRoot;
-    ExportRoot.Name = TEXT("ExportRoot");
-    ExportRoot.ParentIndex = INDEX_NONE;
-    ExportRoot.WorldRotation = ExportRootRot;
-    ExportRoot.WorldTranslation = FVector::ZeroVector;
-    ExportRoot.WorldScale = FVector::OneVector;
-    Bones.Insert(ExportRoot, 0);
-
-    FSekiroImportBone Armature;
-    Armature.Name = TEXT("Armature");
-    Armature.ParentIndex = 0; // ExportRoot
-    Armature.WorldRotation = OrientQ;
-    Armature.WorldTranslation = FVector::ZeroVector;
-    Armature.WorldScale = FVector::OneVector;
-    Bones.Insert(Armature, 1);
-
-    // Step 3: 所有原有骨骼ParentIndex +2（为ExportRoot+Armature腾出索引0,1）
-    for (int32 i = 2; i < Bones.Num(); ++i)
-    {
-        if (Bones[i].ParentIndex != INDEX_NONE)
-        {
-            Bones[i].ParentIndex += 2;
-        }
-    }
-
-    // Step 4: 原根骨骼（Master，现索引2）→ 父骨骼设为Armature(索引1)
-    if (Bones.Num() > 2 && Bones[2].ParentIndex == INDEX_NONE)
-    {
-        Bones[2].ParentIndex = 1;
-    }
-
-    // Step 5: 从新的World变换+层级重新推导Local变换
+    // 从旋转后的World变换推导Local变换
     DeriveLocalFromWorld(Bones);
 
-    UE_LOG(LogSekiroImport, Log, TEXT("ApplyExportRootOrientation: %d 根骨骼（含ExportRoot+Armature双骨骼）已转换到UE5空间"), Bones.Num());
+    UE_LOG(LogSekiroImport, Log, TEXT("ApplyExportRootOrientation: %d 根骨骼已转换到UE5空间"), Bones.Num());
 }
 
 // ============================================================================

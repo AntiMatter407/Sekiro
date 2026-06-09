@@ -1,7 +1,6 @@
 #include "SekiroMaterialBuilder.h"
 #include "SekiroImport.h"
 #include "SekiroImportLog.h"
-#include "SekiroMaterialUtils.h"
 #include "Import/SKTextureResolver.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/Texture2D.h"
@@ -56,17 +55,48 @@ static FString TextureNameFromPath(const FString& Path)
 // MTD → BlendMode 推导（对齐 Blender 管线 CLOTH_KEYWORDS 逻辑）
 // ============================================================================
 
-/// 从MTD路径推导BlendMode："Opaque" / "Masked" / "Translucent"
-static FString DeriveBlendMode(const FString& MatName, const FString& MTDPath)
+/// 从MTD路径和JSON配置推导BlendMode（对齐Blender common_blender.py:623-652）
+/// 优先级: MTDInfo.BlendMode > cloth/decal关键词 > 默认Opaque
+static FString DeriveBlendMode(const FString& MatName, const FString& MTDPath,
+    const TSharedPtr<FJsonObject>* JsonEntry)
 {
-    if (MTDPath.IsEmpty()) return TEXT("Opaque");
-
     const FString MtdBase = FPaths::GetBaseFilename(MTDPath).ToLower();
     const FString MatLower = MatName.ToLower();
 
     const bool bIsCloth = SekiroContainsClothKeyword(MatLower) || MtdBase.Contains(TEXT("cloth"));
     const bool bIsDecal = MtdBase.Contains(TEXT("decal"));
 
+    // 优先使用MTDInfo.BlendMode（C# MTD解析结果最准确）
+    if (JsonEntry)
+    {
+        const TSharedPtr<FJsonObject>* MtdInfoObj = nullptr;
+        if ((*JsonEntry)->TryGetObjectField(TEXT("MTDInfo"), MtdInfoObj))
+        {
+            FString MtdBlend = (*MtdInfoObj)->GetStringField(TEXT("BlendMode"));
+            if (!MtdBlend.IsEmpty())
+            {
+                // Blender common_blender.py:628-638 的映射表
+                static const TMap<FString, FString> MtdToUE5 = {
+                    { TEXT("Normal"),   TEXT("Opaque") },
+                    { TEXT("TexEdge"),  TEXT("Masked") },
+                    { TEXT("Blend"),    TEXT("Translucent") },
+                    { TEXT("Water"),    TEXT("Translucent") },
+                    { TEXT("Add"),      TEXT("Translucent") },
+                    { TEXT("Sub"),      TEXT("Translucent") },
+                    { TEXT("Mul"),      TEXT("Translucent") },
+                    { TEXT("LSBlend"),  TEXT("Translucent") },
+                    { TEXT("LSAdd"),    TEXT("Translucent") },
+                };
+                if (const FString* UeBlend = MtdToUE5.Find(MtdBlend))
+                {
+                    return *UeBlend;
+                }
+                // 如果MTD值不在映射表中，回落至关键词推导
+            }
+        }
+    }
+
+    // 回落：关键词推导
     if (bIsCloth)  return TEXT("Masked");
     if (bIsDecal)  return TEXT("Translucent");
     return TEXT("Opaque");
@@ -91,6 +121,8 @@ static bool DeriveTwoSided(const FString& MatName, const FString& MTDPath)
 // ============================================================================
 
 /// 确保 M_SekiroBase 父材质存在（首次创建，后续复用）
+/// 对齐 Blender create_materials: _a→BaseColor, _n→Normal(LinearColor), _m→Metallic, _r→Roughness
+/// Alpha同时连接Opacity和OpacityMask，MIC根据BlendMode使用对应通道
 static UMaterial* EnsureBaseMaterial(const FString& ParentPackagePath)
 {
     // 尝试加载已有
@@ -116,15 +148,20 @@ static UMaterial* EnsureBaseMaterial(const FString& ParentPackagePath)
 
     Mat->bUsedWithSkeletalMesh = true;
 
-    // 创建4个TextureSampleParameter2D节点，连线到对应材质属性
-    // 全部用SAMPLERTYPE_Color——当无真实纹理时DefaultTexture兼容所有类型
-    struct FParamDef { const TCHAR* Name; EMaterialProperty Property; int32 X; int32 Y; };
+    // 创建4个纹理参数节点，正确设置采样类型
+    // _a: Color (sRGB)  → BaseColor
+    // _n: LinearColor   → Normal (线性空间)
+    // _m: LinearColor   → Metallic
+    // _r: LinearColor   → Roughness
+    struct FParamDef { const TCHAR* Name; EMaterialProperty Property; int32 X; int32 Y; TEnumAsByte<EMaterialSamplerType> Sampler; };
     const FParamDef Params[] = {
-        { TEXT("_a"), MP_BaseColor,  -400,  200 },
-        { TEXT("_n"), MP_Normal,     -400, -100 },
-        { TEXT("_m"), MP_Metallic,   -400, -400 },
-        { TEXT("_r"), MP_Roughness,  -400, -700 },
+        { TEXT("_a"), MP_BaseColor,  -400,  200, SAMPLERTYPE_Color },
+        { TEXT("_n"), MP_Normal,     -400, -100, SAMPLERTYPE_LinearColor },
+        { TEXT("_m"), MP_Metallic,   -400, -400, SAMPLERTYPE_LinearColor },
+        { TEXT("_r"), MP_Roughness,  -400, -700, SAMPLERTYPE_LinearColor },
     };
+
+    UMaterialExpression* AlphaSource = nullptr; // _a节点，用于Alpha连线
 
     for (const FParamDef& P : Params)
     {
@@ -135,13 +172,24 @@ static UMaterial* EnsureBaseMaterial(const FString& ParentPackagePath)
         if (TexNode)
         {
             TexNode->ParameterName = P.Name;
-            TexNode->SamplerType = SAMPLERTYPE_Color;
+            TexNode->SamplerType = P.Sampler;
         }
         UMaterialEditingLibrary::ConnectMaterialProperty(Expr, TEXT(""), P.Property);
+
+        if (FCString::Strcmp(P.Name, TEXT("_a")) == 0)
+        {
+            AlphaSource = Expr;
+        }
     }
 
-    // Alpha→Opacity（始终连接，Opaque/Masked中无副作用）
-    USekiroMaterialUtils::ConnectAlphaToOpacity(Mat);
+    // Alpha同时连接Opacity和OpacityMask，MIC根据BlendMode决定使用哪个
+    // - Masked: 使用OpacityMask (alpha_threshold=0.5)
+    // - Translucent: 使用Opacity
+    if (AlphaSource)
+    {
+        UMaterialEditingLibrary::ConnectMaterialProperty(AlphaSource, TEXT(""), MP_Opacity);
+        UMaterialEditingLibrary::ConnectMaterialProperty(AlphaSource, TEXT(""), MP_OpacityMask);
+    }
 
     Mat->TwoSided = false;
     Mat->BlendMode = BLEND_Opaque;
@@ -248,8 +296,8 @@ static UMaterialInstanceConstant* BuildSingleMIC(
 
     MIC->SetParentEditorOnly(ParentMaterial);
 
-    // --- BlendMode & TwoSided（MTD推导优先，JSON的blend_mode不可信——Blender管线已知有误）---
-    FString BlendModeStr = DeriveBlendMode(Material.Name, Material.MTDPath);
+    // --- BlendMode & TwoSided（对齐Blender: MTDInfo优先级 > 关键词推导）---
+    FString BlendModeStr = DeriveBlendMode(Material.Name, Material.MTDPath, JsonEntry);
     bool bTwoSided = DeriveTwoSided(Material.Name, Material.MTDPath);
 
     if (BlendModeStr.Equals(TEXT("Translucent"), ESearchCase::IgnoreCase) ||
@@ -262,6 +310,8 @@ static UMaterialInstanceConstant* BuildSingleMIC(
     {
         MIC->BasePropertyOverrides.bOverride_BlendMode = true;
         MIC->BasePropertyOverrides.BlendMode = BLEND_Masked;
+        MIC->BasePropertyOverrides.bOverride_OpacityMaskClipValue = true;
+        MIC->BasePropertyOverrides.OpacityMaskClipValue = 0.5f; // 对齐Blender alpha_threshold=0.5
     }
     // Opaque 不需要设置（默认）
 

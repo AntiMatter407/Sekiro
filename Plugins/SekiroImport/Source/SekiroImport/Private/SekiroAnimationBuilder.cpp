@@ -80,8 +80,14 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
         BoneNameToAnimIdx.Add(Clip.BoneNames[i], i);
     }
 
-    // OrientQ = RotX(90°) * RotY(180°)，与SkeletonBuilder一致
-    static const FQuat OrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
+    // Havok Y-up → UE5 Z-up 坐标转换
+    const FQuat OrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
+
+    // 动画数据中有ExportRoot+Armature，但骨架中已移除。
+    // 需要在动画FK链中补上它们的贡献，否则Master的朝向会丢失。
+    const int32* ERAnimIdx = BoneNameToAnimIdx.Find(FName(TEXT("ExportRoot")));
+    const int32* ArAnimIdx = BoneNameToAnimIdx.Find(FName(TEXT("Armature")));
+    const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr);
 
     // 逐骨骼分配键值数组
     TArray<TArray<FVector>> AllPosKeys;
@@ -98,11 +104,14 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
     }
 
     // ========================================================================
-    // 3-Pass 算法：逐帧计算 LocalUE（对齐Phase 1 ApplyExportRootOrientation）
+    // 3-Pass 算法：逐帧计算 LocalUE
     //
+    //   补虚拟FK: ArmatureWorldUE ← FK(ExportRoot→Armature)在动画数据中的WorldUE
     //   Pass 1: FK in HKX → WorldHKX[i] = LocalHKX[i] * ParentWorldHKX
+    //           (根骨骼若在动画中为Armature的子骨骼，则FK通过ArmatureWorldUE)
     //   Pass 2: OrientQ → WorldUE[i] = OrientQ * WorldHKX[i]
     //   Pass 3: Derive Local → LocalUE[i] = WorldUE[i].GetRelativeTransform(ParentWorldUE)
+    //           (根骨骼若在动画中以Armature为父，则相对ArmatureWorldUE)
     // ========================================================================
 
     TArray<FTransform> WorldUE;       // 每帧临时数组
@@ -110,6 +119,18 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
 
     for (int32 Frame = 0; Frame < Clip.FrameData.Num(); ++Frame)
     {
+        // 预计算虚拟Armature的WorldUE (动画FK: ExportRoot → Armature → OrientQ)
+        FTransform ArWorldUE = FTransform::Identity;
+        if (bNeedVirtualArmature)
+        {
+            FTransform ERHKX = Clip.FrameData[Frame][*ERAnimIdx];
+            FTransform ArHKX = Clip.FrameData[Frame][*ArAnimIdx];
+            FTransform ArWorldHKX = ArHKX * ERHKX;  // FK: Armature.Local * ExportRoot.World
+            ArWorldUE.SetRotation(OrientQ * ArWorldHKX.GetRotation());
+            ArWorldUE.SetTranslation(OrientQ.RotateVector(ArWorldHKX.GetTranslation()));
+            ArWorldUE.SetScale3D(ArWorldHKX.GetScale3D());
+        }
+
         // Pass 1+2: 逐骨骼 (按层级顺序) FK + OrientQ → WorldUE
         for (int32 BoneIdx = 0; BoneIdx < SkeletonBoneCount; ++BoneIdx)
         {
@@ -136,6 +157,16 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
                 ParentWorldHKX.SetScale3D(WorldUE[ParentIdx].GetScale3D());
                 WorldHKX = LocalHKX * ParentWorldHKX;
             }
+            else if (bNeedVirtualArmature)
+            {
+                // 骨架根骨骼 → 在动画中是Armature的子骨骼，FK通过虚拟Armature
+                const FQuat OrientQInv = OrientQ.Inverse();
+                FTransform ArWorldHKX;
+                ArWorldHKX.SetTranslation(OrientQInv.RotateVector(ArWorldUE.GetTranslation()));
+                ArWorldHKX.SetRotation(OrientQInv * ArWorldUE.GetRotation());
+                ArWorldHKX.SetScale3D(ArWorldUE.GetScale3D());
+                WorldHKX = LocalHKX * ArWorldHKX;
+            }
             else
             {
                 WorldHKX = LocalHKX;
@@ -150,12 +181,18 @@ UAnimSequence* FSekiroAnimationBuilder::Build(const FSekiroAnimationClip& Clip, 
         // Pass 3: Derive Local UE → 写入键值数组
         for (int32 BoneIdx = 0; BoneIdx < SkeletonBoneCount; ++BoneIdx)
         {
+            const FName BoneName = RefSkel.GetBoneName(BoneIdx);
             const int32 ParentIdx = RefSkel.GetParentIndex(BoneIdx);
 
             FTransform LocalUE;
             if (ParentIdx >= 0 && ParentIdx < SkeletonBoneCount)
             {
                 LocalUE = WorldUE[BoneIdx].GetRelativeTransform(WorldUE[ParentIdx]);
+            }
+            else if (bNeedVirtualArmature)
+            {
+                // 骨架根骨骼的Local相对于虚拟Armature
+                LocalUE = WorldUE[BoneIdx].GetRelativeTransform(ArWorldUE);
             }
             else
             {

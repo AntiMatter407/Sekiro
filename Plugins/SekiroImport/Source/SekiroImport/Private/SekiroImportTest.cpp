@@ -19,8 +19,8 @@
 #include "Misc/PackageName.h"
 #include "UObject/SavePackage.h"
 
-// ExportRoot方向转换，与SekiroSkeletonBuilder.cpp一致
-static const FQuat DiagOrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
+// Havok Y-up → UE5 Z-up 坐标转换: RotZ(180°) * RotX(90°)
+const FQuat DiagOrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
 
 // ============================================================================
 // 工具：写诊断文件
@@ -162,7 +162,7 @@ static void DumpVertSkinning(const FSekiroModelData& ModelData, const FReference
 
 static void DumpAnimTracks(const FSekiroAnimationClip& Clip, const FReferenceSkeleton& RefSkel, const FString& Dir)
 {
-    static const FQuat OrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
+    const FQuat OrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
 
     // 构建骨骼名→动画骨骼索引查找表
     TMap<FName, int32> BoneNameToAnimIdx;
@@ -626,12 +626,12 @@ bool USekiroImportTest::BuildFullModel(const FString& ModelJson, const FString& 
 }
 
 bool USekiroImportTest::RunImportPipeline(const FString& ModelJson, const FString& AnimJson,
-	const FString& OutputBasePath, bool bImportAnimations)
+	const FString& OutputBasePath, bool bImportAnimations, const FString& AnimationPrefixFilter)
 {
 	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] === 管线导入开始 ==="));
 	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] 模型=%s"), *ModelJson);
 	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] 动画=%s"), *AnimJson);
-	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] 输出=%s 动画=%d"), *OutputBasePath, bImportAnimations);
+	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] 输出=%s 动画=%d 过滤=%s"), *OutputBasePath, bImportAnimations, *AnimationPrefixFilter);
 
 	// 构造Settings对象
 	USekiroImportSettings* Settings = NewObject<USekiroImportSettings>();
@@ -642,7 +642,8 @@ bool USekiroImportTest::RunImportPipeline(const FString& ModelJson, const FStrin
 	Settings->bImportSkeletalMesh = true;
 	Settings->bImportMaterials = true;
 	Settings->bImportAnimations = bImportAnimations;
-	Settings->MaxAnimations = 0; // 全部
+	Settings->MaxAnimations = 0; // 全部（受AnimationPrefixFilter限制）
+	Settings->AnimationPrefixFilter = AnimationPrefixFilter;
 	Settings->OverwriteMode = ESekiroOverwriteMode::Overwrite;
 
 	// 执行管线

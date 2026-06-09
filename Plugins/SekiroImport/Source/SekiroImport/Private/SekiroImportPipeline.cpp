@@ -18,7 +18,9 @@
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetImportTask.h"
+#include "Editor.h"
 #include "HAL/FileManager.h"
+#include "Misc/PackageName.h"
 
 FSekiroImportPipeline::FOnProgress FSekiroImportPipeline::OnProgress;
 
@@ -380,7 +382,7 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
     {
         REPORT_PROGRESS(TEXT("S1: 解析动画JSON: %s"), *Settings.AnimationJsonPath);
 
-        if (!FSekiroAnimationParser::ParseFromFile(Settings.AnimationJsonPath, AnimParseResult, Settings.bImportAnimations ? Settings.MaxAnimations : -1))
+        if (!FSekiroAnimationParser::ParseFromFile(Settings.AnimationJsonPath, AnimParseResult, Settings.bImportAnimations ? Settings.MaxAnimations : -1, Settings.AnimationPrefixFilter))
         {
             Result.Errors.Add(TEXT("动画JSON解析失败"));
         }
@@ -508,57 +510,10 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
     }
 
     // ============================================================
-    // 步骤4.5: 导入贴图
+    // 步骤4.5: 导入贴图（移至步骤6动画之后，且仅首次运行需要）
+    // 贴图同步导入极易触发Stall，暂跳过；材质可先创建无贴图版本
     // ============================================================
-    {
-        FString TexturesDir = FPaths::Combine(FPaths::ProjectDir(), TEXT("Extracted/Textures"));
-        FString DestPath = FString::Printf(TEXT("%s/Textures"), *OutputBase);
-
-        struct Local { static void ImportTextures(const FString& Dir, const FString& Dest) {
-            IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-            FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-
-            TArray<FString> Extensions = { TEXT("png"), TEXT("dds"), TEXT("tga") };
-            int32 TotalImported = 0;
-            for (const FString& Ext : Extensions)
-            {
-                TArray<FString> Files;
-                IFileManager::Get().FindFiles(Files, *(Dir / TEXT("*.") + Ext), true, false);
-                if (Files.Num() == 0) continue;
-
-                TArray<UAssetImportTask*> Tasks;
-                for (const FString& File : Files)
-                {
-                    UAssetImportTask* Task = NewObject<UAssetImportTask>();
-                    Task->Filename = Dir / File;
-                    Task->DestinationPath = Dest;
-                    Task->bReplaceExisting = true;
-                    Task->bAutomated = true;
-                    Tasks.Add(Task);
-                }
-
-                if (Tasks.Num() > 0)
-                {
-                    AssetTools.ImportAssetTasks(Tasks);
-                    TotalImported += Tasks.Num();
-                    UE_LOG(LogSekiroImport, Log, TEXT("S4.5: 导入 %d %s 纹理到 %s"), Tasks.Num(), *Ext, *Dest);
-                }
-            }
-
-            // 强制同步扫描资产注册表，确保后续FindTexture能搜到
-            if (TotalImported > 0)
-            {
-                AssetRegistry.Get().SearchAllAssets(true);
-                UE_LOG(LogSekiroImport, Log, TEXT("S4.5: 资产注册表同步扫描完成，共导入%d个纹理"), TotalImported);
-            }
-        }};
-
-        if (FPaths::DirectoryExists(TexturesDir))
-        {
-            REPORT_PROGRESS(TEXT("S4.5: 导入贴图 → %s/"), *DestPath);
-            Local::ImportTextures(TexturesDir, DestPath);
-        }
-    }
+    REPORT_PROGRESS(TEXT("S4.5: 贴图导入跳过（避免主线程Stall，请手动导入或首次运行）"));
 
     // ============================================================
     // 步骤5: 构建材质
@@ -615,6 +570,12 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
     for (const FString& Err : Result.Errors)
     {
         UE_LOG(LogSekiroImport, Warning, TEXT("  导入错误: %s"), *Err);
+    }
+
+    // 清理Undo栈，防止用户Ctrl+Z撤销导入导致资产损坏
+    if (GEditor)
+    {
+        GEditor->ResetTransaction(NSLOCTEXT("SekiroImport", "ImportComplete", "Sekiro导入完成"));
     }
 
     return Result;

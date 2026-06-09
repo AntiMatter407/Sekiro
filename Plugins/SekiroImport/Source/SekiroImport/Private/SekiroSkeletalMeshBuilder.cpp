@@ -9,17 +9,21 @@
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "Misc/FeedbackContext.h"
+#include "Misc/ScopedSlowTask.h"
+#include "HAL/PlatformProcess.h"
 #include "Misc/PackageName.h"
 #include "SkinnedAssetCompiler.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
 // ============================================================================
-// ExportRoot方向转换：RotX(90°) * RotZ(180°)
-// 匹配Blender层级 ExportRoot(RotZ 180°) → Armature(RotX 90°)
-// 与SekiroSkeletonBuilder.cpp一致，用于将Y-up数据转换到UE5空间
+// 坐标转换：Havok Y-up → UE5 Z-up (RotZ(180°) * RotX(90°))
+// 角色正面指向UE5 +X
 // ============================================================================
-static const FQuat MeshOrientQ = FQuat(FVector(1, 0, 0), PI / 2.0) * FQuat(FVector(0, 1, 0), PI);
+static FQuat GetMeshOrientQ()
+{
+    return FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 0, 0), PI / 2.0);
+}
 
 // ============================================================================
 // 骨骼名映射
@@ -92,7 +96,7 @@ void FSekiroSkeletalMeshBuilder::RemapInfluences(
         // 所有影响都指向不存在的骨骼 → 用3D距离找最近的骨架骨骼
         if (!bHasAnyValidInfluence)
         {
-            FVector VertPos = MeshOrientQ.RotateVector(FVector(Vert.Position));
+            FVector VertPos = GetMeshOrientQ().RotateVector(FVector(Vert.Position));
             float BestDist = FLT_MAX;
             int32 BestBoneIdx = 0;
 
@@ -223,22 +227,17 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
     ImportData.MaxMaterialIndex = FMath::Max(0, ModelData.Materials.Num() - 1);
 
     int32 GlobalVertexOffset = 0;
+    int32 SkippedTris = 0; // 被过滤的退化/重复三角形计数
+    TSet<uint64> SeenTriKeys; // 已见三角面键值(升序排列的全局顶点索引三元组)，用于去重
 
     for (int32 SectionIdx = 0; SectionIdx < ModelData.Meshes.Num(); ++SectionIdx)
     {
         const FSekiroImportMeshSection& Section = ModelData.Meshes[SectionIdx];
 
-        // 跳过Havok物理模拟的布料网格（fray/frary），与Blender行为一致
         bool bIsDecal = false;
         if (Section.MaterialIndex >= 0 && Section.MaterialIndex < ModelData.Materials.Num())
         {
             const FSekiroImportMaterial& Mat = ModelData.Materials[Section.MaterialIndex];
-            FString MatName = Mat.Name.ToLower();
-            if (MatName.Contains(TEXT("fray")) || MatName.Contains(TEXT("frary")))
-            {
-                UE_LOG(LogSekiroImport, Log, TEXT("  跳过布料物理Section[%d] '%s' (材质=%s)"), SectionIdx, *Section.PartName, *MatName);
-                continue;
-            }
             bIsDecal = Mat.MTDPath.ToLower().Contains(TEXT("decal"));
         }
 
@@ -251,8 +250,8 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             if (bIsDecal)
                 Pos += Vert.Normal * 0.08f;
 
-            // 施加ExportRoot旋转，使顶点与骨架在同一坐标空间
-            Pos = FVector3f(MeshOrientQ.RotateVector(FVector(Pos)));
+            // Y-up → Z-up 坐标转换
+            Pos = FVector3f(GetMeshOrientQ().RotateVector(FVector(Pos)));
 
             ImportData.Points.Add(Pos);
         }
@@ -272,13 +271,55 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
                 continue;
             }
 
+            // 退化三角形：任意两个索引相等 = 线或点（对齐Blender BMesh: ValueError → pass）
+            if (Tri.X == Tri.Y || Tri.Y == Tri.Z || Tri.X == Tri.Z)
+            {
+                SkippedTris++;
+                continue;
+            }
+
+            // 零面积三角形：三顶点共线（对齐Blender BMesh: 退化面 → ValueError → pass）
+            {
+                const FVector3f& P0 = Section.Vertices[Tri.X].Position;
+                const FVector3f& P1 = Section.Vertices[Tri.Y].Position;
+                const FVector3f& P2 = Section.Vertices[Tri.Z].Position;
+                FVector3f Cross = (P1 - P0) ^ (P2 - P0);
+                if (Cross.SizeSquared() < 1e-12f)
+                {
+                    SkippedTris++;
+                    continue;
+                }
+            }
+
+            // 重复面检测：跳过同一顶点集合的重复三角形（对齐Blender BMesh: 已存在面 → ValueError → pass）
+            {
+                int32 G0 = GlobalVertexOffset + Tri.X;
+                int32 G1 = GlobalVertexOffset + Tri.Y;
+                int32 G2 = GlobalVertexOffset + Tri.Z;
+                // 升序排序，使(1,2,3)和(3,1,2)映射到同一键值
+                if (G0 > G1) Swap(G0, G1);
+                if (G1 > G2) Swap(G1, G2);
+                if (G0 > G1) Swap(G0, G1);
+                // 乘法哈希组合三个32位索引，无位宽上限
+                uint64 Key = uint64(G0);
+                Key = Key * 0x9E3779B97F4A7C15ULL + uint64(G1);
+                Key = Key * 0x9E3779B97F4A7C15ULL + uint64(G2);
+                bool bAlreadyExists = false;
+                SeenTriKeys.Add(Key, &bAlreadyExists);
+                if (bAlreadyExists)
+                {
+                    SkippedTris++;
+                    continue;
+                }
+            }
+
             const FSekiroImportVertex& V0 = Section.Vertices[Tri.X];
             const FSekiroImportVertex& V1 = Section.Vertices[Tri.Y];
             const FSekiroImportVertex& V2 = Section.Vertices[Tri.Z];
 
             SkeletalMeshImportData::FVertex Wedge0;
             Wedge0.VertexIndex = GlobalVertexOffset + Tri.X;
-            Wedge0.UVs[0] = V0.UV;
+            Wedge0.UVs[0] = FVector2f(V0.UV.X, 1.0f - V0.UV.Y);
             Wedge0.Color = FColor::White;
             Wedge0.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge0);
@@ -286,14 +327,14 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             // 三角形绕序反转: (X,Y,Z) → (X,Z,Y)，对齐Blender管线
             SkeletalMeshImportData::FVertex Wedge1;
             Wedge1.VertexIndex = GlobalVertexOffset + Tri.Z;
-            Wedge1.UVs[0] = V2.UV;
+            Wedge1.UVs[0] = FVector2f(V2.UV.X, 1.0f - V2.UV.Y);
             Wedge1.Color = FColor::White;
             Wedge1.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge1);
 
             SkeletalMeshImportData::FVertex Wedge2;
             Wedge2.VertexIndex = GlobalVertexOffset + Tri.Y;
-            Wedge2.UVs[0] = V1.UV;
+            Wedge2.UVs[0] = FVector2f(V1.UV.X, 1.0f - V1.UV.Y);
             Wedge2.Color = FColor::White;
             Wedge2.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge2);
@@ -307,9 +348,9 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             Face.SmoothingGroups = 0;
 
             // 逐角点法线（对齐绕序反转: Wedge0=Tri.X, Wedge1=Tri.Z, Wedge2=Tri.Y）
-            Face.TangentZ[0] = FVector3f(MeshOrientQ.RotateVector(FVector(V0.Normal)).GetSafeNormal());
-            Face.TangentZ[1] = FVector3f(MeshOrientQ.RotateVector(FVector(V2.Normal)).GetSafeNormal());
-            Face.TangentZ[2] = FVector3f(MeshOrientQ.RotateVector(FVector(V1.Normal)).GetSafeNormal());
+            Face.TangentZ[0] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V0.Normal)).GetSafeNormal());
+            Face.TangentZ[1] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V2.Normal)).GetSafeNormal());
+            Face.TangentZ[2] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V1.Normal)).GetSafeNormal());
 
             ImportData.Faces.Add(Face);
         }
@@ -322,6 +363,11 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
 
         UE_LOG(LogSekiroImport, Verbose, TEXT("  Section[%d] '%s': %d顶点, %d三角形, MatIndex=%d"),
             SectionIdx, *Section.PartName, Section.Vertices.Num(), Section.Triangles.Num(), Section.MaterialIndex);
+    }
+
+    if (SkippedTris > 0)
+    {
+        UE_LOG(LogSekiroImport, Log, TEXT("共跳过 %d 个退化/重复三角形（对齐Blender BMesh过滤行为）"), SkippedTris);
     }
 
     // --- RefBonesBinary（参考姿势，从骨架获取）---
@@ -385,12 +431,10 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
         ESkeletalMeshSkinningImportVersions::LatestVersion);
     SkeletalMesh->SaveLODImportedData(0, ImportData);
 
-    // 调用USkeletalMesh::Build()构建LOD源数据和渲染数据
+    // 调用USkeletalMesh::Build()启动异步编译，不等待完成
+    // 大网格FinishCompilation会触发UE Stall检测，改为后台编译
     SkeletalMesh->Build();
-    if (SkeletalMesh->IsCompiling())
-    {
-        FSkinnedAssetCompilingManager::Get().FinishCompilation({SkeletalMesh});
-    }
+    // 不调用FinishCompilation：让引擎在后台完成编译，避免阻塞主线程
 
     // Build()不会调用CalculateInvRefMatrices(), 必须在保存前显式计算,
     // 否则序列化的RefBasesInvMatrix为空, 缩略图渲染时check()失败
@@ -453,25 +497,14 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             // LOD诊断: 基本健全性检查
             if (LOD0.NumVertices > 0 && LOD0.Sections.Num() > 0)
             {
-                // 非fray段数量（LOD应与此一致）
-                int32 NonFraySections = 0;
-                for (const FSekiroImportMeshSection& Sec : ModelData.Meshes)
-                {
-                    bool bSkip = false;
-                    if (Sec.MaterialIndex >= 0 && Sec.MaterialIndex < ModelData.Materials.Num())
-                    {
-                        FString MatName = ModelData.Materials[Sec.MaterialIndex].Name.ToLower();
-                        bSkip = MatName.Contains(TEXT("fray")) || MatName.Contains(TEXT("frary"));
-                    }
-                    if (!bSkip) ++NonFraySections;
-                }
-                UE_LOG(LogSekiroImport, Warning, TEXT("[LOD诊断] LOD0=%d顶点 %dSections | Import=%d顶点 %d非fraySections | wedge膨胀率=%.2fx"),
+                int32 ImportSectionCount = ModelData.Meshes.Num();
+                UE_LOG(LogSekiroImport, Warning, TEXT("[LOD诊断] LOD0=%d顶点 %dSections | Import=%d顶点 %dSections | wedge膨胀率=%.2fx"),
                     LOD0.NumVertices, LOD0.Sections.Num(),
-                    ImportData.Points.Num(), NonFraySections,
+                    ImportData.Points.Num(), ImportSectionCount,
                     (float)LOD0.NumVertices / FMath::Max(1, ImportData.Points.Num()));
-                if (LOD0.Sections.Num() != NonFraySections)
+                if (LOD0.Sections.Num() != ImportSectionCount)
                 {
-                    UE_LOG(LogSekiroImport, Error, TEXT("[LOD诊断] Section数量不匹配! LOD=%d, 非fray=%d"), LOD0.Sections.Num(), NonFraySections);
+                    UE_LOG(LogSekiroImport, Error, TEXT("[LOD诊断] Section数量不匹配! LOD=%d, Import=%d"), LOD0.Sections.Num(), ImportSectionCount);
                 }
             }
         }
@@ -565,7 +598,7 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
                 }
                 if (SkelIdx == INDEX_NONE) continue;
 
-                FVector VertPosUE = MeshOrientQ.RotateVector(FVector(Vert.Position));
+                FVector VertPosUE = GetMeshOrientQ().RotateVector(FVector(Vert.Position));
                 FVector BoneFKPos = BoneWorldTransforms[SkelIdx].GetTranslation();
                 float Dist = FVector::Dist(VertPosUE, BoneFKPos);
 
@@ -646,7 +679,7 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
                 for (int32 v = 0; v < Sec.Vertices.Num(); ++v)
                 {
                     const FSekiroImportVertex& Vert = Sec.Vertices[v];
-                    FVector VPos = MeshOrientQ.RotateVector(FVector(Vert.Position));
+                    FVector VPos = GetMeshOrientQ().RotateVector(FVector(Vert.Position));
 
                     for (int32 inf = 0; inf < Vert.GetNumInfluences(); ++inf)
                     {

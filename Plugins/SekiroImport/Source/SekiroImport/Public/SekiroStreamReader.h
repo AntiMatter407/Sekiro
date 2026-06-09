@@ -16,8 +16,9 @@ public:
     /// @param OutBones 输出的骨骼数组（146根含IK）
     /// @param Callback 每解析一个动画即回调
     /// @param MaxAnimations 最大动画数，0=全部
+    /// @param NamePrefixFilter 动画名称前缀过滤（空=全部）
     /// @return 成功解析的动画数量
-    static int32 ParseAll(const FString& FilePath, TArray<FSekiroImportBone>& OutBones, FOnAnimationParsed Callback, int32 MaxAnimations = 0);
+    static int32 ParseAll(const FString& FilePath, TArray<FSekiroImportBone>& OutBones, FOnAnimationParsed Callback, int32 MaxAnimations = 0, const FString& NamePrefixFilter = TEXT(""));
 
     /// 仅解析骨架（不解析动画）
     static bool ParseSkeleton(const FString& FilePath, TArray<FSekiroImportBone>& OutBones);
@@ -57,6 +58,6 @@ private:
 
     // ---- 高层流程 ----
     bool ParseRootSkeleton(TArray<FSekiroImportBone>& OutBones);
-    int32 ParseAnimationsArray(const TArray<FSekiroImportBone>& SkeletonBones, FOnAnimationParsed Callback, int32 MaxAnimations);
-    bool ParseOneAnimation(const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip);
+    int32 ParseAnimationsArray(const TArray<FSekiroImportBone>& SkeletonBones, FOnAnimationParsed Callback, int32 MaxAnimations, const FString& NamePrefixFilter);
+    bool ParseOneAnimation(const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip, const FString& NamePrefixFilter = TEXT(""));
 };

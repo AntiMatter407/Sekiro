@@ -19,8 +19,9 @@ public:
     /// @param FilePath 动画JSON文件路径
     /// @param OutResult 解析结果
     /// @param MaxAnimations 最大解析动画数，0=全部，用于测试和分批导入
+    /// @param NamePrefixFilter 动画名称前缀过滤，仅导入以此为前缀的动画（空=全部）
     /// @return 成功返回true
-    static bool ParseFromFile(const FString& FilePath, FParseResult& OutResult, int32 MaxAnimations = 0);
+    static bool ParseFromFile(const FString& FilePath, FParseResult& OutResult, int32 MaxAnimations = 0, const FString& NamePrefixFilter = TEXT(""));
 
     /// 仅解析骨架数据（不解析动画片段），用于先构建骨架
     /// @param FilePath 动画JSON文件路径

@@ -160,6 +160,20 @@ async def cmd_python(args):
     })
 
 
+def _find_ubt():
+    """根据引擎目录自动探测 UnrealBuildTool.exe 路径"""
+    import os
+    editor = _find_ue_editor()
+    if editor:
+        # UBT 在引擎根目录: Engine/Binaries/Win64/UnrealEditor.exe
+        # → Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe
+        engine_root = os.path.dirname(os.path.dirname(os.path.dirname(editor)))
+        ubt = os.path.join(engine_root, "Binaries", "DotNET", "UnrealBuildTool", "UnrealBuildTool.exe")
+        if os.path.exists(ubt):
+            return ubt
+    return None
+
+
 async def cmd_compile(args):
     """compile.run — 编译 Blueprint/C++"""
     target = args[0] if args else "all"
@@ -177,13 +191,13 @@ async def cmd_compile(args):
 
 
 async def compile_cpp():
-    """C++ 编译：优先通过编辑器 Live Coding，否则直接调 UBT"""
+    """C++ 编译：编辑器在线→Live Coding，离线→UBT编译后自动启动编辑器"""
     import subprocess
     import re
     import os
     import time
 
-    ubt = r"F:\UnrealEngine-5.2\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe"
+    ubt = _find_ubt()
     project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
     log_file = os.path.expandvars(r"%LOCALAPPDATA%\UnrealBuildTool\Log.txt")
 
@@ -193,8 +207,8 @@ async def compile_cpp():
     if editor_online:
         result = await _compile_via_livecoding(log_file)
     else:
-        if not os.path.exists(ubt):
-            return {"error": f"UBT未找到: {ubt}"}
+        if not ubt or not os.path.exists(ubt):
+            return {"error": f"UBT未找到: {ubt or '(自动探测失败)'}"}
         try:
             proc = subprocess.run(
                 [ubt, "SekiroEditor", "Win64", "Development", f"-Project={project}"],
@@ -206,6 +220,13 @@ async def compile_cpp():
             return {"error": f"UBT执行失败: {e}"}
         result = _parse_compile_output(proc.stdout + proc.stderr)
         result["exitCode"] = proc.returncode
+
+        # 编译成功后自动启动编辑器
+        if result.get("success"):
+            start_result = await cmd_editor_start([])
+            result["editor"] = start_result.get("status", "unknown")
+        elif proc.returncode != 0:
+            result["editor"] = "skipped (编译失败)"
 
     if isinstance(result, dict):
         result["mode"] = mode
@@ -412,16 +433,67 @@ async def cmd_blueprint(args):
         return {"error": f"未知 Blueprint 操作: {action}，支持: create, addvar, addfunc, addnode, compile"}
 
 
+def _find_ue_editor():
+    """跨机器自动探测 UnrealEditor.exe 路径"""
+    import os
+
+    # 1. 扫描常见安装目录（最新版本优先）
+    search_roots = []
+    for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)"]:
+        p = os.environ.get(env_var)
+        if p:
+            search_roots.append(os.path.join(p, "Epic Games"))
+    for drive in ["D:", "F:", "E:", "G:"]:
+        for sub in ["Program Files\\Epic Games", "UnrealEngine"]:
+            search_roots.append(os.path.join(drive, sub))
+
+    for root in search_roots:
+        if not os.path.isdir(root):
+            continue
+        try:
+            entries = sorted(os.listdir(root), reverse=True)
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.startswith("UE_"):
+                continue
+            exe = os.path.join(root, entry, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+            if os.path.exists(exe):
+                return exe
+            # 引擎可能直接在 root 下（如 D:\UnrealEngine\UE_5.2）
+            inner = os.path.join(root, entry)
+            for subentry in os.listdir(inner) if os.path.isdir(inner) else []:
+                if subentry.startswith("UE_"):
+                    exe2 = os.path.join(inner, subentry, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+                    if os.path.exists(exe2):
+                        return exe2
+
+    # 2. 回退：解析 Epic Launcher 安装清单
+    launcher_dat = os.path.expandvars(r"%PROGRAMDATA%\\Epic\\UnrealEngineLauncher\\LauncherInstalled.dat")
+    if os.path.exists(launcher_dat):
+        try:
+            data = json.load(open(launcher_dat, "r", encoding="utf-8-sig"))
+            for install in data.get("InstallationList", []):
+                loc = install.get("InstallLocation", "")
+                exe = os.path.join(loc, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+                if os.path.exists(exe):
+                    return exe
+        except Exception:
+            pass
+
+    return None
+
+
 async def cmd_editor_start(args):
     """启动 UE 编辑器并等待 TCP 就绪"""
     import subprocess
     import os
 
-    ue_exe = r"F:\UnrealEngine-5.2\Engine\Binaries\Win64\UnrealEditor.exe"
-    project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
+    ue_exe = _find_ue_editor()
+    if not ue_exe:
+        return {"error": "未找到 UnrealEditor.exe，请确认已安装 UE 引擎"}
 
-    if not os.path.exists(ue_exe):
-        return {"error": f"UnrealEditor.exe 未找到: {ue_exe}"}
+    project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
 
     # 先检查是否已在运行
     if await _ping_editor():
