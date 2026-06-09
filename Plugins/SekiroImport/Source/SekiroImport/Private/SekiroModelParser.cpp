@@ -35,7 +35,7 @@ static FString DeriveBlendModeFromMTD(const FString& MatName, const FString& MTD
     const FString MtdBase = FPaths::GetBaseFilename(MTDPath).ToLower();
     const FString MatLower = MatName.ToLower();
 
-    const bool bIsCloth = SekiroContainsClothKeyword(MatLower) || MtdBase.Contains(TEXT("cloth"));
+    const bool bIsCloth = SekiroContainsClothKeyword(MatLower) || SekiroContainsClothKeyword(MtdBase);
     const bool bIsDecal = MtdBase.Contains(TEXT("decal"));
 
     if (bIsCloth)  return TEXT("Masked");
@@ -228,10 +228,34 @@ void FSekiroModelParser::ParseMaterials(const TArray<TSharedPtr<FJsonValue>>& Ma
         {
             const TSharedPtr<FJsonObject>& MTDInfo = *MTDInfoObjPtr;
             MTDInfo->TryGetStringField(TEXT("ShaderPath"), Mat.ShaderPath);
-            MTDInfo->TryGetStringField(TEXT("BlendMode"), Mat.BlendMode);
+
+            // MTD枚举 → UE5 BlendMode 映射（对齐 Blender common_blender.py:628-638）
+            FString MtdBlend;
+            if (MTDInfo->TryGetStringField(TEXT("BlendMode"), MtdBlend) && !MtdBlend.IsEmpty())
+            {
+                static const TMap<FString, FString> MtdToUE5 = {
+                    { TEXT("Normal"),   TEXT("Opaque") },
+                    { TEXT("TexEdge"),  TEXT("Masked") },
+                    { TEXT("Blend"),    TEXT("Translucent") },
+                    { TEXT("Water"),    TEXT("Translucent") },
+                    { TEXT("Add"),      TEXT("Translucent") },
+                    { TEXT("Sub"),      TEXT("Translucent") },
+                    { TEXT("Mul"),      TEXT("Translucent") },
+                    { TEXT("LSBlend"),  TEXT("Translucent") },
+                    { TEXT("LSAdd"),    TEXT("Translucent") },
+                };
+                if (const FString* UeBlend = MtdToUE5.Find(MtdBlend))
+                {
+                    Mat.BlendMode = *UeBlend;
+                }
+                else
+                {
+                    Mat.BlendMode = MtdBlend; // 未知值直接保留
+                }
+            }
         }
 
-        // MTD→BlendMode 推导（当MTDInfo为空时的回退）
+        // MTD→BlendMode 回退（当MTDInfo无BlendMode时，从MTD路径+材质名关键词推导）
         if (Mat.BlendMode.IsEmpty() && !Mat.MTDPath.IsEmpty())
         {
             Mat.BlendMode = DeriveBlendModeFromMTD(Mat.Name, Mat.MTDPath);

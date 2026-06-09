@@ -324,7 +324,7 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             Wedge0.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge0);
 
-            // 三角形绕序反转: (X,Y,Z) → (X,Z,Y)，对齐Blender管线
+            // 反转绕序 (V0,V2,V1)：FLVER几何法线与顶点法线相反
             SkeletalMeshImportData::FVertex Wedge1;
             Wedge1.VertexIndex = GlobalVertexOffset + Tri.Z;
             Wedge1.UVs[0] = FVector2f(V2.UV.X, 1.0f - V2.UV.Y);
@@ -347,7 +347,7 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             Face.MatIndex = Section.MaterialIndex;
             Face.SmoothingGroups = 0;
 
-            // 逐角点法线（对齐绕序反转: Wedge0=Tri.X, Wedge1=Tri.Z, Wedge2=Tri.Y）
+            // 逐角点法线：跟随反转后的绕序 (V0, V2, V1)
             Face.TangentZ[0] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V0.Normal)).GetSafeNormal());
             Face.TangentZ[1] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V2.Normal)).GetSafeNormal());
             Face.TangentZ[2] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V1.Normal)).GetSafeNormal());

@@ -12,7 +12,7 @@
 #include "Animation/Skeleton.h"
 #include "Animation/AnimSequence.h"
 #include "Engine/SkeletalMesh.h"
-#include "Materials/MaterialInstanceConstant.h"
+#include "Materials/Material.h"
 #include "ReferenceSkeleton.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -518,12 +518,12 @@ bool USekiroImportTest::BuildMaterialsAndDump(const FString& ModelJson, const FS
 	FString MaterialsPath = TEXT("/Game/Characters/Sekiro/Materials");
 
 	// 构建材质（不绑定SkeletalMesh，仅验证创建流程）
-	TArray<UMaterialInstanceConstant*> Results = FSekiroMaterialBuilder::BuildAll(
+	TArray<UMaterial*> Results = FSekiroMaterialBuilder::BuildAll(
 		Data, nullptr, MaterialsPath);
 
 	// 输出材质构建摘要
 	FString Summary;
-	Summary += FString::Printf(TEXT("Total: %d materials, %d MICs created\n\n"),
+	Summary += FString::Printf(TEXT("Total: %d materials, %d created\n\n"),
 		Data.Materials.Num(), Results.Num());
 	Summary += TEXT("Idx|Name|BlendMode|TwoSided|MTDPath\n");
 	Summary += TEXT("---|---|---|---|---\n");
@@ -538,8 +538,8 @@ bool USekiroImportTest::BuildMaterialsAndDump(const FString& ModelJson, const FS
 		bool bTwoSided = false;
 		if (i < Results.Num() && Results[i])
 		{
-			UMaterialInstanceConstant* MIC = Results[i];
-			EBlendMode BM = MIC->BasePropertyOverrides.BlendMode;
+			UMaterial* Mat = Results[i];
+			EBlendMode BM = Mat->BlendMode;
 			switch (BM)
 			{
 			case BLEND_Opaque:      FinalBlend = TEXT("Opaque"); break;
@@ -549,7 +549,7 @@ bool USekiroImportTest::BuildMaterialsAndDump(const FString& ModelJson, const FS
 			case BLEND_Modulate:    FinalBlend = TEXT("Modulate"); break;
 			default:                FinalBlend = FString::Printf(TEXT("Unknown(%d)"), (int32)BM); break;
 			}
-			bTwoSided = MIC->BasePropertyOverrides.TwoSided;
+			bTwoSided = Mat->TwoSided;
 		}
 
 		Summary += FString::Printf(TEXT("%d|%s|%s|%s|%s\n"),
@@ -607,7 +607,7 @@ bool USekiroImportTest::BuildFullModel(const FString& ModelJson, const FString& 
 
 	// 4. 构建材质并分配到网格
 	FString MaterialsPath = TEXT("/Game/Characters/Sekiro/Materials");
-	TArray<UMaterialInstanceConstant*> Materials = FSekiroMaterialBuilder::BuildAll(
+	TArray<UMaterial*> Materials = FSekiroMaterialBuilder::BuildAll(
 		ModelData, Mesh, MaterialsPath);
 	UE_LOG(LogSekiroImport, Warning, TEXT("[FullImport] 材质: %d/%d MICs -> %s"),
 		Materials.Num(), ModelData.Materials.Num(), *MaterialsPath);

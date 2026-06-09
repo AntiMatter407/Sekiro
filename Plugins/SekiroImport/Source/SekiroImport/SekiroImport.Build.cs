@@ -30,6 +30,7 @@ public class SekiroImport : ModuleRules
             "ToolMenus",
             "MainFrame",
             "AppFramework",
+            "AssetRegistry",
         });
     }
 }

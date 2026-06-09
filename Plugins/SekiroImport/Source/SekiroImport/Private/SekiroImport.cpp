@@ -1,7 +1,10 @@
 #include "SekiroImport.h"
 #include "SekiroImportLog.h"
 #include "SekiroImportUI.h"
+#include "SekiroImportPipeline.h"
+#include "SekiroImportSettings.h"
 #include "Modules/ModuleManager.h"
+#include "HAL/IConsoleManager.h"
 #include "ToolMenus.h"
 #include "Styling/AppStyle.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -9,6 +12,34 @@
 #include "HAL/FileManager.h"
 
 #define LOCTEXT_NAMESPACE "FSekiroImportModule"
+
+// 文件作用域控制台命令（DLL生命周期内有效）
+static FAutoConsoleCommand GSekiroRunPipelineCmd(
+    TEXT("SekiroImport.Run"),
+    TEXT("Run the full SekiroImport pipeline. Usage: SekiroImport.Run <ModelJson> <AnimJson> [OutputBasePath]"),
+    FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+    {
+        if (Args.Num() < 2)
+        {
+            UE_LOG(LogSekiroImport, Error, TEXT("Usage: SekiroImport.Run <ModelJson> <AnimJson> [OutputBasePath]"));
+            return;
+        }
+
+        USekiroImportSettings* Settings = NewObject<USekiroImportSettings>();
+        Settings->ModelJsonPath = Args[0];
+        Settings->AnimationJsonPath = Args[1];
+        if (Args.Num() >= 3)
+        {
+            Settings->OutputBasePath = Args[2];
+        }
+        Settings->bImportAnimations = false;
+
+        UE_LOG(LogSekiroImport, Log, TEXT("SekiroImport.Run: Starting pipeline..."));
+        FSekiroImportPipeline::FImportResult Result = FSekiroImportPipeline::Run(*Settings);
+        UE_LOG(LogSekiroImport, Log, TEXT("SekiroImport.Run: Pipeline complete — %d materials, %d errors"),
+            Result.Materials.Num(), Result.Errors.Num());
+    })
+);
 
 // ============================================================================
 // 模块生命周期

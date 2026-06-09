@@ -5,7 +5,7 @@
 
 class USkeleton;
 class USkeletalMesh;
-class UMaterialInstanceConstant;
+class UMaterial;
 class UAnimSequence;
 class USekiroImportSettings;
 
@@ -18,7 +18,7 @@ public:
     {
         USkeleton* Skeleton = nullptr;
         USkeletalMesh* SkeletalMesh = nullptr;
-        TArray<UMaterialInstanceConstant*> Materials;
+        TArray<UMaterial*> Materials;
         TArray<UAnimSequence*> Animations;
         TArray<FString> Errors;
         bool bSuccess = false;

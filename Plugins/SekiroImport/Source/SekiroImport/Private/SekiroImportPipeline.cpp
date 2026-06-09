@@ -9,7 +9,7 @@
 #include "SekiroMaterialBuilder.h"
 #include "Animation/Skeleton.h"
 #include "Engine/SkeletalMesh.h"
-#include "Materials/MaterialInstanceConstant.h"
+#include "Materials/Material.h"
 #include "Rendering/SkeletalMeshModel.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "Rendering/SkeletalMeshLODRenderData.h"
@@ -17,8 +17,10 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetImportTask.h"
+#include "AutomatedAssetImportData.h"
+#include "Factories/TextureFactory.h"
 #include "Editor.h"
+#include "FileHelpers.h"
 #include "HAL/FileManager.h"
 #include "Misc/PackageName.h"
 
@@ -297,22 +299,20 @@ static void VerifyStep4_SkeletalMesh(USkeletalMesh* Mesh, const FSekiroModelData
 }
 
 // ============================================================================
-// 步骤5 验证: 材质实例
+// 步骤5 验证: 材质
 // ============================================================================
-static void VerifyStep5_Materials(const TArray<UMaterialInstanceConstant*>& Materials, USkeletalMesh* Mesh)
+static void VerifyStep5_Materials(const TArray<UMaterial*>& Materials, USkeletalMesh* Mesh)
 {
     VERIFY_LOG(TEXT("========== S5: 材质验证 =========="));
-    VERIFY_LOG(TEXT("  材质实例数: %d"), Materials.Num());
+    VERIFY_LOG(TEXT("  材质数: %d"), Materials.Num());
 
     for (int32 i = 0; i < Materials.Num(); ++i)
     {
-        UMaterialInstanceConstant* MI = Materials[i];
-        if (MI)
+        UMaterial* M = Materials[i];
+        if (M)
         {
-            VERIFY_LOG(TEXT("  MI[%d]: %s Parent=%s BlendMode=%d"),
-                i, *MI->GetName(),
-                MI->Parent ? *MI->Parent->GetName() : TEXT("null"),
-                (int32)MI->BasePropertyOverrides.BlendMode);
+            VERIFY_LOG(TEXT("  M[%d]: %s BlendMode=%d TwoSided=%d"),
+                i, *M->GetName(), (int32)M->BlendMode, (int32)M->TwoSided);
         }
     }
 
@@ -360,6 +360,92 @@ static void VerifyStep6_Animations(const TArray<UAnimSequence*>& Animations, USk
     }
 
     VERIFY_LOG(TEXT("========== S6结束 =========="));
+}
+
+// ============================================================================
+// 步骤4.5: 贴图导入（从Extracted/Textures导入PNG到Content，跳过已存在）
+// ============================================================================
+
+static void ImportTextures(const FString& SourceDir, const FString& DestPath, int32& OutImported, int32& OutSkipped)
+{
+	OutImported = 0;
+	OutSkipped = 0;
+
+	if (!IFileManager::Get().DirectoryExists(*SourceDir))
+	{
+		UE_LOG(LogSekiroImport, Warning, TEXT("贴图源目录不存在: %s"), *SourceDir);
+		return;
+	}
+
+	TArray<FString> PngFiles;
+	IFileManager::Get().FindFiles(PngFiles, *(SourceDir / TEXT("*.png")), true, false);
+	PngFiles.Sort();
+
+	if (PngFiles.Num() == 0)
+	{
+		UE_LOG(LogSekiroImport, Warning, TEXT("未找到PNG文件: %s"), *SourceDir);
+		return;
+	}
+
+	UE_LOG(LogSekiroImport, Log, TEXT("S4.5: 开始导入 %d 张贴图: %s -> %s"), PngFiles.Num(), *SourceDir, *DestPath);
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	int32 Total = PngFiles.Num();
+
+	for (int32 i = 0; i < Total; ++i)
+	{
+		const FString& FileName = PngFiles[i];
+		FString AssetName = FPaths::GetBaseFilename(FileName);
+
+		// 跳过已存在
+		FString AssetObjectPath = FString::Printf(TEXT("%s/%s.%s"), *DestPath, *AssetName, *AssetName);
+		if (LoadObject<UTexture2D>(nullptr, *AssetObjectPath, nullptr, LOAD_Quiet | LOAD_NoWarn))
+		{
+			++OutSkipped;
+			UE_LOG(LogSekiroImport, Verbose, TEXT("  跳过已存在: %s"), *AssetName);
+			continue;
+		}
+
+		// 用 ImportAssetsAutomated + UTextureFactory 绕过 Interchange 异步导入
+		// Interchange 的 ImportAssetAsync + WaitUntilDone 在 GameThread 上死锁
+		// 因为 WaitUntilDone 阻塞 GameThread，而 Interchange 完成回调也需要 GameThread
+		// 指定 UTextureFactory 强制 bUseInterchangeFramework=false，走传统同步 FactoryCreateBinary
+		UTextureFactory* TexFactory = NewObject<UTextureFactory>(GetTransientPackage());
+		TexFactory->bDeferCompression = true; // 延迟压缩，加速导入
+
+		UAutomatedAssetImportData* ImportData = NewObject<UAutomatedAssetImportData>();
+		ImportData->Filenames.Add(SourceDir / FileName);
+		ImportData->DestinationPath = DestPath;
+		ImportData->bReplaceExisting = false;
+		ImportData->bSkipReadOnly = true;
+		ImportData->Factory = TexFactory;
+
+		TArray<UObject*> Imported = AssetTools.ImportAssetsAutomated(ImportData);
+		if (Imported.Num() > 0)
+		{
+			// 保存新导入的包（对齐 AssetTools.cpp:2435）
+			TArray<UPackage*> Pkgs;
+			for (UObject* Obj : Imported)
+			{
+				if (Obj) Pkgs.AddUnique(Obj->GetOutermost());
+			}
+			UEditorLoadingAndSavingUtils::SavePackages(Pkgs, true);
+			++OutImported;
+		}
+		else
+		{
+			UE_LOG(LogSekiroImport, Warning, TEXT("  导入失败: %s"), *FileName);
+		}
+
+		if ((i + 1) % 10 == 0 || (i + 1) == Total)
+		{
+			UE_LOG(LogSekiroImport, Log, TEXT("  贴图进度: %d/%d (导入%d, 跳过%d)"),
+				i + 1, Total, OutImported, OutSkipped);
+		}
+	}
+
+	UE_LOG(LogSekiroImport, Log, TEXT("S4.5: 贴图导入完成: %d 新建, %d 跳过, 共 %d"),
+		OutImported, OutSkipped, Total);
 }
 
 // ============================================================================
@@ -510,10 +596,15 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
     }
 
     // ============================================================
-    // 步骤4.5: 导入贴图（移至步骤6动画之后，且仅首次运行需要）
-    // 贴图同步导入极易触发Stall，暂跳过；材质可先创建无贴图版本
-    // ============================================================
-    REPORT_PROGRESS(TEXT("S4.5: 贴图导入跳过（避免主线程Stall，请手动导入或首次运行）"));
+	// 步骤4.5: 导入贴图（跳过已存在，分批避免Stall）
+	// ============================================================
+	{
+		const FString TextureSourceDir = FPaths::ProjectDir() / TEXT("Extracted/Textures");
+		const FString TextureDestPath = FString::Printf(TEXT("%s/Textures"), *OutputBase);
+		int32 Imported = 0, Skipped = 0;
+		ImportTextures(TextureSourceDir, TextureDestPath, Imported, Skipped);
+		REPORT_PROGRESS(TEXT("S4.5: 贴图导入: %d 新建, %d 跳过"), Imported, Skipped);
+	}
 
     // ============================================================
     // 步骤5: 构建材质

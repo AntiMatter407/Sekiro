@@ -10,7 +10,7 @@ inline bool SekiroContainsClothKeyword(const FString& Str)
 {
     static const TCHAR* Keywords[] = {
         TEXT("cloth"), TEXT("fray"), TEXT("tiling"), TEXT("bandage"),
-        TEXT("muffler"), TEXT("rope"), TEXT("skirt"), TEXT("cape"), TEXT("hair")
+        TEXT("muffler"), TEXT("rope"), TEXT("skirt"), TEXT("cape"), TEXT("hair"), TEXT("fur")
     };
     for (const TCHAR* Kw : Keywords)
     {

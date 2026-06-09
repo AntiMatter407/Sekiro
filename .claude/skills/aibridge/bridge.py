@@ -434,10 +434,41 @@ async def cmd_blueprint(args):
 
 
 def _find_ue_editor():
-    """跨机器自动探测 UnrealEditor.exe 路径"""
+    """跨机器自动探测 UnrealEditor.exe 路径
+    优先级: 当前项目.uproject引擎关联 > 注册表GUID > 常见目录 > Epic Launcher清单
+    """
     import os
+    import json as _json
+    import subprocess
+    import re
 
-    # 1. 扫描常见安装目录（最新版本优先）
+    # ---- 0. 从当前目录的 .uproject 读取引擎关联 ----
+    uproject = _find_uproject()
+    if uproject:
+        try:
+            with open(uproject, "r", encoding="utf-8-sig") as f:
+                data = _json.load(f)
+            assoc = data.get("EngineAssociation", "")
+            if assoc and assoc.startswith("{"):
+                # GUID → 查注册表
+                try:
+                    result = subprocess.run(
+                        ["reg", "query", f"HKCU\\Software\\Epic Games\\Unreal Engine\\Builds",
+                         "/v", assoc],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    m = re.search(r"REG_SZ\s+(.+)", result.stdout)
+                    if m:
+                        engine_root = m.group(1).strip()
+                        exe = os.path.join(engine_root, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+                        if os.path.exists(exe):
+                            return exe
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # ---- 1. 扫描常见安装目录（最新版本优先） ----
     search_roots = []
     for env_var in ["PROGRAMFILES", "PROGRAMFILES(X86)"]:
         p = os.environ.get(env_var)
@@ -456,23 +487,28 @@ def _find_ue_editor():
             continue
         for entry in entries:
             if not entry.startswith("UE_"):
-                continue
+                # 也匹配 UnrealEngine- 前缀的自定义构建
+                if not entry.startswith("UnrealEngine-"):
+                    continue
             exe = os.path.join(root, entry, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
             if os.path.exists(exe):
                 return exe
             # 引擎可能直接在 root 下（如 D:\UnrealEngine\UE_5.2）
-            inner = os.path.join(root, entry)
-            for subentry in os.listdir(inner) if os.path.isdir(inner) else []:
-                if subentry.startswith("UE_"):
-                    exe2 = os.path.join(inner, subentry, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
-                    if os.path.exists(exe2):
-                        return exe2
+            if os.path.isdir(os.path.join(root, entry)):
+                try:
+                    for subentry in os.listdir(os.path.join(root, entry)):
+                        if subentry.startswith("UE_") or subentry.startswith("UnrealEngine-"):
+                            exe2 = os.path.join(root, entry, subentry, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
+                            if os.path.exists(exe2):
+                                return exe2
+                except OSError:
+                    pass
 
-    # 2. 回退：解析 Epic Launcher 安装清单
+    # ---- 2. 回退：解析 Epic Launcher 安装清单 ----
     launcher_dat = os.path.expandvars(r"%PROGRAMDATA%\\Epic\\UnrealEngineLauncher\\LauncherInstalled.dat")
     if os.path.exists(launcher_dat):
         try:
-            data = json.load(open(launcher_dat, "r", encoding="utf-8-sig"))
+            data = _json.load(open(launcher_dat, "r", encoding="utf-8-sig"))
             for install in data.get("InstallationList", []):
                 loc = install.get("InstallLocation", "")
                 exe = os.path.join(loc, "Engine", "Binaries", "Win64", "UnrealEditor.exe")
@@ -481,6 +517,21 @@ def _find_ue_editor():
         except Exception:
             pass
 
+    return None
+
+
+def _find_uproject():
+    """在当前目录及父目录中查找 .uproject 文件"""
+    import os
+    cwd = os.getcwd()
+    for _ in range(5):
+        for f in os.listdir(cwd) if os.path.isdir(cwd) else []:
+            if f.endswith(".uproject"):
+                return os.path.join(cwd, f)
+        parent = os.path.dirname(cwd)
+        if parent == cwd:
+            break
+        cwd = parent
     return None
 
 
