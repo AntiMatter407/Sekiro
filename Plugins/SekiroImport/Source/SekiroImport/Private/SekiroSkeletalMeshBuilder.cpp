@@ -317,24 +317,27 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             const FSekiroImportVertex& V1 = Section.Vertices[Tri.Y];
             const FSekiroImportVertex& V2 = Section.Vertices[Tri.Z];
 
+            // 对齐Blender管线：使用原始绕序 (V0, V1, V2)
+            // UV无需V-flip：FLVER UV为DirectX约定(V=0在顶)，UE5 DirectX渲染直通
+            // Blender管线需flip因Blender为OpenGL约定(V=0在底)，
+            // UE5的FBX导入器(FbxSkeletalMeshImport:3639)会自动1.f-V翻转还原
             SkeletalMeshImportData::FVertex Wedge0;
             Wedge0.VertexIndex = GlobalVertexOffset + Tri.X;
-            Wedge0.UVs[0] = FVector2f(V0.UV.X, 1.0f - V0.UV.Y);
+            Wedge0.UVs[0] = FVector2f(V0.UV.X, V0.UV.Y);
             Wedge0.Color = FColor::White;
             Wedge0.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge0);
 
-            // 反转绕序 (V0,V2,V1)：FLVER几何法线与顶点法线相反
             SkeletalMeshImportData::FVertex Wedge1;
-            Wedge1.VertexIndex = GlobalVertexOffset + Tri.Z;
-            Wedge1.UVs[0] = FVector2f(V2.UV.X, 1.0f - V2.UV.Y);
+            Wedge1.VertexIndex = GlobalVertexOffset + Tri.Y;
+            Wedge1.UVs[0] = FVector2f(V1.UV.X, V1.UV.Y);
             Wedge1.Color = FColor::White;
             Wedge1.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge1);
 
             SkeletalMeshImportData::FVertex Wedge2;
-            Wedge2.VertexIndex = GlobalVertexOffset + Tri.Y;
-            Wedge2.UVs[0] = FVector2f(V1.UV.X, 1.0f - V1.UV.Y);
+            Wedge2.VertexIndex = GlobalVertexOffset + Tri.Z;
+            Wedge2.UVs[0] = FVector2f(V2.UV.X, V2.UV.Y);
             Wedge2.Color = FColor::White;
             Wedge2.MatIndex = Section.MaterialIndex;
             ImportData.Wedges.Add(Wedge2);
@@ -347,10 +350,10 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             Face.MatIndex = Section.MaterialIndex;
             Face.SmoothingGroups = 0;
 
-            // 逐角点法线：跟随反转后的绕序 (V0, V2, V1)
+            // 逐角点法线：跟随原始绕序 (V0, V1, V2)
             Face.TangentZ[0] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V0.Normal)).GetSafeNormal());
-            Face.TangentZ[1] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V2.Normal)).GetSafeNormal());
-            Face.TangentZ[2] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V1.Normal)).GetSafeNormal());
+            Face.TangentZ[1] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V1.Normal)).GetSafeNormal());
+            Face.TangentZ[2] = FVector3f(GetMeshOrientQ().RotateVector(FVector(V2.Normal)).GetSafeNormal());
 
             ImportData.Faces.Add(Face);
         }

@@ -58,10 +58,17 @@ static FString TextureNameFromPath(const FString& Path)
 // ============================================================================
 
 /// 推导BlendMode（对齐Blender common_blender.py:623-652）
-/// 优先级: ParsedBlendMode(模型JSON已解析, UE5格式) > Sekiro_Materials.json MTDInfo > 关键词推导 > 默认Opaque
-static FString DeriveBlendMode(const FString& ParsedBlendMode, const FString& MatName,
+/// 优先级: ResolvedBlendMode(C#导出权威值) > ParsedBlendMode(模型JSON已解析, UE5格式) > Sekiro_Materials.json MTDInfo > 关键词推导 > 默认Opaque
+static FString DeriveBlendMode(const FString& ResolvedBlendMode, const FString& ParsedBlendMode, const FString& MatName,
     const FString& MTDPath, const TSharedPtr<FJsonObject>* JsonEntry)
 {
+    // 优先级0: C#导出器的权威ResolvedBlendMode
+    if (!ResolvedBlendMode.IsEmpty())
+    {
+        UE_LOG(LogSekiroImport, Log, TEXT("[BlendMode] %s: ResolvedBlendMode=%s (C#权威)"), *MatName, *ResolvedBlendMode);
+        return ResolvedBlendMode;
+    }
+
     // 优先级1: 模型JSON中已解析的BlendMode（已通过MTD→UE5映射）
     if (!ParsedBlendMode.IsEmpty())
     {
@@ -75,6 +82,7 @@ static FString DeriveBlendMode(const FString& ParsedBlendMode, const FString& Ma
     const bool bIsDecal = MtdBase.Contains(TEXT("decal"));
 
     // 优先级2: Sekiro_Materials.json 的 MTDInfo.BlendMode
+    // 注：MTDInfo可能是"Normal"但材质实际是cloth/decal，对齐Blender视口逻辑优先cloth
     if (JsonEntry)
     {
         const TSharedPtr<FJsonObject>* MtdInfoObj = nullptr;
@@ -83,6 +91,13 @@ static FString DeriveBlendMode(const FString& ParsedBlendMode, const FString& Ma
             FString MtdBlend = (*MtdInfoObj)->GetStringField(TEXT("BlendMode"));
             if (!MtdBlend.IsEmpty())
             {
+                // MTDInfo "Normal" 不覆盖 cloth/decal 关键词推导
+                if (MtdBlend.Equals(TEXT("Normal"), ESearchCase::IgnoreCase))
+                {
+                    if (bIsCloth) { UE_LOG(LogSekiroImport, Log, TEXT("[BlendMode] %s: MTDInfo=Normal但cloth关键词生效 → Masked"), *MatName); return TEXT("Masked"); }
+                    if (bIsDecal) { UE_LOG(LogSekiroImport, Log, TEXT("[BlendMode] %s: MTDInfo=Normal但decal关键词生效 → Translucent"), *MatName); return TEXT("Translucent"); }
+                }
+
                 static const TMap<FString, FString> MtdToUE5 = {
                     { TEXT("Normal"),   TEXT("Opaque") },
                     { TEXT("TexEdge"),  TEXT("Masked") },
@@ -110,8 +125,12 @@ static FString DeriveBlendMode(const FString& ParsedBlendMode, const FString& Ma
 }
 
 /// 从MTD路径推导TwoSided：贴花/布料材质需要双面渲染
-static bool DeriveTwoSided(const FString& MatName, const FString& MTDPath)
+/// @param bResolvedTwoSided C#导出器的权威值（true/false/未设置=-1）
+static bool DeriveTwoSided(const FString& MatName, const FString& MTDPath, bool bResolvedTwoSided)
 {
+    // C#导出权威值优先
+    if (bResolvedTwoSided) return true;
+
     if (MTDPath.IsEmpty()) return false;
     const FString MtdBase = FPaths::GetBaseFilename(MTDPath).ToLower();
     const FString MatLower = MatName.ToLower();
@@ -128,7 +147,7 @@ static bool DeriveTwoSided(const FString& MatName, const FString& MTDPath)
 /// "BD_M_9000_tops_a" → ("BD_M_9000_tops", "_a")
 static TPair<FString, FString> StripTextureSuffix(const FString& Stem)
 {
-	for (const TCHAR* Suffix : { TEXT("_a"), TEXT("_n"), TEXT("_m"), TEXT("_r") })
+	for (const TCHAR* Suffix : { TEXT("_a"), TEXT("_n"), TEXT("_m"), TEXT("_r"), TEXT("_mask"), TEXT("_em") })
 	{
 		if (Stem.EndsWith(Suffix))
 		{
@@ -156,6 +175,10 @@ static FString ParamNameToSuffix(const FString& ParamName)
 		{ TEXT("reflectancemap"),TEXT("_m") },
 		{ TEXT("roughnessmap"), TEXT("_r") },
 		{ TEXT("shininessmap"), TEXT("_r") },
+		{ TEXT("mask1map"),     TEXT("_mask") },
+		{ TEXT("g_mask1"),      TEXT("_mask") },
+		{ TEXT("ambientocclusionmap"), TEXT("_em") },
+		{ TEXT("emissivemap"),  TEXT("_em") },
 	};
 	for (const auto& Pair : Map)
 	{
@@ -179,7 +202,8 @@ static TPair<int32, FString> ScoreTextureCandidate(
 
 	// 仅处理已知语义后缀
 	if (Suffix != TEXT("_a") && Suffix != TEXT("_n") &&
-		Suffix != TEXT("_m") && Suffix != TEXT("_r"))
+		Suffix != TEXT("_m") && Suffix != TEXT("_r") &&
+		Suffix != TEXT("_mask") && Suffix != TEXT("_em"))
 	{
 		return {0, Suffix};
 	}
@@ -526,10 +550,12 @@ static TArray<TMap<FString, FString>> AssignTexturesGlobally(
 // 父材质管理
 // ============================================================================
 
-/// 确保 M_SekiroBase 父材质存在（首次创建，后续复用）
+/// [已废弃] 确保 M_SekiroBase 父材质存在
+/// 当前主路径 BuildAll() 使用 BuildSingleMaterial() 直接创建独立 UMaterial，
+/// 不再通过 M_SekiroBase + MIC 实例。此函数保留仅作调试对比参考，不再参与主流程。
 /// 对齐 Blender create_materials: _a→BaseColor, _n→Normal(LinearColor), _m→Metallic, _r→Roughness
 /// Alpha同时连接Opacity和OpacityMask，MIC根据BlendMode使用对应通道
-static UMaterial* EnsureBaseMaterial(const FString& ParentPackagePath)
+__declspec(deprecated) static UMaterial* EnsureBaseMaterial(const FString& ParentPackagePath)
 {
     // 删除旧父材质（避免复用有错误的旧版本）
     FString FullPath = ParentPackagePath + TEXT(".M_SekiroBase");
@@ -709,8 +735,8 @@ static UMaterial* BuildSingleMaterial(
 
     Mat->bUsedWithSkeletalMesh = true;
 
-    FString BlendModeStr = DeriveBlendMode(Material.BlendMode, Material.Name, Material.MTDPath, JsonEntry);
-    bool bTwoSided = DeriveTwoSided(Material.Name, Material.MTDPath);
+    FString BlendModeStr = DeriveBlendMode(Material.ResolvedBlendMode, Material.BlendMode, Material.Name, Material.MTDPath, JsonEntry);
+    bool bTwoSided = DeriveTwoSided(Material.Name, Material.MTDPath, Material.bTwoSided);
 
     if (BlendModeStr.Equals(TEXT("Translucent"), ESearchCase::IgnoreCase))
     {
@@ -727,6 +753,24 @@ static UMaterial* BuildSingleMaterial(
     }
     Mat->TwoSided = bTwoSided;
 
+    // JSON key → 标准suffix映射（统一Sekiro_Materials.json和FLVER param命名差异）
+    static const TMap<FString, FString> JsonKeyToSuffix = {
+        { TEXT("AlbedoMap"),    TEXT("_a") },
+        { TEXT("DiffuseMap"),   TEXT("_a") },
+        { TEXT("BaseColorMap"), TEXT("_a") },
+        { TEXT("NormalMap"),    TEXT("_n") },
+        { TEXT("BumpMap"),      TEXT("_n") },
+        { TEXT("MetallicMap"),  TEXT("_m") },
+        { TEXT("SpecularMap"),  TEXT("_m") },
+        { TEXT("ReflectanceMap"),TEXT("_m") },
+        { TEXT("RoughnessMap"), TEXT("_r") },
+        { TEXT("ShininessMap"), TEXT("_r") },
+        { TEXT("Mask1Map"),     TEXT("_mask") },
+        { TEXT("g_Mask1"),      TEXT("_mask") },
+        { TEXT("EmissiveMap"),  TEXT("_em") },
+        { TEXT("AOMap"),        TEXT("_em") },
+    };
+
     // 纹理合并: JSON优先 > C++评分
     TMap<FString, UTexture*> MergedTextures;
 
@@ -741,7 +785,11 @@ static UMaterial* BuildSingleMaterial(
                 if (const FString* CachedPath = TextureCache.Find(TexStem))
                 {
                     if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, **CachedPath))
-                        MergedTextures.Add(Pair.Key, Tex);
+                    {
+                        // 统一JSON key到标准suffix
+                        const FString* MappedKey = JsonKeyToSuffix.Find(Pair.Key);
+                        MergedTextures.Add(MappedKey ? *MappedKey : Pair.Key, Tex);
+                    }
                 }
             }
         }
@@ -757,39 +805,90 @@ static UMaterial* BuildSingleMaterial(
     }
 
     // 纹理采样节点 → 材质属性
-    // 所有SamplerType设为Color: 导入的PNG纹理均为默认sRGB压缩, 不手动覆盖
-    struct FParamDef { const TCHAR* Suffix; EMaterialProperty Property; int32 X; int32 Y; };
+    struct FParamDef { const TCHAR* Suffix; EMaterialProperty Property; EMaterialSamplerType SamplerType; int32 X; int32 Y; };
     const FParamDef Params[] = {
-        { TEXT("_a"), MP_BaseColor,  -600,  200 },
-        { TEXT("_n"), MP_Normal,     -600, -100 },
-        { TEXT("_m"), MP_Metallic,   -600, -400 },
-        { TEXT("_r"), MP_Roughness,  -600, -700 },
+        { TEXT("_a"),    MP_BaseColor,       SAMPLERTYPE_Color,             -600,  200 },
+        { TEXT("_n"),    MP_Normal,          SAMPLERTYPE_Normal,            -600, -100 },
+        { TEXT("_m"),    MP_Metallic,        SAMPLERTYPE_LinearGrayscale,   -600, -400 },
+        { TEXT("_r"),    MP_Roughness,       SAMPLERTYPE_LinearGrayscale,   -600, -700 },
+        { TEXT("_mask"), MP_OpacityMask,     SAMPLERTYPE_Color,             -600,  500 },
+        { TEXT("_em"),   MP_EmissiveColor,   SAMPLERTYPE_Color,             -600,  800 },
     };
 
     UMaterialExpressionTextureSample* AlphaNode = nullptr;
+    UMaterialExpressionTextureSample* MaskNode = nullptr;
+    FString TextureNames; // 诊断用
 
     for (const FParamDef& P : Params)
     {
         UTexture** Found = MergedTextures.Find(P.Suffix);
-        if (!Found || !*Found) continue; // 无纹理则跳过此节点
+        if (!Found || !*Found) continue;
 
         UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(
             Mat, UMaterialExpressionTextureSample::StaticClass(), P.X, P.Y);
         UMaterialExpressionTextureSample* TexNode = Cast<UMaterialExpressionTextureSample>(Expr);
         if (!TexNode) continue;
 
-        // 不设SamplerType: 引擎从纹理导入时的压缩设置自动推断
         TexNode->Texture = *Found;
+        TexNode->SamplerType = P.SamplerType;
         UMaterialEditingLibrary::ConnectMaterialProperty(TexNode, TEXT(""), P.Property);
+
+        if (!TextureNames.IsEmpty()) TextureNames += TEXT(", ");
+        TextureNames += FString::Printf(TEXT("%s=%s"), P.Suffix, *(*Found)->GetName());
 
         if (FCString::Strcmp(P.Suffix, TEXT("_a")) == 0)
             AlphaNode = TexNode;
+        else if (FCString::Strcmp(P.Suffix, TEXT("_mask")) == 0)
+            MaskNode = TexNode;
+    }
+
+    // alpha/mask连接策略：
+    // 1. 如果有_mask纹理 → _mask连OpacityMask（优先于_a.A）
+    // 2. 否则用_a.A连OpacityMask（仅当材质非Opaque时有效）
+    // 3. _a.A始终连Opacity（Translucent需要）
+    if (MaskNode)
+    {
+        // _mask: 默认RGB作为单通道mask，直接连OpacityMask
+        UMaterialEditingLibrary::ConnectMaterialProperty(MaskNode, TEXT(""), MP_OpacityMask);
+        if (!AlphaNode)
+        {
+            UMaterialEditingLibrary::ConnectMaterialProperty(MaskNode, TEXT(""), MP_Opacity);
+        }
     }
 
     if (AlphaNode)
     {
         UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_Opacity);
-        UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_OpacityMask);
+        if (!MaskNode)
+        {
+            UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_OpacityMask);
+        }
+    }
+
+    // 诊断：检查Masked/Translucent材质的alpha可用性
+    const bool bNeedAlpha = Mat->BlendMode == BLEND_Masked || Mat->BlendMode == BLEND_Translucent;
+    if (bNeedAlpha)
+    {
+        bool bHasMask = (MaskNode != nullptr);
+        bool bAlphaHasChannel = false;
+        if (AlphaNode && AlphaNode->Texture)
+        {
+            if (UTexture2D* Tex2D = Cast<UTexture2D>(AlphaNode->Texture))
+            {
+                if (Tex2D->GetPlatformData())
+                {
+                    EPixelFormat PF = Tex2D->GetPlatformData()->PixelFormat;
+                    bAlphaHasChannel = (PF == PF_B8G8R8A8 || PF == PF_DXT5);
+                }
+            }
+        }
+
+        if (!bHasMask && !bAlphaHasChannel)
+        {
+            UE_LOG(LogSekiroImport, Warning,
+                TEXT("材质 '%s': %s + TwoSided=%d, 但_a纹理无alpha通道且无_mask贴图 → 可能显示为黑色卡片"),
+                *AssetName, *BlendModeStr, bTwoSided);
+        }
     }
 
     Mat->PostEditChange();
@@ -804,8 +903,8 @@ static UMaterial* BuildSingleMaterial(
 
     int32 TexCount = 0;
     for (const auto& P : MergedTextures) if (P.Value) ++TexCount;
-    UE_LOG(LogSekiroImport, Log, TEXT("材质 '%s': %s, TwoSided=%d, %d 纹理"),
-        *AssetName, *BlendModeStr, bTwoSided, TexCount);
+    UE_LOG(LogSekiroImport, Log, TEXT("材质 '%s': %s, TwoSided=%d, %d纹理 [%s]"),
+        *AssetName, *BlendModeStr, bTwoSided, TexCount, *TextureNames);
 
     return Mat;
 }

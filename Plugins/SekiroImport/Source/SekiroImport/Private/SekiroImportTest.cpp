@@ -145,9 +145,10 @@ static void DumpVertSkinning(const FSekiroModelData& ModelData, const FReference
 				FVector BonePos = (SkelIdx >= 0 && SkelIdx < BoneWorld.Num())
 					? BoneWorld[SkelIdx].GetTranslation() : FVector::ZeroVector;
 
-				Out += FString::Printf(TEXT("%d|%d|%.4f|%.4f|%.4f|%d|%s|%d|%.6f|%.4f|%.4f|%.4f\n"),
+				Out += FString::Printf(TEXT("%d|%d|%.4f|%.4f|%.4f|%.4f|%.4f|%d|%s|%d|%.6f|%.4f|%.4f|%.4f\n"),
 					s, GlobalVertIdx,
 					VPos.X, VPos.Y, VPos.Z,
+					Vert.UV.X, Vert.UV.Y,
 					LocalIdx, *Name, SkelIdx, Weight,
 					BonePos.X, BonePos.Y, BonePos.Z);
 				++TotalInfluences;
@@ -157,7 +158,7 @@ static void DumpVertSkinning(const FSekiroModelData& ModelData, const FReference
 	}
 	FFileHelper::SaveStringToFile(Out, *(Dir / TEXT("Verts_Cpp.txt")),
 		FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
-	UE_LOG(LogSekiroImport, Warning, TEXT("[TestDump] Verts_Cpp.txt: %d顶点, %d条影响"), GlobalVertIdx, TotalInfluences);
+	UE_LOG(LogSekiroImport, Warning, TEXT("[TestDump] Verts_Cpp.txt: %d顶点, %d条影响, 含UV"), GlobalVertIdx, TotalInfluences);
 }
 
 static void DumpAnimTracks(const FSekiroAnimationClip& Clip, const FReferenceSkeleton& RefSkel, const FString& Dir)

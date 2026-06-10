@@ -117,6 +117,10 @@ void FSekiroImportModule::PopulateSekiroMenu(UToolMenu* Menu)
 
 void FSekiroImportModule::RegisterMenus()
 {
+    // Commandlet模式无UI，跳过菜单注册避免Slate断言崩溃
+    if (IsRunningCommandlet())
+        return;
+
     // 注册顶层菜单
     UToolMenus::Get()->RegisterMenu(
         "LevelEditor.MainMenu.SekiroImport",

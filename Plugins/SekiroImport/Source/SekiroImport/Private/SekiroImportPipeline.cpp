@@ -19,6 +19,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AutomatedAssetImportData.h"
 #include "Factories/TextureFactory.h"
+#include "Engine/Texture2D.h"
 #include "Editor.h"
 #include "FileHelpers.h"
 #include "HAL/FileManager.h"
@@ -366,10 +367,11 @@ static void VerifyStep6_Animations(const TArray<UAnimSequence*>& Animations, USk
 // 步骤4.5: 贴图导入（从Extracted/Textures导入PNG到Content，跳过已存在）
 // ============================================================================
 
-static void ImportTextures(const FString& SourceDir, const FString& DestPath, int32& OutImported, int32& OutSkipped)
+static void ImportTextures(const FString& SourceDir, const FString& DestPath, int32& OutImported, int32& OutSkipped, int32& OutFixed)
 {
 	OutImported = 0;
 	OutSkipped = 0;
+	OutFixed = 0;
 
 	if (!IFileManager::Get().DirectoryExists(*SourceDir))
 	{
@@ -423,14 +425,32 @@ static void ImportTextures(const FString& SourceDir, const FString& DestPath, in
 		TArray<UObject*> Imported = AssetTools.ImportAssetsAutomated(ImportData);
 		if (Imported.Num() > 0)
 		{
-			// 保存新导入的包（对齐 AssetTools.cpp:2435）
-			TArray<UPackage*> Pkgs;
-			for (UObject* Obj : Imported)
-			{
-				if (Obj) Pkgs.AddUnique(Obj->GetOutermost());
-			}
-			UEditorLoadingAndSavingUtils::SavePackages(Pkgs, true);
 			++OutImported;
+
+			// 修正贴图压缩/色彩空间设置（对齐Blender Non-Color逻辑）
+			if (UTexture2D* Tex = Cast<UTexture2D>(Imported[0]))
+			{
+				FString Stem = AssetName.ToLower();
+				bool bChanged = false;
+
+				if (Stem.EndsWith(TEXT("_n")))
+				{
+					if (Tex->SRGB) { Tex->SRGB = false; bChanged = true; }
+					if (Tex->CompressionSettings != TC_Normalmap) { Tex->CompressionSettings = TC_Normalmap; bChanged = true; }
+				}
+				else if (Stem.EndsWith(TEXT("_m")) || Stem.EndsWith(TEXT("_r")))
+				{
+					if (Tex->SRGB) { Tex->SRGB = false; bChanged = true; }
+					if (Tex->CompressionSettings != TC_Grayscale) { Tex->CompressionSettings = TC_Grayscale; bChanged = true; }
+				}
+
+				if (bChanged)
+				{
+					Tex->PostEditChange();
+					Tex->MarkPackageDirty();
+					++OutFixed;
+				}
+			}
 		}
 		else
 		{
@@ -444,8 +464,56 @@ static void ImportTextures(const FString& SourceDir, const FString& DestPath, in
 		}
 	}
 
-	UE_LOG(LogSekiroImport, Log, TEXT("S4.5: 贴图导入完成: %d 新建, %d 跳过, 共 %d"),
-		OutImported, OutSkipped, Total);
+	// 修正所有贴图（含上次导入已存在的）的压缩设置
+	{
+		TArray<UPackage*> FixedPkgs;
+		for (const FString& FileName : PngFiles)
+		{
+			FString AssetName = FPaths::GetBaseFilename(FileName);
+			FString AssetObjectPath = FString::Printf(TEXT("%s/%s.%s"), *DestPath, *AssetName, *AssetName);
+
+			// 使用TryLoad确保不因单个资产缺失而崩溃
+			UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, *AssetObjectPath);
+			if (!Tex)
+			{
+				// 尝试先加载Package再查找
+				FString PackageName = FString::Printf(TEXT("%s/%s"), *DestPath, *AssetName);
+				if (UPackage* Pkg = LoadPackage(nullptr, *PackageName, LOAD_NoWarn | LOAD_Quiet))
+				{
+					Tex = FindObject<UTexture2D>(Pkg, *AssetName);
+				}
+			}
+			if (!Tex) continue;
+
+			FString Stem = AssetName.ToLower();
+			bool bChanged = false;
+
+			if (Stem.EndsWith(TEXT("_n")))
+			{
+				if (Tex->SRGB) { Tex->SRGB = false; bChanged = true; }
+				if (Tex->CompressionSettings != TC_Normalmap) { Tex->CompressionSettings = TC_Normalmap; bChanged = true; }
+			}
+			else if (Stem.EndsWith(TEXT("_m")) || Stem.EndsWith(TEXT("_r")))
+			{
+				if (Tex->SRGB) { Tex->SRGB = false; bChanged = true; }
+				if (Tex->CompressionSettings != TC_Grayscale) { Tex->CompressionSettings = TC_Grayscale; bChanged = true; }
+			}
+
+			if (bChanged)
+			{
+				Tex->PostEditChange();
+				Tex->MarkPackageDirty();
+				FixedPkgs.AddUnique(Tex->GetOutermost());
+				++OutFixed;
+			}
+		}
+
+		if (FixedPkgs.Num() > 0)
+			UEditorLoadingAndSavingUtils::SavePackages(FixedPkgs, false);
+	}
+
+	UE_LOG(LogSekiroImport, Log, TEXT("S4.5: 贴图导入完成: %d 新建, %d 跳过, %d 压缩修正, 共 %d"),
+		OutImported, OutSkipped, OutFixed, Total);
 }
 
 // ============================================================================
@@ -566,6 +634,37 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
         else
         {
             VerifyStep3_ModelData(ModelData);
+
+            // 过滤物理布料section（fray/frary: Havok运行时模拟，静态模型不需要）
+            // 对齐 Blender common_blender.py:1036-1042
+            {
+                TArray<int32> IndicesToRemove;
+                for (int32 i = 0; i < ModelData.Meshes.Num(); ++i)
+                {
+                    int32 MatIdx = ModelData.Meshes[i].MaterialIndex;
+                    if (MatIdx >= 0 && MatIdx < ModelData.Materials.Num())
+                    {
+                        const FString MatLower = ModelData.Materials[MatIdx].Name.ToLower();
+                        if (MatLower.Contains(TEXT("fray")) || MatLower.Contains(TEXT("frary")))
+                        {
+                            IndicesToRemove.Add(i);
+                        }
+                    }
+                }
+                // 从后往前删除以保持索引有效
+                for (int32 j = IndicesToRemove.Num() - 1; j >= 0; --j)
+                {
+                    int32 Idx = IndicesToRemove[j];
+                    UE_LOG(LogSekiroImport, Log, TEXT("[过滤] 跳过物理布料section: %s (Mat=%s)"),
+                        *ModelData.Meshes[Idx].PartName, *ModelData.Materials[ModelData.Meshes[Idx].MaterialIndex].Name);
+                    ModelData.Meshes.RemoveAt(Idx);
+                }
+                if (IndicesToRemove.Num() > 0)
+                {
+                    UE_LOG(LogSekiroImport, Log, TEXT("[过滤] 共移除 %d 个物理布料section, 剩余 %d"),
+                        IndicesToRemove.Num(), ModelData.Meshes.Num());
+                }
+            }
         }
     }
 
@@ -601,9 +700,9 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
 	{
 		const FString TextureSourceDir = FPaths::ProjectDir() / TEXT("Extracted/Textures");
 		const FString TextureDestPath = FString::Printf(TEXT("%s/Textures"), *OutputBase);
-		int32 Imported = 0, Skipped = 0;
-		ImportTextures(TextureSourceDir, TextureDestPath, Imported, Skipped);
-		REPORT_PROGRESS(TEXT("S4.5: 贴图导入: %d 新建, %d 跳过"), Imported, Skipped);
+		int32 Imported = 0, Skipped = 0, Fixed = 0;
+		ImportTextures(TextureSourceDir, TextureDestPath, Imported, Skipped, Fixed);
+		REPORT_PROGRESS(TEXT("S4.5: 贴图导入: %d 新建, %d 跳过, %d 压缩修正"), Imported, Skipped, Fixed);
 	}
 
     // ============================================================

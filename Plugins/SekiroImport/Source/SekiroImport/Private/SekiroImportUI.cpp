@@ -335,7 +335,6 @@ void SSekiroImportDialog::AppendStatus(const FString& Message)
     {
         StatusLogBox->SetText(FText::FromString(StatusLog));
     }
-    FSlateApplication::Get().PumpMessages();
 }
 
 // ============================================================================

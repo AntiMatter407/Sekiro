@@ -222,6 +222,10 @@ void FSekiroModelParser::ParseMaterials(const TArray<TSharedPtr<FJsonValue>>& Ma
             }
         }
 
+        // ResolvedBlendMode / TwoSided (from C# exporter, authoritative)
+        Obj->TryGetStringField(TEXT("ResolvedBlendMode"), Mat.ResolvedBlendMode);
+        Obj->TryGetBoolField(TEXT("TwoSided"), Mat.bTwoSided);
+
         // MTDInfo（可能为null）
         const TSharedPtr<FJsonObject>* MTDInfoObjPtr = nullptr;
         if (Obj->TryGetObjectField(TEXT("MTDInfo"), MTDInfoObjPtr) && *MTDInfoObjPtr)
@@ -255,8 +259,12 @@ void FSekiroModelParser::ParseMaterials(const TArray<TSharedPtr<FJsonValue>>& Ma
             }
         }
 
-        // MTD→BlendMode 回退（当MTDInfo无BlendMode时，从MTD路径+材质名关键词推导）
-        if (Mat.BlendMode.IsEmpty() && !Mat.MTDPath.IsEmpty())
+        // BlendMode回退优先级: ResolvedBlendMode > MTDInfo > 关键词推导
+        if (Mat.BlendMode.IsEmpty() && !Mat.ResolvedBlendMode.IsEmpty())
+        {
+            Mat.BlendMode = Mat.ResolvedBlendMode;
+        }
+        else if (Mat.BlendMode.IsEmpty() && !Mat.MTDPath.IsEmpty())
         {
             Mat.BlendMode = DeriveBlendModeFromMTD(Mat.Name, Mat.MTDPath);
         }

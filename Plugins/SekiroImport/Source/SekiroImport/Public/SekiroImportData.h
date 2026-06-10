@@ -61,6 +61,8 @@ struct FSekiroImportMaterial
 {
     FString Name;
     FString BlendMode;
+    FString ResolvedBlendMode;   // JSON "ResolvedBlendMode" — C# exporter权威值
+    bool bTwoSided = false;      // JSON "TwoSided" — C# exporter权威值
     FString ShaderPath;
     FString MTDPath;
     TMap<FString, FString> TextureSlots;   // 参数名 → 贴图路径
