@@ -21,7 +21,6 @@
 /Extracted/*
 !/Extracted/README.md
 !/Extracted/Sekiro_common_anims.json
-/Content/
 /.idea/
 /.vs/
 /.vsconfig
