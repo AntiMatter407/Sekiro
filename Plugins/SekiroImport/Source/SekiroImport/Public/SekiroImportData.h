@@ -63,6 +63,11 @@ struct FSekiroImportMaterial
     FString BlendMode;
     FString ResolvedBlendMode;   // JSON "ResolvedBlendMode" — C# exporter权威值
     bool bTwoSided = false;      // JSON "TwoSided" — C# exporter权威值
+    bool bIsFur = false;         // JSON "IsFur"
+    bool bIsHair = false;        // JSON "IsHair"
+    bool bIsCloth = false;       // JSON "IsCloth"
+    bool bIsDecal = false;       // JSON "IsDecal"
+    FString DrawStep;            // "Opaque" / "AlphaEdge"
     FString ShaderPath;
     FString MTDPath;
     TMap<FString, FString> TextureSlots;   // 参数名 → 贴图路径

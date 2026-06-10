@@ -226,6 +226,13 @@ void FSekiroModelParser::ParseMaterials(const TArray<TSharedPtr<FJsonValue>>& Ma
         Obj->TryGetStringField(TEXT("ResolvedBlendMode"), Mat.ResolvedBlendMode);
         Obj->TryGetBoolField(TEXT("TwoSided"), Mat.bTwoSided);
 
+        // Fur/Hair/Cloth/Decal classification (from C# exporter)
+        Obj->TryGetBoolField(TEXT("IsFur"), Mat.bIsFur);
+        Obj->TryGetBoolField(TEXT("IsHair"), Mat.bIsHair);
+        Obj->TryGetBoolField(TEXT("IsCloth"), Mat.bIsCloth);
+        Obj->TryGetBoolField(TEXT("IsDecal"), Mat.bIsDecal);
+        Obj->TryGetStringField(TEXT("DrawStep"), Mat.DrawStep);
+
         // MTDInfo（可能为null）
         const TSharedPtr<FJsonObject>* MTDInfoObjPtr = nullptr;
         if (Obj->TryGetObjectField(TEXT("MTDInfo"), MTDInfoObjPtr) && *MTDInfoObjPtr)

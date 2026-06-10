@@ -434,10 +434,13 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
         ESkeletalMeshSkinningImportVersions::LatestVersion);
     SkeletalMesh->SaveLODImportedData(0, ImportData);
 
-    // 调用USkeletalMesh::Build()启动异步编译，不等待完成
-    // 大网格FinishCompilation会触发UE Stall检测，改为后台编译
+    // Build()启动异步编译，必须等待完成再返回。
+    // 不等待会导致后续材质分配保存时引用不一致，材质丢失。
     SkeletalMesh->Build();
-    // 不调用FinishCompilation：让引擎在后台完成编译，避免阻塞主线程
+    {
+        USkinnedAsset* Assets[] = { SkeletalMesh };
+        FSkinnedAssetCompilingManager::Get().FinishCompilation(Assets);
+    }
 
     // Build()不会调用CalculateInvRefMatrices(), 必须在保存前显式计算,
     // 否则序列化的RefBasesInvMatrix为空, 缩略图渲染时check()失败

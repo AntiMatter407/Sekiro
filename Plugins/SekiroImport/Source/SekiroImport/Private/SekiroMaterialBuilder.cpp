@@ -6,8 +6,11 @@
 #include "Engine/Texture2D.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Materials/Material.h"
-#include "Materials/Material.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionFresnel.h"
+#include "Materials/MaterialExpressionMultiply.h"
 #include "MaterialEditingLibrary.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -889,6 +892,90 @@ static UMaterial* BuildSingleMaterial(
                 TEXT("材质 '%s': %s + TwoSided=%d, 但_a纹理无alpha通道且无_mask贴图 → 可能显示为黑色卡片"),
                 *AssetName, *BlendModeStr, bTwoSided);
         }
+    }
+
+    // Fur/Hair rendering — simulates Sekiro's fur shader pipeline.
+    // 1. Softer alpha clipping for thicker-looking hair cards.
+    //    Sekiro's Fur_NTC.spx uses "Edge" channel with alpha dithering.
+    //    UE5 DitherOpacityMask requires TAA and produces visible checkerboard
+    //    patterns on thin hair card edges → instead use a lowered clip threshold
+    //    to pull more edge pixels into the mask, making cards look fuller.
+    // 2. Fresnel rim glow (Sekiro g_GlowScale)
+    // 3. Subsurface Profile for SSS variants (Sekiro Character_AMSN_SSS.spx)
+    if (Material.bIsFur || Material.bIsHair)
+    {
+        // (1) Softer alpha clip for fur edges — lower threshold lets more
+        //     edge pixels pass the mask test without dithering artifacts.
+        const bool bWasOpaque = (Mat->BlendMode == BLEND_Opaque);
+        if (Mat->BlendMode == BLEND_Masked || bWasOpaque)
+        {
+            if (bWasOpaque) Mat->BlendMode = BLEND_Masked;
+            Mat->OpacityMaskClipValue = 0.25f;  // softer edge than default 0.5
+        }
+
+        // Re-connect opacity mask to ensure fur materials have valid alpha
+        if (MaskNode)
+        {
+            UMaterialEditingLibrary::ConnectMaterialProperty(MaskNode, TEXT(""), MP_OpacityMask);
+        }
+        else if (AlphaNode)
+        {
+            UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_OpacityMask);
+        }
+
+        // (2) Fresnel rim glow (Sekiro g_GlowScale)
+        auto* FresnelNode = Cast<UMaterialExpressionFresnel>(
+            UMaterialEditingLibrary::CreateMaterialExpression(
+                Mat, UMaterialExpressionFresnel::StaticClass(), 200, 100));
+
+        auto* RimIntensity = Cast<UMaterialExpressionScalarParameter>(
+            UMaterialEditingLibrary::CreateMaterialExpression(
+                Mat, UMaterialExpressionScalarParameter::StaticClass(), 0, 100));
+        if (RimIntensity)
+        {
+            RimIntensity->ParameterName = TEXT("FurRimIntensity");
+            RimIntensity->DefaultValue = 0.4f;
+        }
+
+        auto* RimColor = Cast<UMaterialExpressionVectorParameter>(
+            UMaterialEditingLibrary::CreateMaterialExpression(
+                Mat, UMaterialExpressionVectorParameter::StaticClass(), 0, 250));
+        if (RimColor)
+        {
+            RimColor->ParameterName = TEXT("FurRimColor");
+            RimColor->DefaultValue = FLinearColor(0.6f, 0.5f, 0.35f, 1.0f);
+        }
+
+        auto* MulColor = Cast<UMaterialExpressionMultiply>(
+            UMaterialEditingLibrary::CreateMaterialExpression(
+                Mat, UMaterialExpressionMultiply::StaticClass(), 400, 100));
+        if (FresnelNode && RimColor && MulColor)
+        {
+            MulColor->A.Expression = FresnelNode;
+            MulColor->B.Expression = RimColor;
+        }
+
+        auto* MulFinal = Cast<UMaterialExpressionMultiply>(
+            UMaterialEditingLibrary::CreateMaterialExpression(
+                Mat, UMaterialExpressionMultiply::StaticClass(), 600, 100));
+        if (MulColor && RimIntensity && MulFinal)
+        {
+            MulFinal->A.Expression = MulColor;
+            MulFinal->B.Expression = RimIntensity;
+            UMaterialEditingLibrary::ConnectMaterialProperty(
+                MulFinal, TEXT(""), MP_EmissiveColor);
+        }
+
+        // (3) Subsurface Profile for SSS fur variants
+        const FString MatLower2 = Material.Name.ToLower();
+        if (MatLower2.Contains(TEXT("sss")))
+        {
+            Mat->SetShadingModel(MSM_SubsurfaceProfile);
+            UE_LOG(LogSekiroImport, Log, TEXT("  [FurSSS] '%s': SubsurfaceProfile shading model"), *AssetName);
+        }
+
+        UE_LOG(LogSekiroImport, Log, TEXT("  [Fur] '%s': Blend=%s Clip=%.2f FresnelRim SSS=%d"),
+            *AssetName, *BlendModeStr, Mat->OpacityMaskClipValue, MatLower2.Contains(TEXT("sss")));
     }
 
     Mat->PostEditChange();
