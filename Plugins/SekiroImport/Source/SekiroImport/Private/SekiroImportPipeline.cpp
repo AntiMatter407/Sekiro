@@ -10,6 +10,7 @@
 #include "SekiroAnimationBuilder.h"
 #include "SekiroMaterialBuilder.h"
 #include "Editor.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 
 FSekiroImportPipeline::FOnProgress FSekiroImportPipeline::OnProgress;
 
@@ -73,7 +74,7 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
 	// ============================================================
 	FSekiroAnimationParser::FParseResult AnimParseResult;
 
-	if (Settings.bImportSkeleton && !Settings.AnimationJsonPath.IsEmpty())
+	if ((Settings.bImportSkeleton || Settings.bImportAnimations) && !Settings.AnimationJsonPath.IsEmpty())
 	{
 		ReportProgress(TEXT("S1: 解析动画JSON: %s"), *Settings.AnimationJsonPath);
 
@@ -158,6 +159,44 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
 		}
 	}
 
+	// 仅导入动画时：加载已存在的骨架
+	if (!Skeleton && Settings.bImportAnimations && !Settings.bImportSkeleton)
+	{
+		FString SkeletonPath = FString::Printf(TEXT("%s/%s"), *OutputBase, *SkeletonName);
+
+		// Try direct load first
+		Skeleton = LoadObject<USkeleton>(nullptr, *SkeletonPath);
+
+		// Fallback: search by class in output directory via AssetRegistry
+		if (!Skeleton)
+		{
+			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+			TArray<FAssetData> AssetDataList;
+			AssetRegistryModule.Get().GetAssetsByPath(FName(*OutputBase), AssetDataList, true);
+			for (const FAssetData& Data : AssetDataList)
+			{
+				if (Data.AssetClassPath == USkeleton::StaticClass()->GetClassPathName())
+				{
+					Skeleton = Cast<USkeleton>(Data.GetAsset());
+					if (Skeleton)
+					{
+						UE_LOG(LogSekiroImport, Log, TEXT("S2: 通过AssetRegistry找到骨架: %s"), *Data.GetObjectPathString());
+						break;
+					}
+				}
+			}
+		}
+
+		if (Skeleton)
+		{
+			ReportProgress(TEXT("S2: 加载已有骨架: %s"), *Skeleton->GetPathName());
+		}
+		else
+		{
+			Result.Errors.Add(FString::Printf(TEXT("骨架不存在: %s，请先导入骨架"), *SkeletonPath));
+		}
+	}
+
 	// ============================================================
 	// 步骤3: 解析模型JSON → 构建骨骼网格体
 	// ============================================================
@@ -226,6 +265,17 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
 		Result.Materials = FSekiroMaterialBuilder::BuildAll(ModelData, SkeletalMesh, MaterialsPath);
 		ReportProgress(TEXT("S5: 材质构建完成: %d 个"), Result.Materials.Num());
 		FSekiroImportVerifier::Materials(Result.Materials, SkeletalMesh);
+	}
+
+	// 仅导入动画时：加载已存在的骨骼网格体（用作动画预览Mesh）
+	if (!SkeletalMesh && Settings.bImportAnimations && !Settings.bImportSkeletalMesh && Skeleton)
+	{
+		FString MeshPath = FString::Printf(TEXT("%s/%s_SkeletalMesh"), *OutputBase, *SkeletonName);
+		SkeletalMesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+		if (SkeletalMesh)
+		{
+			ReportProgress(TEXT("S5.5: 加载已有网格体: %s"), *SkeletalMesh->GetPathName());
+		}
 	}
 
 	// ============================================================

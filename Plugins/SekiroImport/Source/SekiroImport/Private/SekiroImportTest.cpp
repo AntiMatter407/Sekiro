@@ -660,3 +660,34 @@ bool USekiroImportTest::RunImportPipeline(const FString& ModelJson, const FStrin
 
 	return Result.bSuccess;
 }
+
+bool USekiroImportTest::ImportAnimationsOnly(const FString& AnimJson,
+	const FString& OutputBasePath, const FString& AnimationPrefixFilter)
+{
+	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] === 仅动画导入开始 ==="));
+	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] 动画=%s 输出=%s"), *AnimJson, *OutputBasePath);
+
+	USekiroImportSettings* Settings = NewObject<USekiroImportSettings>();
+	Settings->ModelJsonPath = TEXT("");  // 不需要模型JSON
+	Settings->AnimationJsonPath = AnimJson;
+	Settings->OutputBasePath = OutputBasePath;
+	Settings->bImportSkeleton = false;       // 跳过 — 骨架已存在
+	Settings->bImportSkeletalMesh = false;   // 跳过 — 网格体已存在
+	Settings->bImportMaterials = false;      // 跳过 — 材质已存在
+	Settings->bImportAnimations = true;
+	Settings->MaxAnimations = 0;
+	Settings->AnimationPrefixFilter = AnimationPrefixFilter;
+	Settings->OverwriteMode = ESekiroOverwriteMode::Skip;  // 跳过已有动画
+
+	FSekiroImportPipeline::FImportResult Result = FSekiroImportPipeline::Run(*Settings);
+
+	UE_LOG(LogSekiroImport, Warning, TEXT("[Pipeline] === 仅动画导入完成 === 成功=%d 动画=%d 错误=%d"),
+		Result.bSuccess, Result.Animations.Num(), Result.Errors.Num());
+
+	for (const FString& Err : Result.Errors)
+	{
+		UE_LOG(LogSekiroImport, Error, TEXT("[Pipeline] 错误: %s"), *Err);
+	}
+
+	return Result.bSuccess;
+}

@@ -50,4 +50,11 @@ public:
 		const FString& OutputBasePath = TEXT("/Game/Characters/Sekiro"),
 		bool bImportAnimations = false,
 		const FString& AnimationPrefixFilter = TEXT(""));
+
+	/// 仅导入动画 — 骨架/网格体/材质必须已存在（用于增量导入）
+	/// 复用已存在的USkeleton和USkeletalMesh，跳过骨架/网格/材质步骤
+	UFUNCTION(BlueprintCallable, Category="SekiroImport|Pipeline")
+	static bool ImportAnimationsOnly(const FString& AnimJson,
+		const FString& OutputBasePath = TEXT("/Game/Characters/Sekiro"),
+		const FString& AnimationPrefixFilter = TEXT(""));
 };

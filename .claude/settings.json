@@ -14,7 +14,12 @@
       "Write",
       "Edit",
       "Bash(*)",
-      "WebFetch"
+      "WebFetch",
+      "Bash(git status)", 
+      "Bash(git diff *)",       
+      "Bash(git log *)",     
+      "Bash(git add *)",       
+      "Bash(git commit *)"     
     ],
     "ask": [
       "Bash(rm -rf *)",
@@ -22,7 +27,9 @@
       "Write(F:/UnrealEngine-5.2/**)",
       "Edit(F:/UnrealEngine-5.2/**)",
       "Write(D:/Program Files/Epic Games/UE_5.2/**)",
-      "Edit(D:/Program Files/Epic Games/UE_5.2/**)"
+      "Edit(D:/Program Files/Epic Games/UE_5.2/**)",
+      "Bash(git push *)",     
+      "Bash(git reset *)"      
     ],
     "deny": [
       "Read(./.env*)",
