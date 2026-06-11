@@ -17,6 +17,14 @@
         {
             "Name": "PythonScriptPlugin",
             "Enabled": true
+        },
+        {
+            "Name": "EnhancedInput",
+            "Enabled": true
+        },
+        {
+            "Name": "EditorScriptingUtilities",
+            "Enabled": true
         }
     ]
 }

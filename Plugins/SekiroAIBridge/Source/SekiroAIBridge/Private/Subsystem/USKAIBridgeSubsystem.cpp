@@ -8,6 +8,8 @@
 #include "Tools/USKPythonTool.h"
 #include "Tools/USKCompileTool.h"
 #include "Tools/USKBlueprintTool.h"
+#include "Tools/USKEnhancedInputTool.h"
+#include "Tools/USKAnimBlueprintTool.h"
 #include "Security/FSKAccessControl.h"
 #include "Settings/USKAIBridgeSettings.h"
 #include "SekiroAIBridgeLog.h"
@@ -98,6 +100,8 @@ void USKAIBridgeSubsystem::RegisterAllTools()
     ToolRegistry->RegisterTool(NewObject<USKPythonTool>(this));
     ToolRegistry->RegisterTool(NewObject<USKCompileTool>(this));
     ToolRegistry->RegisterTool(NewObject<USKBlueprintTool>(this));
+    ToolRegistry->RegisterTool(NewObject<USKEnhancedInputTool>(this));
+    ToolRegistry->RegisterTool(NewObject<USKAnimBlueprintTool>(this));
 
     UE_LOG(LogSekiroAIBridge, Log, TEXT("已注册 %d 个AI工具"), ToolRegistry->GetAllTools().Num());
 }

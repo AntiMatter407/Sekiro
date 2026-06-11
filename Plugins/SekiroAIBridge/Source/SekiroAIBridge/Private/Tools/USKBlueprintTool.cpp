@@ -8,6 +8,10 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraphSchema_K2.h"
+#include "K2Node_CallFunction.h"
+#include "K2Node_IfThenElse.h"
+#include "K2Node_ExecutionSequence.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Components/ActorComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EditorAssetLibrary.h"
@@ -23,7 +27,7 @@ FString USKBlueprintTool::GetToolDescription() const
 
 FString USKBlueprintTool::GetInputSchemaJson() const
 {
-	return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_variable\",\"add_function\",\"add_component\",\"set_property\",\"get_info\",\"compile\",\"add_interface\"]},\"path\":{\"type\":\"string\",\"description\":\"Blueprint asset path\"},\"parent_class\":{\"type\":\"string\",\"description\":\"Parent class name\"},\"name\":{\"type\":\"string\",\"description\":\"Variable/function/component name\"},\"type\":{\"type\":\"string\",\"description\":\"Variable type or component class\"},\"value\":{\"type\":\"string\",\"description\":\"Property value\"},\"interface_class\":{\"type\":\"string\",\"description\":\"Interface class path\"}},\"required\":[\"action\",\"path\"]}");
+	return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_variable\",\"add_function\",\"add_component\",\"set_property\",\"get_info\",\"compile\",\"add_interface\",\"add_node\"]},\"path\":{\"type\":\"string\",\"description\":\"Blueprint asset path\"},\"parent_class\":{\"type\":\"string\",\"description\":\"Parent class name\"},\"name\":{\"type\":\"string\",\"description\":\"Variable/function/component name\"},\"type\":{\"type\":\"string\",\"description\":\"Variable type or component class\"},\"value\":{\"type\":\"string\",\"description\":\"Property value\"},\"interface_class\":{\"type\":\"string\",\"description\":\"Interface class path\"}},\"required\":[\"action\",\"path\"]}");
 }
 
 bool USKBlueprintTool::RequiresConfirmation() const
@@ -69,6 +73,7 @@ FString USKBlueprintTool::Execute(const FString& ArgsJson, FString& OutError)
     if (Action == TEXT("get_info"))        return HandleGetInfo(ArgsObj, OutError);
     if (Action == TEXT("compile"))         return HandleCompile(ArgsObj, OutError);
     if (Action == TEXT("add_interface"))   return HandleAddInterface(ArgsObj, OutError);
+    if (Action == TEXT("add_node"))        return HandleAddNode(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -483,13 +488,93 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
     {
         IntProp->SetPropertyValue(PropertyAddress, FCString::Atoi(*Value));
     }
+    else if (FInt64Property* Int64Prop = CastField<FInt64Property>(Property))
+    {
+        Int64Prop->SetPropertyValue(PropertyAddress, FCString::Atoi64(*Value));
+    }
     else if (FStrProperty* StrProp = CastField<FStrProperty>(Property))
     {
         StrProp->SetPropertyValue(PropertyAddress, Value);
     }
+    else if (FNameProperty* NameProp = CastField<FNameProperty>(Property))
+    {
+        NameProp->SetPropertyValue(PropertyAddress, FName(*Value));
+    }
+    else if (FTextProperty* TextProp = CastField<FTextProperty>(Property))
+    {
+        TextProp->SetPropertyValue(PropertyAddress, FText::FromString(Value));
+    }
+    else if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+    {
+        if (ByteProp->Enum)
+        {
+            int64 EnumVal = ByteProp->Enum->GetValueByNameString(Value);
+            ByteProp->SetPropertyValue(PropertyAddress, (uint8)EnumVal);
+        }
+        else
+        {
+            ByteProp->SetPropertyValue(PropertyAddress, (uint8)FCString::Atoi(*Value));
+        }
+    }
+    else if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+    {
+        int64 EnumVal = EnumProp->GetEnum()->GetValueByNameString(Value);
+        FNumericProperty* UnderlyingProp = EnumProp->GetUnderlyingProperty();
+        UnderlyingProp->SetIntPropertyValue(PropertyAddress, EnumVal);
+    }
+    else if (FObjectProperty* ObjProp = CastField<FObjectProperty>(Property))
+    {
+        UObject* Obj = LoadObject<UObject>(nullptr, *Value);
+        if (Obj || Value.IsEmpty())
+        {
+            ObjProp->SetObjectPropertyValue(PropertyAddress, Obj);
+        }
+        else
+        {
+            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+        }
+    }
+    else if (FSoftObjectProperty* SoftObjProp = CastField<FSoftObjectProperty>(Property))
+    {
+        FSoftObjectPath SoftPath(Value);
+        FSoftObjectPtr SoftObj(SoftPath);
+        SoftObjProp->SetPropertyValue(PropertyAddress, SoftObj);
+    }
+    else if (FClassProperty* ClassProp = CastField<FClassProperty>(Property))
+    {
+        UClass* Cls = LoadObject<UClass>(nullptr, *Value);
+        if (Cls)
+        {
+            ClassProp->SetObjectPropertyValue(PropertyAddress, Cls);
+        }
+        else
+        {
+            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+        }
+    }
+    else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+    {
+        // FVector / FRotator / FTransform / FColor / FLinearColor 等常见结构体
+        if (StructProp->Struct == TBaseStructure<FVector>::Get()
+            || StructProp->Struct == TBaseStructure<FRotator>::Get()
+            || StructProp->Struct == TBaseStructure<FTransform>::Get()
+            || StructProp->Struct == TBaseStructure<FColor>::Get()
+            || StructProp->Struct == TBaseStructure<FLinearColor>::Get()
+            || StructProp->Struct == TBaseStructure<FVector2D>::Get()
+            || StructProp->Struct == TBaseStructure<FIntPoint>::Get()
+            || StructProp->Struct == TBaseStructure<FGuid>::Get())
+        {
+            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+        }
+        else
+        {
+            // 其他结构体：尝试 ImportText
+            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+        }
+    }
     else
     {
-        // 尝试用FString导入
+        // 通用回退
         Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
     }
 
@@ -654,6 +739,145 @@ FString USKBlueprintTool::HandleAddInterface(const TSharedPtr<FJsonObject>& Args
     TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
     ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
     ResultObj->SetStringField(TEXT("interface"), InterfaceClass->GetName());
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleAddNode — 向函数图/事件图添加K2节点
+// ============================================================================
+
+FString USKBlueprintTool::HandleAddNode(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString NodeType;
+    FString GraphName;
+    if (!Args->TryGetStringField(TEXT("node_type"), NodeType))
+    {
+        OutError = TEXT("缺少 node_type 参数");
+        return FString();
+    }
+    Args->TryGetStringField(TEXT("graph_name"), GraphName);
+    if (GraphName.IsEmpty())
+    {
+        GraphName = TEXT("EventGraph");
+    }
+
+    UBlueprint* BP = LoadBlueprint(AssetPath, OutError);
+    if (!BP) return FString();
+
+    // 查找目标图
+    UEdGraph* TargetGraph = nullptr;
+    for (UEdGraph* Graph : BP->FunctionGraphs)
+    {
+        if (Graph && Graph->GetFName() == FName(*GraphName))
+        {
+            TargetGraph = Graph;
+            break;
+        }
+    }
+    if (!TargetGraph && BP->UbergraphPages.Num() > 0)
+    {
+        TargetGraph = BP->UbergraphPages[0];
+    }
+    if (!TargetGraph)
+    {
+        OutError = FString::Printf(TEXT("图未找到: %s"), *GraphName);
+        return FString();
+    }
+
+    // 解析节点位置
+    int32 PosX = 0, PosY = 0;
+    Args->TryGetNumberField(TEXT("x"), PosX);
+    Args->TryGetNumberField(TEXT("y"), PosY);
+
+    UEdGraphNode* NewNode = nullptr;
+
+    if (NodeType == TEXT("PrintString"))
+    {
+        UK2Node_CallFunction* CallFuncNode = NewObject<UK2Node_CallFunction>(TargetGraph);
+        UFunction* PrintFunc = UKismetSystemLibrary::StaticClass()->FindFunctionByName(TEXT("PrintString"));
+        if (PrintFunc)
+        {
+            CallFuncNode->SetFromFunction(PrintFunc);
+            CallFuncNode->AllocateDefaultPins();
+            FString InString;
+            if (Args->TryGetStringField(TEXT("in_string"), InString))
+            {
+                CallFuncNode->FindPin(TEXT("InString"))->DefaultValue = InString;
+            }
+            NewNode = CallFuncNode;
+        }
+    }
+    else if (NodeType == TEXT("Branch"))
+    {
+        NewNode = NewObject<UK2Node_IfThenElse>(TargetGraph);
+        NewNode->AllocateDefaultPins();
+    }
+    else if (NodeType == TEXT("Sequence"))
+    {
+        UK2Node_ExecutionSequence* SeqNode = NewObject<UK2Node_ExecutionSequence>(TargetGraph);
+        SeqNode->AllocateDefaultPins();
+        int32 NumPins = 2;
+        Args->TryGetNumberField(TEXT("num_pins"), NumPins);
+        // AllocateDefaultPins 默认创建2个Then引脚，需更多时手动添加
+        NewNode = SeqNode;
+    }
+    else if (NodeType == TEXT("CallFunction"))
+    {
+        FString FuncName;
+        if (!Args->TryGetStringField(TEXT("function_name"), FuncName))
+        {
+            OutError = TEXT("CallFunction 类型需要 function_name 参数");
+            return FString();
+        }
+        // 在蓝图父类中查找函数
+        UClass* ParentClass = BP->ParentClass;
+        UFunction* TargetFunc = nullptr;
+        if (ParentClass)
+        {
+            TargetFunc = ParentClass->FindFunctionByName(FName(*FuncName));
+        }
+        if (!TargetFunc)
+        {
+            OutError = FString::Printf(TEXT("函数未找到: %s"), *FuncName);
+            return FString();
+        }
+        UK2Node_CallFunction* CallFuncNode = NewObject<UK2Node_CallFunction>(TargetGraph);
+        CallFuncNode->SetFromFunction(TargetFunc);
+        CallFuncNode->AllocateDefaultPins();
+        NewNode = CallFuncNode;
+    }
+    else
+    {
+        OutError = FString::Printf(TEXT("不支持的 node_type: %s（支持: PrintString, Branch, Sequence, CallFunction）"), *NodeType);
+        return FString();
+    }
+
+    if (!NewNode)
+    {
+        OutError = FString::Printf(TEXT("创建节点失败: %s"), *NodeType);
+        return FString();
+    }
+
+    NewNode->NodePosX = PosX;
+    NewNode->NodePosY = PosY;
+    TargetGraph->AddNode(NewNode);
+
+    BP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(BP);
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObj->SetStringField(TEXT("graph"), GraphName);
+    ResultObj->SetStringField(TEXT("node_type"), NodeType);
+    ResultObj->SetStringField(TEXT("node_id"), NewNode->GetFName().ToString());
     ResultObj->SetBoolField(TEXT("success"), true);
 
     FString Output;

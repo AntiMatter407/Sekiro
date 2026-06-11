@@ -394,8 +394,8 @@ async def cmd_blueprint(args):
             "arguments": {
                 "action": "add_variable",
                 "path": args[1],
-                "variableName": args[2],
-                "variableType": args[3]
+                "name": args[2],
+                "type": args[3]
             }
         })
     elif action == "addfunc":
@@ -406,20 +406,24 @@ async def cmd_blueprint(args):
             "arguments": {
                 "action": "add_function",
                 "path": args[1],
-                "functionName": args[2]
+                "name": args[2]
             }
         })
     elif action == "addnode":
         if len(args) < 4:
-            return {"error": "用法: blueprint addnode <蓝图路径> <函数名> <节点类型>"}
+            return {"error": "用法: blueprint addnode <蓝图路径> <图名> <节点类型>"}
+        kwargs = {
+            "action": "add_node",
+            "path": args[1],
+            "graph_name": args[2],
+            "node_type": args[3]
+        }
+        # 可选：PrintString 的 InString 参数
+        if len(args) > 4:
+            kwargs["in_string"] = args[4]
         return await send_request("tools/call", {
             "name": "blueprint",
-            "arguments": {
-                "action": "add_node",
-                "path": args[1],
-                "functionName": args[2],
-                "nodeType": args[3]
-            }
+            "arguments": kwargs
         })
     elif action == "compile":
         path = args[1] if len(args) > 1 else None
@@ -431,6 +435,153 @@ async def cmd_blueprint(args):
         })
     else:
         return {"error": f"未知 Blueprint 操作: {action}，支持: create, addvar, addfunc, addnode, compile"}
+
+
+async def cmd_enhanced_input(args):
+    """enhanced_input — Enhanced Input 资产操作"""
+    if not args:
+        return {"error": "用法: enhanced_input <create_action|create_context|map_key|unmap_key|info> [参数...]"}
+
+    action = args[0]
+    if action == "create_action":
+        # bridge.py enhanced_input create_action /Game/Input/IA_Jump axis1d
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: enhanced_input create_action <路径> [value_type]"}
+        value_type = args[2] if len(args) > 2 else "bool"
+        return await send_request("tools/call", {
+            "name": "enhanced_input",
+            "arguments": {"action": "create_input_action", "path": path, "value_type": value_type}
+        })
+    elif action == "create_context":
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: enhanced_input create_context <路径>"}
+        return await send_request("tools/call", {
+            "name": "enhanced_input",
+            "arguments": {"action": "create_mapping_context", "path": path}
+        })
+    elif action == "map_key":
+        # bridge.py enhanced_input map_key <IMC路径> <IA路径> <按键>
+        if len(args) < 4:
+            return {"error": "用法: enhanced_input map_key <IMC路径> <IA路径> <按键>"}
+        return await send_request("tools/call", {
+            "name": "enhanced_input",
+            "arguments": {
+                "action": "map_key",
+                "context_path": args[1],
+                "action_path": args[2],
+                "key": args[3]
+            }
+        })
+    elif action == "unmap_key":
+        if len(args) < 4:
+            return {"error": "用法: enhanced_input unmap_key <IMC路径> <IA路径> <按键>"}
+        return await send_request("tools/call", {
+            "name": "enhanced_input",
+            "arguments": {
+                "action": "unmap_key",
+                "context_path": args[1],
+                "action_path": args[2],
+                "key": args[3]
+            }
+        })
+    elif action == "info":
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: enhanced_input info <路径>"}
+        return await send_request("tools/call", {
+            "name": "enhanced_input",
+            "arguments": {"action": "get_info", "path": path}
+        })
+    elif action == "configure_triggers":
+        # bridge.py enhanced_input configure_triggers <路径> <trigger1> [trigger2...]
+        if len(args) < 3:
+            return {"error": "用法: enhanced_input configure_triggers <路径> <trigger类型列表...>"}
+        return await send_request("tools/call", {
+            "name": "enhanced_input",
+            "arguments": {
+                "action": "configure_triggers",
+                "path": args[1],
+                "triggers": args[2:]
+            }
+        })
+    else:
+        return {"error": f"未知操作: {action}，支持: create_action, create_context, map_key, unmap_key, info, configure_triggers"}
+
+
+async def cmd_anim_blueprint(args):
+    """anim_blueprint — 动画蓝图操作"""
+    if not args:
+        return {"error": "用法: anim_blueprint <create|add_state|add_transition|add_node|info|compile> [参数...]"}
+
+    action = args[0]
+    if action == "create":
+        # bridge.py anim_blueprint create /Game/Anim/ABP_Char /Game/Anim/SK_Char
+        if len(args) < 3:
+            return {"error": "用法: anim_blueprint create <路径> <骨架路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {"action": "create", "path": args[1], "skeleton_path": args[2]}
+        })
+    elif action == "add_state":
+        # bridge.py anim_blueprint add_state /Game/Anim/ABP_Char Idle
+        if len(args) < 3:
+            return {"error": "用法: anim_blueprint add_state <ABP路径> <状态名>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {"action": "add_state", "path": args[1], "state_name": args[2]}
+        })
+    elif action == "add_transition":
+        # bridge.py anim_blueprint add_transition <ABP路径> <源状态> <目标状态> [crossfade] [blend_mode]
+        if len(args) < 4:
+            return {"error": "用法: anim_blueprint add_transition <ABP路径> <源状态> <目标状态> [crossfade_duration] [blend_mode]"}
+        kwargs = {
+            "action": "add_transition",
+            "path": args[1],
+            "from_state": args[2],
+            "to_state": args[3]
+        }
+        if len(args) > 4:
+            kwargs["crossfade_duration"] = float(args[4])
+        if len(args) > 5:
+            kwargs["blend_mode"] = args[5]
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": kwargs
+        })
+    elif action == "add_node":
+        # bridge.py anim_blueprint add_node <ABP路径> <状态名> <sequence_player|blend_space_player> <资产路径>
+        if len(args) < 5:
+            return {"error": "用法: anim_blueprint add_node <ABP路径> <状态名> <节点类型> <动画资产路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {
+                "action": "add_node",
+                "path": args[1],
+                "state_name": args[2],
+                "node_type": args[3],
+                "asset_path": args[4]
+            }
+        })
+    elif action == "info":
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: anim_blueprint info <ABP路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {"action": "get_info", "path": path}
+        })
+    elif action == "compile":
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: anim_blueprint compile <ABP路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {"action": "compile", "path": path}
+        })
+    else:
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, add_node, info, compile"}
 
 
 def _find_ue_editor():
@@ -811,16 +962,18 @@ async def cmd_editor(args):
 
 
 COMMANDS = {
-    "query":     cmd_query,
-    "console":   cmd_console,
-    "asset":     cmd_asset,
-    "python":    cmd_python,
-    "compile":   cmd_compile,
-    "blueprint": cmd_blueprint,
-    "crash":     cmd_crash,
-    "editor":    cmd_editor,
-    "ping":      cmd_ping,
-    "tools":     cmd_tools,
+    "query":           cmd_query,
+    "console":         cmd_console,
+    "asset":           cmd_asset,
+    "python":          cmd_python,
+    "compile":         cmd_compile,
+    "blueprint":       cmd_blueprint,
+    "enhanced_input":  cmd_enhanced_input,
+    "anim_blueprint":  cmd_anim_blueprint,
+    "crash":           cmd_crash,
+    "editor":          cmd_editor,
+    "ping":            cmd_ping,
+    "tools":           cmd_tools,
 }
 
 
@@ -842,8 +995,20 @@ def print_help():
   blueprint create <路径> [父类]              创建 Blueprint
   blueprint addvar <路径> <变量名> <类型>     添加变量
   blueprint addfunc <路径> <函数名>          添加函数
-  blueprint addnode <路径> <函数名> <节点>   添加节点
+  blueprint addnode <路径> <图名> <节点类型>  添加K2节点
   blueprint compile <路径>                   编译 Blueprint
+  enhanced_input create_action <路径> [类型]  创建 InputAction
+  enhanced_input create_context <路径>        创建 InputMappingContext
+  enhanced_input map_key <IMC> <IA> <键>     绑定按键映射
+  enhanced_input unmap_key <IMC> <IA> <键>   移除按键映射
+  enhanced_input info <路径>                  查询 EnhancedInput 资产
+  enhanced_input configure_triggers <路径> <T..> 配置 InputAction 触发器
+  anim_blueprint create <路径> <骨架>         创建 AnimBlueprint
+  anim_blueprint add_state <路径> <状态名>    添加状态
+  anim_blueprint add_transition <路径> <A> <B> 添加转换
+  anim_blueprint add_node <路径> <状态> <类型> <资产> 添加动画节点
+  anim_blueprint info <路径>                  查询 AnimBP 结构
+  anim_blueprint compile <路径>               编译 AnimBlueprint
   editor start                               启动 UE 编辑器（自动清理 cmd 窗口）
   editor stop                                关闭编辑器及子进程（LiveCoding 等）
   editor restart                             重启编辑器

@@ -1,6 +1,6 @@
 ---
 name: aibridge
-description: "通过 TCP JSON-RPC 操控 UE5 编辑器：查询状态、执行控制台命令、操作资产、运行 Python、编译 Blueprint、创建/修改 Blueprint。"
+description: "通过 TCP JSON-RPC 操控 UE5 编辑器：查询状态、执行控制台命令、操作资产、运行 Python、编译 Blueprint、创建/修改 Blueprint/EnhancedInput/AnimBlueprint。"
 argument-hint: "<命令> [参数...]"
 user-invocable: true
 allowed-tools: Bash, Read
@@ -8,8 +8,8 @@ allowed-tools: Bash, Read
 
 # SekiroAIBridge — UE5 编辑器 AI 操控
 
-通过 TCP JSON-RPC 连接运行中的 UE 编辑器，执行 6 类操作：
-查询、控制台、资产、Python、编译、Blueprint。
+通过 TCP JSON-RPC 连接运行中的 UE 编辑器，执行 8 类操作：
+查询、控制台、资产、Python、编译、Blueprint、EnhancedInput、AnimBlueprint。
 
 > **前提**：UE 编辑器运行中，SekiroAIBridge 插件已加载（监听 127.0.0.1:9877）。
 > 用户可手动管理编辑器，也可请求 AI 通过 `editor start/stop/restart` 命令启停编辑器。
@@ -99,6 +99,41 @@ python3 .claude/skills/aibridge/bridge.py blueprint addnode /Game/BP_MyActor OnD
 python3 .claude/skills/aibridge/bridge.py blueprint compile /Game/BP_MyActor
 ```
 
+### Enhanced Input 操作
+
+创建和配置 Enhanced Input 系统的资产：InputAction、InputMappingContext、按键映射。
+
+```bash
+python3 .claude/skills/aibridge/bridge.py enhanced_input create_action /Game/Input/IA_Jump axis1d
+python3 .claude/skills/aibridge/bridge.py enhanced_input create_context /Game/Input/IMC_Default
+python3 .claude/skills/aibridge/bridge.py enhanced_input map_key /Game/Input/IMC_Default /Game/Input/IA_Jump SpaceBar
+python3 .claude/skills/aibridge/bridge.py enhanced_input unmap_key /Game/Input/IMC_Default /Game/Input/IA_Jump SpaceBar
+python3 .claude/skills/aibridge/bridge.py enhanced_input info /Game/Input/IA_Jump
+```
+
+**create_action 参数**: value_type 可选 `bool`(默认) / `axis1d` / `axis2d` / `axis3d`
+**map_key 参数**: `<IMC路径> <IA路径> <按键名>`，按键名如 `SpaceBar` / `LeftMouseButton` / `W` 等
+
+### Animation Blueprint 操作
+
+创建动画蓝图、管理状态机（状态/转换）、添加动画节点。
+
+```bash
+python3 .claude/skills/aibridge/bridge.py anim_blueprint create /Game/Anim/ABP_Character /Game/Anim/SK_Character
+python3 .claude/skills/aibridge/bridge.py anim_blueprint add_state /Game/Anim/ABP_Character Idle
+python3 .claude/skills/aibridge/bridge.py anim_blueprint add_state /Game/Anim/ABP_Character Run
+python3 .claude/skills/aibridge/bridge.py anim_blueprint add_transition /Game/Anim/ABP_Character Idle Run 0.15 cubic
+python3 .claude/skills/aibridge/bridge.py anim_blueprint add_node /Game/Anim/ABP_Character Idle sequence_player /Game/Anim/A_Idle
+python3 .claude/skills/aibridge/bridge.py anim_blueprint info /Game/Anim/ABP_Character
+python3 .claude/skills/aibridge/bridge.py anim_blueprint compile /Game/Anim/ABP_Character
+```
+
+**create 参数**: `<ABP路径> <骨架路径>` — 骨架必须是已存在的 USkeleton 资产
+**add_node 参数**: `<ABP路径> <状态名> <节点类型> <动画资产路径>`
+  - 节点类型: `sequence_player` (需 AnimSequence) / `blend_space_player` (需 BlendSpace)
+**add_transition 参数**: `<ABP路径> <源状态> <目标状态> [crossfade_duration] [blend_mode]`
+  - blend_mode 可选: linear / cubic / sinusoidal / cubic_in_out 等
+
 ### 工具列表
 
 ```bash
@@ -149,6 +184,8 @@ python3 .claude/skills/aibridge/bridge.py crash list       # 列出历史崩溃
 | `compile all` | 可能触发大量编译 |
 | `blueprint create` | 创建新 Blueprint |
 | `blueprint addvar/addfunc/addnode` | 修改 Blueprint 结构 |
+| `enhanced_input map_key/unmap_key` | 修改输入映射配置 |
+| `anim_blueprint add_state/add_transition/add_node` | 修改动画蓝图图结构 |
 | `console` 带写入命令 | 可能修改编辑器状态 |
 
 **确认格式**：

@@ -43,6 +43,13 @@ public class SekiroAIBridge : ModuleRules
             // 项目配置
             "DeveloperSettings",
 
+            // Enhanced Input
+            "EnhancedInput",
+
+            // Animation Blueprint 编辑
+            "AnimGraph",
+            "AnimGraphRuntime",
+
             // 消息
             "ApplicationCore",
             "InputCore",

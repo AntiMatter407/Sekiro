@@ -7,60 +7,186 @@
 #include "InputActionValue.h"
 #include "SekiroCharacter.generated.h"
 
+// ============================================================================
+// ASekiroCharacter — 只狼玩家角色
+// 　　移动系统：行走/奔跑/冲刺/蹲下/闪避方向
+// 　　战斗/交互：桩函数，子类覆盖实现
+// ============================================================================
+
+class UInputMappingContext;
+class UInputAction;
+class USpringArmComponent;
+class UCameraComponent;
 
 UCLASS(config=Game)
 class ASekiroCharacter : public ACharacter
 {
 	GENERATED_BODY()
 
-	/** Camera boom positioning the camera behind the character */
+	// ── 组件 ──────────────────────────────────────────────
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
-	class USpringArmComponent* CameraBoom;
+	TObjectPtr<USpringArmComponent> CameraBoom;
 
-	/** Follow camera */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
-	class UCameraComponent* FollowCamera;
-	
-	/** MappingContext */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
-	class UInputMappingContext* DefaultMappingContext;
+	TObjectPtr<UCameraComponent> FollowCamera;
 
-	/** Jump Input Action */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
-	class UInputAction* JumpAction;
+	// ── InputMappingContext ───────────────────────────────
 
-	/** Move Input Action */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
-	class UInputAction* MoveAction;
+	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
-	/** Look Input Action */
+	// ── InputAction 引用 ──────────────────────────────────
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
-	class UInputAction* LookAction;
+	TObjectPtr<UInputAction> MoveAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> LookAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> JumpAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> AttackAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> GuardAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> DodgeAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> InteractAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> UseItemAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> GrappleAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> ProstheticAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> LockOnAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> CrouchAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> HealingGourdAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> CycleItemNextAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> CycleItemPrevAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> PauseAction;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> MenuAction;
+
+	// ── 移动速度 ──────────────────────────────────────────
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed", meta = (AllowPrivateAccess = "true"))
+	float SprintSpeed = 600.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed", meta = (AllowPrivateAccess = "true"))
+	float CrouchSpeed = 200.f;
+
+	// ── 移动状态 ──────────────────────────────────────────
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
+	uint32 bIsSprinting : 1;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
+	uint32 bIsDodging : 1;
+
+	/**
+	 * 闪避方向（-1=后, 0=无/原地, 1=前）
+	 * 当前帧由 Move() 沿输入方向计算后写入；
+	 * 战斗系统调用 DodgePressed/DodgeReleased 时可利用该值选择动画/行为。
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
+	float DodgeDirection = 0.f;
+
+	/** 允许空中闪避（忍具派生等场景） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Dodge", meta = (AllowPrivateAccess = "true"))
+	uint32 bAllowAirDodge : 1;
+
+	// ── 视角灵敏度 ────────────────────────────────────────
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity", meta = (AllowPrivateAccess = "true"))
+	float LookSensitivityYaw = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity", meta = (AllowPrivateAccess = "true"))
+	float LookSensitivityPitch = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity", meta = (AllowPrivateAccess = "true"))
+	uint32 bInvertPitch : 1;
 
 public:
 	ASekiroCharacter();
-	
 
 protected:
+	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
+	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
-	/** Called for movement input */
+	// ── 移动 ──────────────────────────────────────────────
+
+	/** 主移动输入（Axis2D）→ 方向 + 速度调节 */
 	void Move(const FInputActionValue& Value);
 
-	/** Called for looking input */
+	/** 视角输入（Axis2D）→ 镜头旋转 */
 	void Look(const FInputActionValue& Value);
-			
 
-protected:
-	// APawn interface
-	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-	
-	// To add mapping context
-	virtual void BeginPlay();
+	/** 冲刺开始（按住闪避键 + 有移动输入时） */
+	void SprintPressed();
+	void SprintReleased();
+
+	/** 蹲下（切换） */
+	void CrouchToggle();
+
+	/** 闪避按下 → 触发垫步 */
+	void DodgePressed();
+	/** 闪避松开 → 结束垫步状态 */
+	void DodgeReleased();
+
+	// ── 战斗（桩）──────────────────────────────────────────
+
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void AttackPressed();
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void AttackReleased();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void GuardPressed();
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void GuardReleased();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void LockOnPressed();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void ProstheticPressed();
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void ProstheticReleased();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void GrapplePressed();
+
+	// ── 交互（桩）──────────────────────────────────────────
+
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void InteractPressed();
+
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void UseItemPressed();
+
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void HealingGourdPressed();
+
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void CycleItemNext();
+	UFUNCTION(BlueprintCallable, Category = "Item")
+	void CycleItemPrev();
+
+	// ── 系统（桩）──────────────────────────────────────────
+
+	UFUNCTION(BlueprintCallable, Category = "System")
+	void PausePressed();
+	UFUNCTION(BlueprintCallable, Category = "System")
+	void MenuPressed();
 
 public:
-	/** Returns CameraBoom subobject **/
-	FORCEINLINE class USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
-	/** Returns FollowCamera subobject **/
-	FORCEINLINE class UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
+	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 };
-
