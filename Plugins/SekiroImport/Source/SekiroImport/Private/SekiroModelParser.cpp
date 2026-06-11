@@ -484,6 +484,58 @@ bool FSekiroModelParser::ParseFromFile(const FString& FilePath, FSekiroModelData
         UE_LOG(LogSekiroImport, Warning, TEXT("未找到Meshes数组"));
     }
 
+    // ResolvedMaterials（C# exporter权威贴图分配）
+    // 语义键映射: albedo→_a, normal→_n, metallic→_m, roughness→_r, opacityMask→_mask, emissive→_em
+    const TArray<TSharedPtr<FJsonValue>>* ResolvedMatsArray = nullptr;
+    if (RootObject->TryGetArrayField(TEXT("ResolvedMaterials"), ResolvedMatsArray))
+    {
+        static const TMap<FString, FString> SemanticToSuffix = {
+            { TEXT("albedo"),      TEXT("_a") },
+            { TEXT("normal"),      TEXT("_n") },
+            { TEXT("metallic"),    TEXT("_m") },
+            { TEXT("roughness"),   TEXT("_r") },
+            { TEXT("opacityMask"), TEXT("_mask") },
+            { TEXT("emissive"),    TEXT("_em") },
+        };
+
+        for (const TSharedPtr<FJsonValue>& RmVal : *ResolvedMatsArray)
+        {
+            const TSharedPtr<FJsonObject>* RmObjPtr = nullptr;
+            if (!RmVal->TryGetObject(RmObjPtr)) continue;
+            const TSharedPtr<FJsonObject>& RmObj = *RmObjPtr;
+
+            FString RmName = RmObj->GetStringField(TEXT("Name"));
+
+            // 按Name匹配回Materials
+            FSekiroImportMaterial* Mat = OutData.Materials.FindByPredicate(
+                [&RmName](const FSekiroImportMaterial& M) { return M.Name == RmName; });
+            if (!Mat) continue;
+
+            const TSharedPtr<FJsonObject>* TexObj = nullptr;
+            if (RmObj->TryGetObjectField(TEXT("Textures"), TexObj))
+            {
+                for (const auto& Pair : (*TexObj)->Values)
+                {
+                    if (const FString* Suffix = SemanticToSuffix.Find(Pair.Key))
+                    {
+                        Mat->ResolvedTextures.Add(*Suffix, Pair.Value->AsString());
+                    }
+                    else
+                    {
+                        // 未知键直接保留原名（如 "1a" 等）
+                        Mat->ResolvedTextures.Add(Pair.Key, Pair.Value->AsString());
+                    }
+                }
+            }
+        }
+
+        int32 ResolvedCount = 0;
+        for (const auto& M : OutData.Materials)
+            if (M.ResolvedTextures.Num() > 0) ++ResolvedCount;
+        UE_LOG(LogSekiroImport, Log, TEXT("ResolvedMaterials: %d 项已解析, %d 材质获得权威贴图分配"),
+            ResolvedMatsArray->Num(), ResolvedCount);
+    }
+
     UE_LOG(LogSekiroImport, Log, TEXT("模型JSON解析完成: %d骨骼, %d材质, %d网格体Section"),
         OutData.Bones.Num(), OutData.Materials.Num(), OutData.Meshes.Num());
 

@@ -9,6 +9,7 @@
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionFresnel.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "MaterialEditingLibrary.h"
@@ -148,9 +149,13 @@ static bool DeriveTwoSided(const FString& MatName, const FString& MTDPath, bool 
 
 /// 从纹理文件名拆分核心名和语义后缀
 /// "BD_M_9000_tops_a" → ("BD_M_9000_tops", "_a")
+/// "FC_M_0100_hair_1a" → ("FC_M_0100_hair_1", "_1a") — DSAnimStudio second set
 static TPair<FString, FString> StripTextureSuffix(const FString& Stem)
 {
-	for (const TCHAR* Suffix : { TEXT("_a"), TEXT("_n"), TEXT("_m"), TEXT("_r"), TEXT("_mask"), TEXT("_em") })
+	// _1a/_1n are DSAnimStudio second-set textures (Albedo2, Normal2).
+	// _1m is deliberately excluded — "eye_1m" is a color mask, not metallic.
+	for (const TCHAR* Suffix : { TEXT("_1a"), TEXT("_1n"),
+	                             TEXT("_a"), TEXT("_n"), TEXT("_m"), TEXT("_r"), TEXT("_mask"), TEXT("_em") })
 	{
 		if (Stem.EndsWith(Suffix))
 		{
@@ -407,20 +412,34 @@ static TArray<TMap<FString, FString>> AssignTexturesGlobally(
 			}
 		}
 
-		// 0b: AvailableTextures (TPF filename list)
-		for (const FString& TexFn : Mat.AvailableTextures)
+		// 0b: AvailableTextures (TPF filename list) — material-name-aware scoring
+		// Old behavior: first PartPrefix match wins → beard01_a steals fur's _a slot.
+		// New behavior: score every candidate; highest-scoring per suffix wins.
+		// ScoreTextureCandidate penalizes semantic mismatches (beard vs fur → 0).
 		{
-			FString Stem = FPaths::GetBaseFilename(TexFn).ToLower();
-			auto [Core, Suffix] = StripTextureSuffix(Stem);
-			if (Suffix.IsEmpty()) continue;
+			TMap<FString, TPair<int32, FString>> BestPerSuffix; // Suffix -> (score, path)
 
-			TPair<int32, FString> SlotKey(Mi, Suffix);
-			if (FilledSlots.Contains(SlotKey)) continue;
-			if (!PartPrefix.IsEmpty() && !Stem.StartsWith(PartPrefix)) continue;
-
-			if (const FString* Found = TextureCache.Find(Stem))
+			for (const FString& TexFn : Mat.AvailableTextures)
 			{
-				Result[Mi].Add(Suffix, *Found);
+				FString Stem = FPaths::GetBaseFilename(TexFn).ToLower();
+				if (!PartPrefix.IsEmpty() && !Stem.StartsWith(PartPrefix)) continue;
+
+				const FString PartName = PartPrefix.IsEmpty() ? TEXT("") : PartPrefix.LeftChop(1);
+				auto [Score, Suffix] = ScoreTextureCandidate(PartName, Mat.Name, Mat.MTDPath, Stem);
+				if (Score <= 0 || Suffix.IsEmpty()) continue;
+
+				if (const FString* Path = TextureCache.Find(Stem))
+				{
+					if (!BestPerSuffix.Contains(Suffix) || Score > BestPerSuffix[Suffix].Key)
+						BestPerSuffix.Add(Suffix, {Score, *Path});
+				}
+			}
+
+			for (const auto& Pair : BestPerSuffix)
+			{
+				TPair<int32, FString> SlotKey(Mi, Pair.Key);
+				if (FilledSlots.Contains(SlotKey)) continue;
+				Result[Mi].Add(Pair.Key, Pair.Value.Value);
 				FilledSlots.Add(SlotKey);
 			}
 		}
@@ -740,6 +759,7 @@ static UMaterial* BuildSingleMaterial(
 
     FString BlendModeStr = DeriveBlendMode(Material.ResolvedBlendMode, Material.BlendMode, Material.Name, Material.MTDPath, JsonEntry);
     bool bTwoSided = DeriveTwoSided(Material.Name, Material.MTDPath, Material.bTwoSided);
+    const bool bIsHairFur = Material.bIsFur || Material.bIsHair;
 
     if (BlendModeStr.Equals(TEXT("Translucent"), ESearchCase::IgnoreCase))
     {
@@ -774,9 +794,32 @@ static UMaterial* BuildSingleMaterial(
         { TEXT("AOMap"),        TEXT("_em") },
     };
 
-    // 纹理合并: JSON优先 > C++评分
+    // 纹理合并优先级:
+    //   0. ResolvedTextures (C# ResolvedMaterials — 权威贴图分配)
+    //   1. Sekiro_Materials.json
+    //   2. AssignedTextures (C++ 3-pass评分)
     TMap<FString, UTexture*> MergedTextures;
 
+    // ---- Priority 0: ResolvedTextures (来自 ResolvedMaterials, C#权威) ----
+    for (const auto& Pair : Material.ResolvedTextures)
+    {
+        if (MergedTextures.Contains(Pair.Key)) continue;
+
+        // Hair/fur: skip opacityMask (DSAnimStudio doesn't use it for hair)
+        if (bIsHairFur && Pair.Key == TEXT("_mask")) continue;
+
+        FString TexStem = TextureNameFromPath(Pair.Value).ToLower();
+        if (const FString* CachedPath = TextureCache.Find(TexStem))
+        {
+            if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, **CachedPath))
+            {
+                MergedTextures.Add(Pair.Key, Tex);
+                UE_LOG(LogSekiroImport, Log, TEXT("  [ResolvedTex] %s=%s (权威)"), *Pair.Key, *Pair.Value);
+            }
+        }
+    }
+
+    // ---- Priority 1: Sekiro_Materials.json ----
     if (JsonEntry)
     {
         const TSharedPtr<FJsonObject>* TexObj = nullptr;
@@ -784,20 +827,24 @@ static UMaterial* BuildSingleMaterial(
         {
             for (const auto& Pair : (*TexObj)->Values)
             {
+                // 统一JSON key到标准suffix
+                const FString* MappedKey = JsonKeyToSuffix.Find(Pair.Key);
+                FString Suffix = MappedKey ? *MappedKey : Pair.Key;
+                if (MergedTextures.Contains(Suffix)) continue;
+
                 FString TexStem = TextureNameFromPath(Pair.Value->AsString()).ToLower();
                 if (const FString* CachedPath = TextureCache.Find(TexStem))
                 {
                     if (UTexture2D* Tex = LoadObject<UTexture2D>(nullptr, **CachedPath))
                     {
-                        // 统一JSON key到标准suffix
-                        const FString* MappedKey = JsonKeyToSuffix.Find(Pair.Key);
-                        MergedTextures.Add(MappedKey ? *MappedKey : Pair.Key, Tex);
+                        MergedTextures.Add(Suffix, Tex);
                     }
                 }
             }
         }
     }
 
+    // ---- Priority 2: AssignedTextures (C++ 3-pass) ----
     for (const auto& Pair : AssignedTextures)
     {
         if (!MergedTextures.Contains(Pair.Key))
@@ -807,16 +854,65 @@ static UMaterial* BuildSingleMaterial(
         }
     }
 
+    // Hair/fur second texture set promotion (DSAnimStudio FlverMaterial.cs:432-438)
+    // For hair/fur, if second-set textures exist, promote them to primary slots.
+    // DSAnimStudio discards Albedo1/Normal1 and promotes Albedo2/Normal2 → Albedo1/Normal1.
+    // We approximate: _1a → _a, _1n → _n, _1m → _m.
+    if (bIsHairFur)
+    {
+        static const TPair<FString, FString> PromoteMap[] = {
+            { TEXT("_1a"), TEXT("_a") },   // Albedo2 → Albedo1
+            { TEXT("_1n"), TEXT("_n") },   // Normal2 → Normal1
+        };
+        int32 Promoted = 0;
+        for (const auto& Pair : PromoteMap)
+        {
+            if (MergedTextures.Contains(Pair.Key))
+            {
+                MergedTextures.Add(Pair.Value, MergedTextures[Pair.Key]);
+                MergedTextures.Remove(Pair.Key);
+                Promoted++;
+            }
+        }
+        if (Promoted > 0)
+        {
+            UE_LOG(LogSekiroImport, Log, TEXT("  [HairFur] '%s': promoted %d second-set texture(s) to primary"),
+                *AssetName, Promoted);
+        }
+    }
+
     // 纹理采样节点 → 材质属性
+    // 对 hair/fur: _m/_r 贴图不连（hair2_m不是标准metallic，连了反致高光异常）
+    // DSAnimStudio fur/hair hotfix: 丢弃第一套 提升第二套，Mask1Map → None
     struct FParamDef { const TCHAR* Suffix; EMaterialProperty Property; EMaterialSamplerType SamplerType; int32 X; int32 Y; };
-    const FParamDef Params[] = {
+    const FParamDef CoreParams[] = {
         { TEXT("_a"),    MP_BaseColor,       SAMPLERTYPE_Color,             -600,  200 },
         { TEXT("_n"),    MP_Normal,          SAMPLERTYPE_Normal,            -600, -100 },
+    };
+    const FParamDef PBRParams[] = {
         { TEXT("_m"),    MP_Metallic,        SAMPLERTYPE_LinearGrayscale,   -600, -400 },
         { TEXT("_r"),    MP_Roughness,       SAMPLERTYPE_LinearGrayscale,   -600, -700 },
-        { TEXT("_mask"), MP_OpacityMask,     SAMPLERTYPE_Color,             -600,  500 },
-        { TEXT("_em"),   MP_EmissiveColor,   SAMPLERTYPE_Color,             -600,  800 },
     };
+    const FParamDef MaskParam   = { TEXT("_mask"), MP_OpacityMask,  SAMPLERTYPE_Color, -600,  500 };
+    const FParamDef EmisParam   = { TEXT("_em"),   MP_EmissiveColor,SAMPLERTYPE_Color, -600,  800 };
+
+    TArray<FParamDef> Params;
+    Params.Append(CoreParams, UE_ARRAY_COUNT(CoreParams));
+    if (!bIsHairFur)
+    {
+        Params.Append(PBRParams, UE_ARRAY_COUNT(PBRParams));
+    }
+    // Hair/fur: Metallic/Roughness set as constants below (avoids hair2_m mis-use)
+    if (!bIsHairFur)
+    {
+        // Non-hair/fur: _mask → OpacityMask (standard behavior)
+        Params.Add(MaskParam);
+    }
+    else
+    {
+        // Hair/fur: _mask is Blend1To2, NOT opacity. DSAnimStudio → None.
+    }
+    Params.Add(EmisParam);
 
     UMaterialExpressionTextureSample* AlphaNode = nullptr;
     UMaterialExpressionTextureSample* MaskNode = nullptr;
@@ -833,7 +929,28 @@ static UMaterial* BuildSingleMaterial(
         if (!TexNode) continue;
 
         TexNode->Texture = *Found;
-        TexNode->SamplerType = P.SamplerType;
+
+        // _m/_r 采样器自动修正：Sekiro _m 贴图可能是 BC1/DXT1 颜色遮罩
+        // (如 eye_1m) 而非真正的单通道金属度贴图。
+        EMaterialSamplerType ActualSampler = P.SamplerType;
+        if ((FCString::Strcmp(P.Suffix, TEXT("_m")) == 0 ||
+             FCString::Strcmp(P.Suffix, TEXT("_r")) == 0))
+        {
+            if (UTexture2D* Tex2D = Cast<UTexture2D>(*Found))
+            {
+                if (Tex2D->GetPlatformData())
+                {
+                    EPixelFormat PF = Tex2D->GetPlatformData()->PixelFormat;
+                    if (PF == PF_DXT1 || PF == PF_DXT3 || PF == PF_DXT5 ||
+                        PF == PF_B8G8R8A8 || PF == PF_R8G8B8A8)
+                    {
+                        ActualSampler = SAMPLERTYPE_Color;
+                    }
+                }
+            }
+        }
+        TexNode->SamplerType = ActualSampler;
+
         UMaterialEditingLibrary::ConnectMaterialProperty(TexNode, TEXT(""), P.Property);
 
         if (!TextureNames.IsEmpty()) TextureNames += TEXT(", ");
@@ -861,11 +978,12 @@ static UMaterial* BuildSingleMaterial(
 
     if (AlphaNode)
     {
-        UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_Opacity);
+        // Masked模式需要OpacityMask (hair/fur也用，通过alpha clip保留深度写入)
         if (!MaskNode)
         {
             UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_OpacityMask);
         }
+        UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_Opacity);
     }
 
     // 诊断：检查Masked/Translucent材质的alpha可用性
@@ -894,88 +1012,64 @@ static UMaterial* BuildSingleMaterial(
         }
     }
 
-    // Fur/Hair rendering — simulates Sekiro's fur shader pipeline.
-    // 1. Softer alpha clipping for thicker-looking hair cards.
-    //    Sekiro's Fur_NTC.spx uses "Edge" channel with alpha dithering.
-    //    UE5 DitherOpacityMask requires TAA and produces visible checkerboard
-    //    patterns on thin hair card edges → instead use a lowered clip threshold
-    //    to pull more edge pixels into the mask, making cards look fuller.
-    // 2. Fresnel rim glow (Sekiro g_GlowScale)
-    // 3. Subsurface Profile for SSS variants (Sekiro Character_AMSN_SSS.spx)
-    if (Material.bIsFur || Material.bIsHair)
+    // Fur/Hair rendering — DSAnimStudio-style approximation via Masked with low alpha clip
+    // DSAnimStudio draws hair in two passes (GFX.cs:832-838):
+    //   1. Opaque pass:  discard α ≤ 0.25, writes depth (solid hair core)
+    //   2. AlphaEdge pass: discard α > 0.25 + Bayer dither, no depth write (soft edges)
+    //
+    // Single-material approximation: Masked+TwoSided with low clip value.
+    //   - Low clip (0.25) preserves most soft-edge pixels that pure Opaque would discard
+    //   - Depth writes from the opaque core prevent sorting artifacts
+    //   - Translucent was tried and rejected: no depth writes → hair cards appear to float
+    // Future: Dithered OpacityMask can approximate the Bayer dither for softer edges.
+    if (bIsHairFur)
     {
-        // (1) Softer alpha clip for fur edges — lower threshold lets more
-        //     edge pixels pass the mask test without dithering artifacts.
-        const bool bWasOpaque = (Mat->BlendMode == BLEND_Opaque);
-        if (Mat->BlendMode == BLEND_Masked || bWasOpaque)
+        // ---- Alpha validity (including BC1/DXT1 1-bit alpha for hair cards) ----
+        bool bAlphaValid = false;
+        if (AlphaNode && AlphaNode->Texture)
         {
-            if (bWasOpaque) Mat->BlendMode = BLEND_Masked;
-            Mat->OpacityMaskClipValue = 0.25f;  // softer edge than default 0.5
+            if (UTexture2D* Tex2D = Cast<UTexture2D>(AlphaNode->Texture))
+            {
+                if (Tex2D->GetPlatformData())
+                {
+                    EPixelFormat PF = Tex2D->GetPlatformData()->PixelFormat;
+                    // BC3/DXT5, BC2/DXT3, RGBA8, and BC1/DXT1 (1-bit alpha in hair cards)
+                    bAlphaValid = (PF == PF_DXT5 || PF == PF_DXT3 || PF == PF_B8G8R8A8 || PF == PF_DXT1);
+                }
+            }
         }
 
-        // Re-connect opacity mask to ensure fur materials have valid alpha
-        if (MaskNode)
-        {
-            UMaterialEditingLibrary::ConnectMaterialProperty(MaskNode, TEXT(""), MP_OpacityMask);
-        }
-        else if (AlphaNode)
-        {
-            UMaterialEditingLibrary::ConnectMaterialProperty(AlphaNode, TEXT("A"), MP_OpacityMask);
-        }
+        // Masked + low clip: depth writes from solid core prevent floating cards
+        // Low clip preserves soft edges that pure Opaque would discard
+        Mat->BlendMode = BLEND_Masked;
+        Mat->TwoSided = true;
+        Mat->OpacityMaskClipValue = bAlphaValid ? 0.25f : 0.5f;
 
-        // (2) Fresnel rim glow (Sekiro g_GlowScale)
-        auto* FresnelNode = Cast<UMaterialExpressionFresnel>(
-            UMaterialEditingLibrary::CreateMaterialExpression(
-                Mat, UMaterialExpressionFresnel::StaticClass(), 200, 100));
+        UE_LOG(LogSekiroImport, Log, TEXT("  [HairFur] '%s': Masked+TwoSided clip=%.2f (DSAnimStudio depth-preserving)"),
+            *AssetName, Mat->OpacityMaskClipValue);
 
-        auto* RimIntensity = Cast<UMaterialExpressionScalarParameter>(
-            UMaterialEditingLibrary::CreateMaterialExpression(
-                Mat, UMaterialExpressionScalarParameter::StaticClass(), 0, 100));
-        if (RimIntensity)
+        // ---- Constant Metallic=0, Roughness=0.6 (hair is dielectric) ----
+        // _m/_r textures already excluded from Params for hair/fur above.
+        // hair2_m/hair_m are specular/env masks, not standard PBR metallic.
         {
-            RimIntensity->ParameterName = TEXT("FurRimIntensity");
-            RimIntensity->DefaultValue = 0.4f;
-        }
+            auto* ConstMetallic = Cast<UMaterialExpressionConstant>(
+                UMaterialEditingLibrary::CreateMaterialExpression(
+                    Mat, UMaterialExpressionConstant::StaticClass(), -200, -400));
+            if (ConstMetallic)
+            {
+                ConstMetallic->R = 0.0f;
+                UMaterialEditingLibrary::ConnectMaterialProperty(ConstMetallic, TEXT(""), MP_Metallic);
+            }
 
-        auto* RimColor = Cast<UMaterialExpressionVectorParameter>(
-            UMaterialEditingLibrary::CreateMaterialExpression(
-                Mat, UMaterialExpressionVectorParameter::StaticClass(), 0, 250));
-        if (RimColor)
-        {
-            RimColor->ParameterName = TEXT("FurRimColor");
-            RimColor->DefaultValue = FLinearColor(0.6f, 0.5f, 0.35f, 1.0f);
+            auto* ConstRoughness = Cast<UMaterialExpressionConstant>(
+                UMaterialEditingLibrary::CreateMaterialExpression(
+                    Mat, UMaterialExpressionConstant::StaticClass(), -200, -700));
+            if (ConstRoughness)
+            {
+                ConstRoughness->R = 0.6f;
+                UMaterialEditingLibrary::ConnectMaterialProperty(ConstRoughness, TEXT(""), MP_Roughness);
+            }
         }
-
-        auto* MulColor = Cast<UMaterialExpressionMultiply>(
-            UMaterialEditingLibrary::CreateMaterialExpression(
-                Mat, UMaterialExpressionMultiply::StaticClass(), 400, 100));
-        if (FresnelNode && RimColor && MulColor)
-        {
-            MulColor->A.Expression = FresnelNode;
-            MulColor->B.Expression = RimColor;
-        }
-
-        auto* MulFinal = Cast<UMaterialExpressionMultiply>(
-            UMaterialEditingLibrary::CreateMaterialExpression(
-                Mat, UMaterialExpressionMultiply::StaticClass(), 600, 100));
-        if (MulColor && RimIntensity && MulFinal)
-        {
-            MulFinal->A.Expression = MulColor;
-            MulFinal->B.Expression = RimIntensity;
-            UMaterialEditingLibrary::ConnectMaterialProperty(
-                MulFinal, TEXT(""), MP_EmissiveColor);
-        }
-
-        // (3) Subsurface Profile for SSS fur variants
-        const FString MatLower2 = Material.Name.ToLower();
-        if (MatLower2.Contains(TEXT("sss")))
-        {
-            Mat->SetShadingModel(MSM_SubsurfaceProfile);
-            UE_LOG(LogSekiroImport, Log, TEXT("  [FurSSS] '%s': SubsurfaceProfile shading model"), *AssetName);
-        }
-
-        UE_LOG(LogSekiroImport, Log, TEXT("  [Fur] '%s': Blend=%s Clip=%.2f FresnelRim SSS=%d"),
-            *AssetName, *BlendModeStr, Mat->OpacityMaskClipValue, MatLower2.Contains(TEXT("sss")));
     }
 
     Mat->PostEditChange();

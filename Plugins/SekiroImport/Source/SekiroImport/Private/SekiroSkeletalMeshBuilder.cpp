@@ -235,10 +235,12 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
         const FSekiroImportMeshSection& Section = ModelData.Meshes[SectionIdx];
 
         bool bIsDecal = false;
+        bool bIsHairFur = false;
         if (Section.MaterialIndex >= 0 && Section.MaterialIndex < ModelData.Materials.Num())
         {
             const FSekiroImportMaterial& Mat = ModelData.Materials[Section.MaterialIndex];
             bIsDecal = Mat.MTDPath.ToLower().Contains(TEXT("decal"));
+            bIsHairFur = Mat.bIsFur || Mat.bIsHair;
         }
 
         // --- Points（顶点位置）---
@@ -247,7 +249,8 @@ USkeletalMesh* FSekiroSkeletalMeshBuilder::Build(const FSekiroModelData& ModelDa
             FVector3f Pos = Vert.Position;
 
             // Decal法线偏移（对齐Blender管线: pos += normal * 0.0008m → 0.08cm）
-            if (bIsDecal)
+            // Hair/fur decal: 跳过偏移 — 发片本身已需要贴头，额外偏移加重悬浮感
+            if (bIsDecal && !bIsHairFur)
                 Pos += Vert.Normal * 0.08f;
 
             // Y-up → Z-up 坐标转换

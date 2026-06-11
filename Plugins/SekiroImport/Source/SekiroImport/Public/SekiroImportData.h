@@ -72,6 +72,7 @@ struct FSekiroImportMaterial
     FString MTDPath;
     TMap<FString, FString> TextureSlots;   // 参数名 → 贴图路径
     TArray<FString> AvailableTextures;
+    TMap<FString, FString> ResolvedTextures; // 语义后缀(_a/_n/...) → 贴图文件名 (来自ResolvedMaterials, 权威)
 };
 
 /// 模型解析结果
