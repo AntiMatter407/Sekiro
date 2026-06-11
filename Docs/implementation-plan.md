@@ -205,7 +205,7 @@ compare_pipeline.compare_animation("a000")
 
 ---
 
-## 阶段五：管线编排
+## 阶段五：管线编排 ✅ 已完成
 
 更新 `SekiroImportPipeline.cpp` 整合所有重构后的Builder。
 

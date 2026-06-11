@@ -27,3 +27,21 @@
 *.pyc
 *.dcx
 /Platforms/
+
+# UE5 auto-generated
+/Content/__ExternalActors__/
+/Content/__ExternalObjects__/
+
+# UE template content (not project assets)
+/Content/StarterContent/
+/Content/LevelPrototyping/
+/Content/Characters/Mannequin_UE4/
+/Content/Characters/Mannequins/
+/Content/ThirdPerson/
+
+# Compressed archives (should not be in repo)
+/Content/*.rar
+
+# Dev tool scratch files
+/Tools/FlverToFbx/FlverToFbx/*.csx
+/Tools/InspectFlver/
