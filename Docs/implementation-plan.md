@@ -100,7 +100,7 @@ compare_pipeline.compare_skeleton()
 
 ---
 
-## 阶段二：网格构建对齐 ✅ 已确认，待实施
+## 阶段二：网格构建对齐 ✅ 已完成
 
 **目标**：顶点位置/法线与骨架在同一坐标空间（UE5 ExportRoot旋转后），三角形绕序对齐Blender
 
@@ -170,7 +170,7 @@ static const FQuat DiagOrientQ = FQuat(FVector(0, 0, 1), PI) * FQuat(FVector(1, 
 
 ---
 
-## 阶段三：动画构建对齐
+## 阶段三：动画构建对齐 ✅ 已完成
 
 **目标**：动画曲线数据与FBX导入的AnimSequence一致
 
@@ -192,7 +192,7 @@ compare_pipeline.compare_animation("a000")
 
 ---
 
-## 阶段四：材质构建对齐
+## 阶段四：材质构建对齐 ✅ 已完成
 
 ### 改造文件
 - `SekiroMaterialBuilder.cpp` — 对齐 `common_blender.py:create_materials()`

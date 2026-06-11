@@ -30,10 +30,9 @@ originSessionId: 9d71e0a4-bf52-4119-b2ed-e434ef408d46
 - JSON → C++插件直接创建UE资产，跳过Blender/FBX中间步骤
 - 目标：完全对齐Blender管线逻辑，消除中间格式差异
 - 进度：
-  - ✅ Phase 1: 骨架构建 (147/147骨骼<0.05cm)
-  - ✅ Phase 2: 网格构建 (顶点对齐<0.001mm)
-  - ⏳ Phase 3: 动画构建
-  - ⏳ Phase 4: 材质构建
+  - ✅ Phase 0+1+2: 模型导入阶段
+  - ✅ Phase 3: 动画构建
+  - ✅ Phase 4: 材质构建
   - ⏳ Phase 5: 管线编排
 - 实现计划: Docs/implementation-plan.md
 - 验证框架: SekiroImportTest.h/.cpp (UE Python可调用诊断API)
