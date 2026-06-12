@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
+#include "Movement/SekiroMovementComponent.h"
 #include "SekiroAnimInstance.generated.h"
 
 class ASekiroCharacter;
@@ -22,6 +23,9 @@ public:
 	float Angle = 0.f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Locomotion")
+	ESekiroMovementTier MovementTier = ESekiroMovementTier::Run;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Locomotion")
 	uint32 bIsInAir : 1;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Locomotion")
@@ -39,4 +43,7 @@ public:
 protected:
 	UPROPERTY()
 	TObjectPtr<ASekiroCharacter> SekiroCharacter;
+
+	UPROPERTY()
+	TObjectPtr<USekiroMovementComponent> SekiroMovementComponent;
 };

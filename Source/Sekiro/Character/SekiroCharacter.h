@@ -76,18 +76,7 @@ class SEKIRO_API ASekiroCharacter : public ACharacter
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> MenuAction;
 
-	// ── 移动速度 ──────────────────────────────────────────
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed", meta = (AllowPrivateAccess = "true"))
-	float SprintSpeed = 600.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed", meta = (AllowPrivateAccess = "true"))
-	float CrouchSpeed = 200.f;
-
 	// ── 移动状态 ──────────────────────────────────────────
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
-	uint32 bIsSprinting : 1;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
 	uint32 bIsDodging : 1;
@@ -124,11 +113,10 @@ class SEKIRO_API ASekiroCharacter : public ACharacter
 	uint32 bInvertPitch : 1;
 
 public:
-	ASekiroCharacter();
+	ASekiroCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 protected:
 	virtual void BeginPlay() override;
-	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	// ── 移动 ──────────────────────────────────────────────

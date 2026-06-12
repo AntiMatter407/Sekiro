@@ -18,6 +18,8 @@
 #include "AnimationStateGraph.h"
 #include "AnimationStateGraphSchema.h"
 #include "AnimationGraphSchema.h"
+#include "EdGraphSchema_K2.h"
+#include "K2Node_VariableGet.h"
 #include "AnimationGraph.h"
 #include "AnimGraphNode_Base.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -204,8 +206,25 @@ FString USKAnimBlueprintTool::HandleCreate(const TSharedPtr<FJsonObject>& Args, 
 
     if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
     {
-        OutError = FString::Printf(TEXT("AnimBlueprint已存在: %s"), *AssetPath);
-        return FString();
+        // 已存在：加载并返回（不重复创建）
+        UAnimBlueprint* Existing = LoadAssetHelper<UAnimBlueprint>(AssetPath);
+        if (!Existing)
+        {
+            OutError = FString::Printf(TEXT("AnimBlueprint已存在但加载失败: %s"), *AssetPath);
+            return FString();
+        }
+        TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+        ResultObj->SetStringField(TEXT("path"), AssetPath);
+        ResultObj->SetStringField(TEXT("name"), BPName);
+        ResultObj->SetStringField(TEXT("skeleton"), SkeletonPath);
+        ResultObj->SetStringField(TEXT("type"), TEXT("AnimBlueprint"));
+        ResultObj->SetBoolField(TEXT("success"), true);
+        ResultObj->SetStringField(TEXT("status"), TEXT("already_exists"));
+        FString Output;
+        TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+            TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+        FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+        return Output;
     }
 
     UPackage* Package = CreatePackage(*AssetPath);
@@ -231,7 +250,6 @@ FString USKAnimBlueprintTool::HandleCreate(const TSharedPtr<FJsonObject>& Args, 
         }
     }
 
-    // 用 UAnimBlueprint 类型创建
     UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(
         ParentClass,
         Package,
@@ -683,7 +701,8 @@ FString USKAnimBlueprintTool::HandleCompile(const TSharedPtr<FJsonObject>& Args,
 }
 
 // ============================================================================
-// HandleSetupAnimGraph — 在 AnimGraph 中设置 BlendSpacePlayer→Root 连接
+// HandleSetupAnimGraph — 增量式设置 AnimGraph（BlendSpacePlayer + 变量获取 + Root）
+// 查找已有节点复用，仅创建缺失节点；已连线则跳过，不破坏手动修改。
 // ============================================================================
 
 FString USKAnimBlueprintTool::HandleSetupAnimGraph(const TSharedPtr<FJsonObject>& Args, FString& OutError)
@@ -727,51 +746,86 @@ FString USKAnimBlueprintTool::HandleSetupAnimGraph(const TSharedPtr<FJsonObject>
         return FString();
     }
 
-    // 找到或创建 Root 节点
+    // —— 查找已有节点（增量：复用，不重复创建）——
+
     UAnimGraphNode_Root* RootNode = nullptr;
+    UAnimGraphNode_BlendSpacePlayer* BspNode = nullptr;
+    UK2Node_VariableGet* AngleGetter = nullptr;
+    UK2Node_VariableGet* SpeedGetter = nullptr;
+
     for (UEdGraphNode* Node : AnimGraph->Nodes)
     {
-        if (UAnimGraphNode_Root* RN = Cast<UAnimGraphNode_Root>(Node))
+        if (!RootNode)  RootNode  = Cast<UAnimGraphNode_Root>(Node);
+        if (!BspNode)   BspNode   = Cast<UAnimGraphNode_BlendSpacePlayer>(Node);
+        if (UK2Node_VariableGet* VarGet = Cast<UK2Node_VariableGet>(Node))
         {
-            RootNode = RN;
-            break;
+            FName MemberName = VarGet->VariableReference.GetMemberName();
+            if (MemberName == TEXT("Angle") && !AngleGetter) AngleGetter = VarGet;
+            if (MemberName == TEXT("Speed") && !SpeedGetter) SpeedGetter = VarGet;
         }
     }
+
+    bool bAllNew = (!RootNode && !BspNode && !AngleGetter && !SpeedGetter);
+
+    // —— 仅创建缺失的节点 ——
+
     if (!RootNode)
     {
         FGraphNodeCreator<UAnimGraphNode_Root> RootCreator(*AnimGraph);
         RootNode = RootCreator.CreateNode();
-        RootNode->NodePosX = 400;
-        RootNode->NodePosY = 0;
         RootCreator.Finalize();
     }
 
-    // 创建 BlendSpacePlayer 节点
-    FGraphNodeCreator<UAnimGraphNode_BlendSpacePlayer> NodeCreator(*AnimGraph);
-    UAnimGraphNode_BlendSpacePlayer* BspNode = NodeCreator.CreateNode();
-    BspNode->NodePosX = 0;
-    BspNode->NodePosY = 0;
-    NodeCreator.Finalize();
+    if (!BspNode)
+    {
+        FGraphNodeCreator<UAnimGraphNode_BlendSpacePlayer> NodeCreator(*AnimGraph);
+        BspNode = NodeCreator.CreateNode();
+        NodeCreator.Finalize();
+    }
 
-    // 设置 BlendSpace
+    auto FindOrCreateVarGet = [&](const FName& VarName, UK2Node_VariableGet* Existing) -> UK2Node_VariableGet*
+    {
+        if (Existing) return Existing;
+        UK2Node_VariableGet* Getter = NewObject<UK2Node_VariableGet>(AnimGraph);
+        Getter->CreateNewGuid();
+        Getter->VariableReference.SetSelfMember(VarName);
+        Getter->AllocateDefaultPins();
+        AnimGraph->AddNode(Getter, false, false);
+        Getter->PostPlacedNewNode();
+        return Getter;
+    };
+
+    AngleGetter = FindOrCreateVarGet(FName(TEXT("Angle")), AngleGetter);
+    SpeedGetter = FindOrCreateVarGet(FName(TEXT("Speed")), SpeedGetter);
+
+    // —— 布局：仅在全部新建时设置位置，否则保留已有布局 ——
+    if (bAllNew)
+    {
+        AngleGetter->NodePosX = -400;  AngleGetter->NodePosY = -200;
+        SpeedGetter->NodePosX = -400;  SpeedGetter->NodePosY =  200;
+        BspNode->NodePosX    =    0;  BspNode->NodePosY    =    0;
+        RootNode->NodePosX   =  400;  RootNode->NodePosY   =    0;
+    }
+
+    // —— 设置 BlendSpace 引用 ——
     UScriptStruct* NodeStruct = FAnimNode_BlendSpacePlayer::StaticStruct();
     void* NodeAddr = &BspNode->Node;
     FObjectProperty* BsProp = CastField<FObjectProperty>(NodeStruct->FindPropertyByName(TEXT("BlendSpace")));
     if (BsProp) BsProp->SetObjectPropertyValue(BsProp->ContainerPtrToValuePtr<void>(NodeAddr), BlendSpace);
 
-    // 连接 BlendSpacePlayer.Pose → Root.Result
-    UEdGraphPin* OutputPose = BspNode->FindPin(TEXT("Pose"), EGPD_Output);
-    UEdGraphPin* InputResult = RootNode->FindPin(TEXT("Result"), EGPD_Input);
-    if (OutputPose && InputResult)
+    // —— 连线（仅当未连时才连，不破坏手动修改）——
+    auto ConnectIfNotLinked = [](UEdGraphPin* OutPin, UEdGraphPin* InPin)
     {
-        OutputPose->MakeLinkTo(InputResult);
-    }
-    else
-    {
-        OutError = TEXT("无法找到 Pose/Result 引脚进行连接");
-        return FString();
-    }
+        if (!OutPin || !InPin) return;
+        if (OutPin->LinkedTo.Contains(InPin)) return;
+        OutPin->MakeLinkTo(InPin);
+    };
 
+    ConnectIfNotLinked(AngleGetter->GetValuePin(),          BspNode->FindPin(FName(TEXT("X")),     EGPD_Input));
+    ConnectIfNotLinked(SpeedGetter->GetValuePin(),          BspNode->FindPin(FName(TEXT("Y")),     EGPD_Input));
+    ConnectIfNotLinked(BspNode->FindPin(TEXT("Pose"), EGPD_Output), RootNode->FindPin(TEXT("Result"), EGPD_Input));
+
+    // —— 保存 ——
     AnimBP->MarkPackageDirty();
     FKismetEditorUtilities::CompileBlueprint(AnimBP);
     UEditorAssetLibrary::SaveAsset(AssetPath, false);
@@ -840,14 +894,28 @@ FString USKAnimBlueprintTool::HandleCreateBlendSpace(const TSharedPtr<FJsonObjec
         Axes.Add(Axis);
     }
 
-    // 检查重复
     if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
     {
-        OutError = FString::Printf(TEXT("BlendSpace已存在: %s"), *AssetPath);
-        return FString();
+        // 已存在：加载并返回（不重复创建和配置）
+        UBlendSpace* Existing = LoadAssetHelper<UBlendSpace>(AssetPath);
+        if (!Existing)
+        {
+            OutError = FString::Printf(TEXT("BlendSpace已存在但加载失败: %s"), *AssetPath);
+            return FString();
+        }
+        TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+        ResultObj->SetStringField(TEXT("path"), AssetPath);
+        ResultObj->SetNumberField(TEXT("num_samples"), Existing->GetNumberOfBlendSamples());
+        ResultObj->SetBoolField(TEXT("success"), true);
+        ResultObj->SetStringField(TEXT("status"), TEXT("already_exists"));
+        FString Output;
+        TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+            TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+        FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+        return Output;
     }
 
-    // 创建 Package 和 BlendSpace
+    // 以下为新建逻辑
     int32 LastSlash;
     if (!AssetPath.FindLastChar('/', LastSlash))
     {

@@ -5,6 +5,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Movement/SekiroMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "EnhancedInputComponent.h"
@@ -13,7 +14,8 @@
 //////////////////////////////////////////////////////////////////////////
 // ASekiroCharacter
 
-ASekiroCharacter::ASekiroCharacter()
+ASekiroCharacter::ASekiroCharacter(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<USekiroMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -26,16 +28,13 @@ ASekiroCharacter::ASekiroCharacter()
 	MoveComp->RotationRate = FRotator(0.f, 500.f, 0.f);
 	MoveComp->JumpZVelocity = 700.f;
 	MoveComp->AirControl = 0.35f;
-	MoveComp->MaxWalkSpeed = 500.f;
 	MoveComp->MinAnalogWalkSpeed = 20.f;
 	MoveComp->BrakingDecelerationWalking = 2000.f;
 
 	// 闪避属性
 	MoveComp->BrakingDecelerationFalling = 0.f;
-	MoveComp->MaxWalkSpeedCrouched = CrouchSpeed;
 	bAllowAirDodge = false;
 
-	bIsSprinting = false;
 	bIsDodging  = false;
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -59,18 +58,6 @@ void ASekiroCharacter::BeginPlay()
 		{
 			Sub->AddMappingContext(DefaultMappingContext, 0);
 		}
-	}
-}
-
-void ASekiroCharacter::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-
-	// 根据冲刺状态调整 MaxWalkSpeed（蹲下由 UCharacterMovementComponent::MaxWalkSpeedCrouched 处理）
-	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
-	if (MoveComp && !bIsCrouched)
-	{
-		MoveComp->MaxWalkSpeed = bIsSprinting ? SprintSpeed : 500.f;
 	}
 }
 
@@ -142,12 +129,15 @@ void ASekiroCharacter::Move(const FInputActionValue& Value)
 	AddMovementInput(Forward, Normalized.Y);
 	AddMovementInput(Right,   Normalized.X);
 
-	// ── 冲刺判定：有输入 + 地面 → 保持冲刺速度 ──
-	if (bIsSprinting)
+	// ── 冲刺判定：无输入或离地时退出冲刺 ──
+	if (USekiroMovementComponent* MoveComp = Cast<USekiroMovementComponent>(GetCharacterMovement()))
 	{
-		if (InputMagnitude < 0.1f || GetCharacterMovement()->IsFalling())
+		if (MoveComp->CurrentMovementTier == ESekiroMovementTier::Sprint)
 		{
-			bIsSprinting = false;
+			if (InputMagnitude < 0.1f || GetCharacterMovement()->IsFalling())
+			{
+				MoveComp->CurrentMovementTier = ESekiroMovementTier::Run;
+			}
 		}
 	}
 
@@ -192,12 +182,18 @@ void ASekiroCharacter::SprintPressed()
 	{
 		UnCrouch();
 	}
-	bIsSprinting = true;
+	if (USekiroMovementComponent* MoveComp = Cast<USekiroMovementComponent>(GetCharacterMovement()))
+	{
+		MoveComp->CurrentMovementTier = ESekiroMovementTier::Sprint;
+	}
 }
 
 void ASekiroCharacter::SprintReleased()
 {
-	bIsSprinting = false;
+	if (USekiroMovementComponent* MoveComp = Cast<USekiroMovementComponent>(GetCharacterMovement()))
+	{
+		MoveComp->CurrentMovementTier = ESekiroMovementTier::Run;
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -208,11 +204,18 @@ void ASekiroCharacter::CrouchToggle()
 	if (bIsCrouched)
 	{
 		UnCrouch();
+		if (USekiroMovementComponent* MoveComp = Cast<USekiroMovementComponent>(GetCharacterMovement()))
+		{
+			MoveComp->CurrentMovementTier = ESekiroMovementTier::Run;
+		}
 	}
 	else
 	{
 		Crouch();
-		bIsSprinting = false;
+		if (USekiroMovementComponent* MoveComp = Cast<USekiroMovementComponent>(GetCharacterMovement()))
+		{
+			MoveComp->CurrentMovementTier = ESekiroMovementTier::Crouch;
+		}
 	}
 }
 

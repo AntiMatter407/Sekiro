@@ -1,5 +1,5 @@
 #include "SekiroAnimInstance.h"
-#include "SekiroCharacter.h"
+#include "Character/SekiroCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "KismetAnimationLibrary.h"
 
@@ -7,6 +7,10 @@ void USekiroAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
 	SekiroCharacter = Cast<ASekiroCharacter>(TryGetPawnOwner());
+	if (SekiroCharacter)
+	{
+		SekiroMovementComponent = Cast<USekiroMovementComponent>(SekiroCharacter->GetCharacterMovement());
+	}
 }
 
 void USekiroAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
@@ -26,6 +30,12 @@ void USekiroAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	// Locomotion
 	bIsInAir = SekiroCharacter->GetCharacterMovement()->IsFalling();
 	bIsCrouching = SekiroCharacter->bIsCrouched;
+
+	// MovementTier from MovementComponent
+	if (SekiroMovementComponent)
+	{
+		MovementTier = SekiroMovementComponent->CurrentMovementTier;
+	}
 
 	// Speed & Angle in local space
 	Speed = SekiroCharacter->GetVelocity().Size2D();
