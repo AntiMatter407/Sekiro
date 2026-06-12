@@ -1,0 +1,25 @@
+{
+  "Samples": [
+    { "Dir": 0,    "Speed": 0,   "Anim": "Anim_Sekiro_Idle_Default" },
+
+    { "Dir": -180, "Speed": 150, "Anim": "Anim_Sekiro_Walk_Bwd" },
+    { "Dir": -90,  "Speed": 150, "Anim": "Anim_Sekiro_Walk_L" },
+    { "Dir": -45,  "Speed": 150, "Anim": "Anim_Sekiro_Walk_Fwd_L" },
+    { "Dir": 0,    "Speed": 150, "Anim": "Anim_Sekiro_Walk_Fwd" },
+    { "Dir": 45,   "Speed": 150, "Anim": "Anim_Sekiro_Walk_Fwd_R" },
+    { "Dir": 90,   "Speed": 150, "Anim": "Anim_Sekiro_Walk_R" },
+    { "Dir": 180,  "Speed": 150, "Anim": "Anim_Sekiro_Walk_Bwd" },
+
+    { "Dir": -45,  "Speed": 300, "Anim": "Anim_Sekiro_Run_Fast_Fwd_L" },
+    { "Dir": 0,    "Speed": 300, "Anim": "Anim_Sekiro_Run_Fast_Fwd" },
+    { "Dir": 45,   "Speed": 300, "Anim": "Anim_Sekiro_Run_Fast_Fwd_R" },
+
+    { "Dir": -45,  "Speed": 500, "Anim": "Anim_Sekiro_Sprint_Fwd_L" },
+    { "Dir": 0,    "Speed": 500, "Anim": "Anim_Sekiro_Sprint_Fwd" },
+    { "Dir": 45,   "Speed": 500, "Anim": "Anim_Sekiro_Sprint_Fwd_R" },
+
+    { "Dir": -45,  "Speed": 600, "Anim": "Anim_Sekiro_Sprint_Fwd_L" },
+    { "Dir": 0,    "Speed": 600, "Anim": "Anim_Sekiro_Sprint_Fwd" },
+    { "Dir": 45,   "Speed": 600, "Anim": "Anim_Sekiro_Sprint_Fwd_R" }
+  ]
+}

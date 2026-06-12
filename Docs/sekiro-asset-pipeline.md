@@ -16,8 +16,8 @@
 | 工具 | 路径 | 用途 |
 |------|------|------|
 | Yabber 1.3.1 | `Tools/Yabber 1.3.1/Yabber.exe` | 万能解包器：BND4/DCX/TPF |
-| unpack_sekiro.py | `Tools/FlverToFbx/unpack_sekiro.py` | 批量提取脚本 |
-| extract_mtd.py | `Tools/FlverToFbx/extract_mtd.py` | 提取 MTD 材质定义 |
+| unpack_sekiro.py | `Script/unpack_sekiro.py` | 批量提取脚本 |
+| extract_mtd.py | `Script/extract_mtd.py` | 提取 MTD 材质定义 |
 
 ### 源文件格式
 
@@ -221,21 +221,22 @@ JSON 是中间格式，下游可为 Blender FBX 导出、UE C++ 插件导入或�
 
 ## 文件清单
 
-### Python / C# 工具链 (Tools/)
+### Python / C# 工具链
 
 ```
-Tools/FlverToFbx/
-  FlverToFbx/Program.cs          C# 模型 JSON 生成器
-  SekiroAnimExtractor/Program.cs C# 动画 JSON 生成器
-  common_blender.py              Blender 共享库 (骨骼/材质/网格/动画/FBX)
-  export_common_anims.py         完整导出脚本 (模型+动画+材质配置)
-  import_model.py                仅模型 FBX 导出
-  import_anims.py                仅动画 FBX 导出
-  unpack_sekiro.py               资源提取
-  extract_mtd.py                 MTD 材质提取
-  ue5_import_character.py        UE5 Python 导入 (FBX→UAssets)
-  ue5_setup_materials.py         UE5 Python 材质配置
-  check_*.py / diag_*.py        诊断/审计脚本
+Script/                           Python 脚本（Blender/UE5/诊断）
+  common_blender.py               Blender 共享库 (骨骼/材质/网格/动画/FBX)
+  export_common_anims.py          完整导出脚本 (模型+动画+材质配置)
+  import_model.py                 仅模型 FBX 导出
+  import_anims.py                 仅动画 FBX 导出
+  unpack_sekiro.py                资源提取
+  extract_mtd.py                  MTD 材质提取
+  ue5_import_character.py         UE5 Python 导入 (FBX→UAssets)
+  ue5_setup_materials.py          UE5 Python 材质配置
+  check_*.py / diag_*.py         诊断/审计脚本
+
+Tools/FlverToFbx/FlverToFbx/      C# 工具（模型/动画 JSON 生成器）
+  Program.cs                      C# 模型 JSON 生成器
 
 Tools/SoulsAssetPipeline/
   SoulsFormats/Formats/FLVER/    FLVER2 解析器

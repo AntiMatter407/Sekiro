@@ -156,6 +156,7 @@ void ASekiroCharacter::Move(const FInputActionValue& Value)
 	{
 		// 计算玩家输入在镜头前方向上的投影，作为闪避前后方向
 		DodgeDirection = Normalized.Y; // +1=前, -1=后
+		DodgeDirectionLateral = Normalized.X; // -1=左, +1=右
 	}
 }
 

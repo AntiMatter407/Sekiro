@@ -1,4 +1,5 @@
 #include "SekiroAnimationParser.h"
+#include "SekiroAnimationNameMap.h"
 #include "SekiroImportLog.h"
 #include "SekiroStreamReader.h"
 #include "Misc/FileHelper.h"
@@ -135,6 +136,7 @@ void FSekiroAnimationParser::ParseFrameBoneTransforms(const TArray<TSharedPtr<FJ
 bool FSekiroAnimationParser::ParseAnimationClip(const TSharedPtr<FJsonObject>& AnimObj, int32 BoneCount, const TArray<FSekiroImportBone>& SkeletonBones, FSekiroAnimationClip& OutClip)
 {
     OutClip.Name = AnimObj->GetStringField(TEXT("Name"));
+    OutClip.Name = *FSekiroAnimationNameMap::Translate(OutClip.Name);
     OutClip.Duration = (float)AnimObj->GetNumberField(TEXT("Duration"));
     OutClip.FrameCount = (int32)AnimObj->GetNumberField(TEXT("FrameCount"));
     OutClip.SampleRate = (float)AnimObj->GetNumberField(TEXT("SampleRate"));

@@ -31,6 +31,9 @@ public class SekiroImport : ModuleRules
             "MainFrame",
             "AppFramework",
             "AssetRegistry",
+            "Sekiro",
+            "AnimGraph",
+            "Kismet",
         });
     }
 }

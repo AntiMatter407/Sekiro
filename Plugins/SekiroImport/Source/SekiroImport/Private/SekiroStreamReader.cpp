@@ -1,4 +1,5 @@
 #include "SekiroStreamReader.h"
+#include "SekiroAnimationNameMap.h"
 #include "SekiroImportLog.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -614,6 +615,7 @@ bool FSekiroStreamReader::ParseOneAnimation(const TArray<FSekiroImportBone>& Ske
         return false;
 
     OutClip.Name = AnimObj->GetStringField(TEXT("Name"));
+    OutClip.Name = *FSekiroAnimationNameMap::Translate(OutClip.Name);
     OutClip.Duration = (float)AnimObj->GetNumberField(TEXT("Duration"));
     OutClip.FrameCount = (int32)AnimObj->GetNumberField(TEXT("FrameCount"));
     OutClip.SampleRate = (float)AnimObj->GetNumberField(TEXT("SampleRate"));

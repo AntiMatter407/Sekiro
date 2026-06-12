@@ -28,11 +28,11 @@ public:
 
     /// 输出内容根路径，如 /Game/Characters/Sekiro
     UPROPERTY(config, EditAnywhere, Category="Target")
-    FString OutputBasePath = TEXT("/Game/Characters/Sekiro");
+    FString OutputBasePath = TEXT("/Game/Characters");
 
     /// 骨架资产名称
     UPROPERTY(config, EditAnywhere, Category="Target")
-    FString SkeletonName = TEXT("Sekiro_Skeleton");
+    FString SkeletonName = TEXT("Character_Skeleton");
 
     /// 是否导入骨架
     UPROPERTY(config, EditAnywhere, Category="Options")

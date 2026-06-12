@@ -3,11 +3,13 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace.h"
+#include "Animation/BlendSpace1D.h"
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_StateMachineBase.h"
 #include "AnimGraphNode_SequencePlayer.h"
 #include "AnimGraphNode_BlendSpacePlayer.h"
 #include "AnimGraphNode_StateResult.h"
+#include "AnimGraphNode_Root.h"
 #include "AnimStateNode.h"
 #include "AnimStateTransitionNode.h"
 #include "AnimStateEntryNode.h"
@@ -29,15 +31,101 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+#include "Misc/Paths.h"
+#include "GameFramework/Character.h"
+#include "Components/SkeletalMeshComponent.h"
+
+// Commandlet 模式下资产加载辅助函数
+// 尝试多种方式加载资产：FullObjectPath、LoadPackage+FindObject、StaticLoadObject
+template<typename T>
+static T* LoadAssetHelper(const FString& AssetPath)
+{
+    // 从路径中提取包名和资产名
+    // "/Game/Characters/Sekiro/Sekiro_Skeleton" → Pkg="/Game/.../Sekiro_Skeleton", Name="Sekiro_Skeleton"
+    FString PkgPath = AssetPath;
+    FString AssetName;
+    int32 LastSlash;
+    if (PkgPath.FindLastChar('/', LastSlash))
+    {
+        AssetName = PkgPath.RightChop(LastSlash + 1);
+    }
+    else
+    {
+        AssetName = PkgPath;
+    }
+
+    // 移除可能存在的 .AssetName 后缀
+    int32 LastPeriod;
+    if (PkgPath.FindLastChar('.', LastPeriod))
+    {
+        PkgPath.LeftInline(LastPeriod);
+    }
+
+    // 方式1: 先加载包，再从包内遍历匹配类型（Commandlet 模式首选）
+    // 原因：LoadPackage 会成功，但包内对象名可能比预期多后缀（如 Sekiro_Skeleton_Skeleton），
+    // LoadObject/FindObject 按名称查找会失败；GetObjectsWithOuter 按类型匹配是唯一可靠方式
+    UPackage* Pkg = LoadPackage(nullptr, *PkgPath, LOAD_None);
+    if (Pkg)
+    {
+        TArray<UObject*> Objects;
+        GetObjectsWithOuter(Pkg, Objects, false);
+        for (UObject* Obj : Objects)
+        {
+            if (T* Match = Cast<T>(Obj))
+            {
+                return Match;
+            }
+        }
+    }
+
+    // 方式2: LoadObject with full path (e.g., /Game/.../AssetName.AssetName)
+    FString FullPath = FString::Printf(TEXT("%s.%s"), *PkgPath, *AssetName);
+    if (T* Result = LoadObject<T>(nullptr, *FullPath))
+    {
+        return Result;
+    }
+
+    // 方式3: LoadObject with short path
+    if (T* Result = LoadObject<T>(nullptr, *AssetPath))
+    {
+        return Result;
+    }
+
+    return nullptr;
+}
 
 FString USKAnimBlueprintTool::GetToolDescription() const
 {
-    return TEXT("动画蓝图操作：创建AnimBP、管理状态机（状态/转换）、添加动画节点（SequencePlayer/BlendSpacePlayer）、查询结构、编译。");
+    return TEXT("动画蓝图操作（通用接口）：创建/编译AnimBP（支持自定义parent_class）、管理状态机（状态/转换）、添加动画节点（SequencePlayer/BlendSpacePlayer）、设置AnimGraph根节点、创建BlendSpace资产、查询结构。");
 }
 
 FString USKAnimBlueprintTool::GetInputSchemaJson() const
 {
-    return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"add_node\",\"get_info\",\"compile\"]},\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint asset path\"},\"skeleton_path\":{\"type\":\"string\",\"description\":\"Target skeleton path\"},\"state_name\":{\"type\":\"string\"},\"from_state\":{\"type\":\"string\"},\"to_state\":{\"type\":\"string\"},\"crossfade_duration\":{\"type\":\"number\",\"default\":0.2},\"blend_mode\":{\"type\":\"string\",\"enum\":[\"linear\",\"cubic\",\"hermite_cubic\",\"sinusoidal\",\"quadratic_in_out\",\"cubic_in_out\",\"quartic_in_out\",\"quintic_in_out\",\"circular_in_out\",\"exp_in_out\",\"custom\"]},\"bidirectional\":{\"type\":\"boolean\",\"default\":false},\"node_type\":{\"type\":\"string\",\"enum\":[\"sequence_player\",\"blend_space_player\"]},\"asset_path\":{\"type\":\"string\",\"description\":\"Animation asset path (AnimSequence/BlendSpace)\"},\"play_rate\":{\"type\":\"number\",\"default\":1.0},\"loop\":{\"type\":\"boolean\",\"default\":true}},\"required\":[\"action\",\"path\"]}");
+    return TEXT("{"
+        "\"type\":\"object\","
+        "\"properties\":{"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"add_node\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\"]},"
+            "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
+            "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
+            "\"parent_class\":{\"type\":\"string\",\"description\":\"可选：AnimInstance父类脚本路径，如/Script/ModuleName.ClassName\"},"
+            "\"state_name\":{\"type\":\"string\"},"
+            "\"from_state\":{\"type\":\"string\"},\"to_state\":{\"type\":\"string\"},"
+            "\"crossfade_duration\":{\"type\":\"number\",\"default\":0.2},"
+            "\"blend_mode\":{\"type\":\"string\",\"enum\":[\"linear\",\"cubic\",\"hermite_cubic\",\"sinusoidal\",\"quadratic_in_out\",\"cubic_in_out\",\"quartic_in_out\",\"quintic_in_out\",\"circular_in_out\",\"exp_in_out\",\"custom\"]},"
+            "\"bidirectional\":{\"type\":\"boolean\",\"default\":false},"
+            "\"node_type\":{\"type\":\"string\",\"enum\":[\"sequence_player\",\"blend_space_player\"]},"
+            "\"asset_path\":{\"type\":\"string\",\"description\":\"动画资产路径（AnimSequence/BlendSpace）\"},"
+            "\"play_rate\":{\"type\":\"number\",\"default\":1.0},"
+            "\"loop\":{\"type\":\"boolean\",\"default\":true},"
+            "\"blend_space_path\":{\"type\":\"string\",\"description\":\"setup_anim_graph: BlendSpace资产路径\"},"
+            "\"axes\":{\"type\":\"array\",\"description\":\"create_blend_space: 坐标轴 [{name,min,max,grid}]\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"min\":{\"type\":\"number\"},\"max\":{\"type\":\"number\"},\"grid\":{\"type\":\"integer\"}}}},"
+            "\"samples\":{\"type\":\"array\",\"description\":\"create_blend_space: 样本 [{anim_path,x,y}]\",\"items\":{\"type\":\"object\",\"properties\":{\"anim_path\":{\"type\":\"string\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}},"
+            "\"character_bp_path\":{\"type\":\"string\",\"description\":\"set_anim_class: 角色Blueprint路径\"},"
+            "\"anim_bp_path\":{\"type\":\"string\",\"description\":\"set_anim_class: AnimBlueprint路径（或直接用path参数）\"},"
+            "\"mesh_component_name\":{\"type\":\"string\",\"description\":\"set_anim_class: Mesh组件变量名，默认Mesh\",\"default\":\"Mesh\"}"
+        "},"
+        "\"required\":[\"action\",\"path\"]"
+    "}");
 }
 
 FString USKAnimBlueprintTool::GetConfirmationSummary(const FString& ArgsJson) const
@@ -70,12 +158,15 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
         return FString();
     }
 
-    if (Action == TEXT("create"))          return HandleCreate(ArgsObj, OutError);
-    if (Action == TEXT("add_state"))       return HandleAddState(ArgsObj, OutError);
-    if (Action == TEXT("add_transition"))  return HandleAddTransition(ArgsObj, OutError);
-    if (Action == TEXT("add_node"))        return HandleAddAnimNode(ArgsObj, OutError);
-    if (Action == TEXT("get_info"))        return HandleGetInfo(ArgsObj, OutError);
-    if (Action == TEXT("compile"))         return HandleCompile(ArgsObj, OutError);
+    if (Action == TEXT("create"))              return HandleCreate(ArgsObj, OutError);
+    if (Action == TEXT("add_state"))           return HandleAddState(ArgsObj, OutError);
+    if (Action == TEXT("add_transition"))      return HandleAddTransition(ArgsObj, OutError);
+    if (Action == TEXT("add_node"))            return HandleAddAnimNode(ArgsObj, OutError);
+    if (Action == TEXT("get_info"))            return HandleGetInfo(ArgsObj, OutError);
+    if (Action == TEXT("compile"))             return HandleCompile(ArgsObj, OutError);
+    if (Action == TEXT("setup_anim_graph"))    return HandleSetupAnimGraph(ArgsObj, OutError);
+    if (Action == TEXT("create_blend_space"))  return HandleCreateBlendSpace(ArgsObj, OutError);
+    if (Action == TEXT("set_anim_class"))      return HandleSetAnimClass(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -95,7 +186,7 @@ FString USKAnimBlueprintTool::HandleCreate(const TSharedPtr<FJsonObject>& Args, 
         return FString();
     }
 
-    USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *SkeletonPath);
+    USkeleton* Skeleton = LoadAssetHelper<USkeleton>(SkeletonPath);
     if (!Skeleton)
     {
         OutError = FString::Printf(TEXT("骨架未找到: %s"), *SkeletonPath);
@@ -124,9 +215,25 @@ FString USKAnimBlueprintTool::HandleCreate(const TSharedPtr<FJsonObject>& Args, 
         return FString();
     }
 
+    // 确定父类：优先使用脚本层传入的 parent_class，否则用 UAnimInstance
+    UClass* ParentClass = UAnimInstance::StaticClass();
+    FString ParentClassPath;
+    if (Args->TryGetStringField(TEXT("parent_class"), ParentClassPath) && !ParentClassPath.IsEmpty())
+    {
+        if (UClass* CustomClass = LoadObject<UClass>(nullptr, *ParentClassPath))
+        {
+            ParentClass = CustomClass;
+        }
+        else
+        {
+            OutError = FString::Printf(TEXT("指定的 parent_class 未找到: %s"), *ParentClassPath);
+            return FString();
+        }
+    }
+
     // 用 UAnimBlueprint 类型创建
     UBlueprint* BP = FKismetEditorUtilities::CreateBlueprint(
-        UAnimInstance::StaticClass(),
+        ParentClass,
         Package,
         FName(*BPName),
         BPTYPE_Normal,
@@ -157,6 +264,7 @@ FString USKAnimBlueprintTool::HandleCreate(const TSharedPtr<FJsonObject>& Args, 
     ResultObj->SetStringField(TEXT("path"), AssetPath);
     ResultObj->SetStringField(TEXT("name"), BPName);
     ResultObj->SetStringField(TEXT("skeleton"), SkeletonPath);
+    ResultObj->SetStringField(TEXT("parent_class"), ParentClass->GetPathName());
     ResultObj->SetStringField(TEXT("type"), TEXT("AnimBlueprint"));
     ResultObj->SetBoolField(TEXT("success"), true);
 
@@ -413,7 +521,7 @@ FString USKAnimBlueprintTool::HandleAddAnimNode(const TSharedPtr<FJsonObject>& A
             return FString();
         }
 
-        UAnimSequence* AnimSeq = LoadObject<UAnimSequence>(nullptr, *AnimAssetPath);
+        UAnimSequence* AnimSeq = LoadAssetHelper<UAnimSequence>(AnimAssetPath);
         if (!AnimSeq)
         {
             OutError = FString::Printf(TEXT("AnimSequence未找到: %s"), *AnimAssetPath);
@@ -457,7 +565,7 @@ FString USKAnimBlueprintTool::HandleAddAnimNode(const TSharedPtr<FJsonObject>& A
             return FString();
         }
 
-        UBlendSpace* BlendSpace = LoadObject<UBlendSpace>(nullptr, *BlendSpacePath);
+        UBlendSpace* BlendSpace = LoadAssetHelper<UBlendSpace>(BlendSpacePath);
         if (!BlendSpace)
         {
             OutError = FString::Printf(TEXT("BlendSpace未找到: %s"), *BlendSpacePath);
@@ -575,12 +683,370 @@ FString USKAnimBlueprintTool::HandleCompile(const TSharedPtr<FJsonObject>& Args,
 }
 
 // ============================================================================
+// HandleSetupAnimGraph — 在 AnimGraph 中设置 BlendSpacePlayer→Root 连接
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleSetupAnimGraph(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString BlendSpacePath;
+    if (!Args->TryGetStringField(TEXT("blend_space_path"), BlendSpacePath))
+    {
+        OutError = TEXT("缺少 blend_space_path 参数");
+        return FString();
+    }
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    if (!AnimBP) return FString();
+
+    UBlendSpace* BlendSpace = LoadAssetHelper<UBlendSpace>(BlendSpacePath);
+    if (!BlendSpace)
+    {
+        OutError = FString::Printf(TEXT("BlendSpace未找到: %s"), *BlendSpacePath);
+        return FString();
+    }
+
+    // 找到主 AnimGraph（UAnimationGraph）
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : AnimBP->FunctionGraphs)
+    {
+        AnimGraph = Cast<UAnimationGraph>(Graph);
+        if (AnimGraph) break;
+    }
+    if (!AnimGraph)
+    {
+        for (UEdGraph* Graph : AnimBP->UbergraphPages)
+        {
+            AnimGraph = Cast<UAnimationGraph>(Graph);
+            if (AnimGraph) break;
+        }
+    }
+    if (!AnimGraph)
+    {
+        OutError = TEXT("未找到 AnimGraph");
+        return FString();
+    }
+
+    // 找到或创建 Root 节点
+    UAnimGraphNode_Root* RootNode = nullptr;
+    for (UEdGraphNode* Node : AnimGraph->Nodes)
+    {
+        if (UAnimGraphNode_Root* RN = Cast<UAnimGraphNode_Root>(Node))
+        {
+            RootNode = RN;
+            break;
+        }
+    }
+    if (!RootNode)
+    {
+        FGraphNodeCreator<UAnimGraphNode_Root> RootCreator(*AnimGraph);
+        RootNode = RootCreator.CreateNode();
+        RootNode->NodePosX = 400;
+        RootNode->NodePosY = 0;
+        RootCreator.Finalize();
+    }
+
+    // 创建 BlendSpacePlayer 节点
+    FGraphNodeCreator<UAnimGraphNode_BlendSpacePlayer> NodeCreator(*AnimGraph);
+    UAnimGraphNode_BlendSpacePlayer* BspNode = NodeCreator.CreateNode();
+    BspNode->NodePosX = 0;
+    BspNode->NodePosY = 0;
+    NodeCreator.Finalize();
+
+    // 设置 BlendSpace
+    UScriptStruct* NodeStruct = FAnimNode_BlendSpacePlayer::StaticStruct();
+    void* NodeAddr = &BspNode->Node;
+    FObjectProperty* BsProp = CastField<FObjectProperty>(NodeStruct->FindPropertyByName(TEXT("BlendSpace")));
+    if (BsProp) BsProp->SetObjectPropertyValue(BsProp->ContainerPtrToValuePtr<void>(NodeAddr), BlendSpace);
+
+    // 连接 BlendSpacePlayer.Pose → Root.Result
+    UEdGraphPin* OutputPose = BspNode->FindPin(TEXT("Pose"), EGPD_Output);
+    UEdGraphPin* InputResult = RootNode->FindPin(TEXT("Result"), EGPD_Input);
+    if (OutputPose && InputResult)
+    {
+        OutputPose->MakeLinkTo(InputResult);
+    }
+    else
+    {
+        OutError = TEXT("无法找到 Pose/Result 引脚进行连接");
+        return FString();
+    }
+
+    AnimBP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(AnimBP);
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObj->SetStringField(TEXT("blend_space"), BlendSpacePath);
+    ResultObj->SetStringField(TEXT("bsp_node_id"), BspNode->GetFName().ToString());
+    ResultObj->SetStringField(TEXT("root_node_id"), RootNode->GetFName().ToString());
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleCreateBlendSpace — 创建 BlendSpace 资产
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleCreateBlendSpace(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString SkeletonPath;
+    if (!Args->TryGetStringField(TEXT("skeleton_path"), SkeletonPath))
+    {
+        OutError = TEXT("缺少 skeleton_path 参数");
+        return FString();
+    }
+
+    USkeleton* Skeleton = LoadAssetHelper<USkeleton>(SkeletonPath);
+    if (!Skeleton)
+    {
+        OutError = FString::Printf(TEXT("骨架未找到: %s"), *SkeletonPath);
+        return FString();
+    }
+
+    // 读取坐标轴定义
+    const TArray<TSharedPtr<FJsonValue>>* AxesArr = nullptr;
+    if (!Args->TryGetArrayField(TEXT("axes"), AxesArr) || AxesArr->Num() == 0)
+    {
+        OutError = TEXT("缺少 axes 参数（坐标轴定义数组）");
+        return FString();
+    }
+    int32 NumAxes = AxesArr->Num();
+    if (NumAxes < 1 || NumAxes > 2)
+    {
+        OutError = TEXT("坐标轴数量必须为 1（1D）或 2（2D）");
+        return FString();
+    }
+
+    // 解析坐标轴
+    struct FAxisDef { FString Name; float Min, Max; int32 Grid; };
+    TArray<FAxisDef> Axes;
+    for (int32 i = 0; i < NumAxes; ++i)
+    {
+        const TSharedPtr<FJsonObject>* AxisObj = nullptr;
+        if (!(*AxesArr)[i]->TryGetObject(AxisObj)) continue;
+        FAxisDef Axis;
+        Axis.Name = (*AxisObj)->GetStringField(TEXT("name"));
+        Axis.Min = (float)(*AxisObj)->GetNumberField(TEXT("min"));
+        Axis.Max = (float)(*AxisObj)->GetNumberField(TEXT("max"));
+        Axis.Grid = FMath::Max(2, (int32)(*AxisObj)->GetNumberField(TEXT("grid")));
+        Axes.Add(Axis);
+    }
+
+    // 检查重复
+    if (UEditorAssetLibrary::DoesAssetExist(AssetPath))
+    {
+        OutError = FString::Printf(TEXT("BlendSpace已存在: %s"), *AssetPath);
+        return FString();
+    }
+
+    // 创建 Package 和 BlendSpace
+    int32 LastSlash;
+    if (!AssetPath.FindLastChar('/', LastSlash))
+    {
+        OutError = TEXT("无效的资产路径");
+        return FString();
+    }
+    FString PackagePath = AssetPath.Left(LastSlash);
+    FString AssetName = AssetPath.RightChop(LastSlash + 1);
+
+    UPackage* Package = CreatePackage(*AssetPath);
+    if (!Package)
+    {
+        OutError = TEXT("创建Package失败");
+        return FString();
+    }
+
+    UBlendSpace* BlendSpace = nullptr;
+    if (NumAxes == 1)
+    {
+        BlendSpace = NewObject<UBlendSpace1D>(Package, UBlendSpace1D::StaticClass(), FName(*AssetName), RF_Public | RF_Standalone);
+    }
+    else
+    {
+        BlendSpace = NewObject<UBlendSpace>(Package, UBlendSpace::StaticClass(), FName(*AssetName), RF_Public | RF_Standalone);
+    }
+    if (!BlendSpace)
+    {
+        OutError = TEXT("创建BlendSpace对象失败");
+        return FString();
+    }
+
+    BlendSpace->SetSkeleton(Skeleton);
+
+    // 通过反射设置 BlendParameters（protected 成员）
+    FProperty* ParamProp = UBlendSpace::StaticClass()->FindPropertyByName(TEXT("BlendParameters"));
+    FStructProperty* StructParamProp = CastField<FStructProperty>(ParamProp);
+    if (StructParamProp)
+    {
+        UScriptStruct* ParamStruct = StructParamProp->Struct;
+        FStrProperty* DisplayNameProp = CastField<FStrProperty>(ParamStruct->FindPropertyByName(TEXT("DisplayName")));
+        FFloatProperty* MinProp = CastField<FFloatProperty>(ParamStruct->FindPropertyByName(TEXT("Min")));
+        FFloatProperty* MaxProp = CastField<FFloatProperty>(ParamStruct->FindPropertyByName(TEXT("Max")));
+        FIntProperty* GridProp = CastField<FIntProperty>(ParamStruct->FindPropertyByName(TEXT("GridNum")));
+
+        for (int32 i = 0; i < NumAxes; ++i)
+        {
+            void* ElemPtr = StructParamProp->ContainerPtrToValuePtr<void>(BlendSpace, i);
+            if (DisplayNameProp) DisplayNameProp->SetPropertyValue_InContainer(ElemPtr, Axes[i].Name);
+            if (MinProp) MinProp->SetFloatingPointPropertyValue(MinProp->ContainerPtrToValuePtr<void>(ElemPtr), Axes[i].Min);
+            if (MaxProp) MaxProp->SetFloatingPointPropertyValue(MaxProp->ContainerPtrToValuePtr<void>(ElemPtr), Axes[i].Max);
+            if (GridProp) GridProp->SetIntPropertyValue(GridProp->ContainerPtrToValuePtr<void>(ElemPtr), (int64)Axes[i].Grid);
+        }
+    }
+
+    // 读取并添加样本
+    const TArray<TSharedPtr<FJsonValue>>* SamplesArr = nullptr;
+    if (Args->TryGetArrayField(TEXT("samples"), SamplesArr) && SamplesArr->Num() > 0)
+    {
+        for (const TSharedPtr<FJsonValue>& SampleVal : *SamplesArr)
+        {
+            const TSharedPtr<FJsonObject>* SampleObj = nullptr;
+            if (!SampleVal->TryGetObject(SampleObj)) continue;
+
+            FString AnimPath = (*SampleObj)->GetStringField(TEXT("anim_path"));
+            UAnimSequence* AnimSeq = LoadAssetHelper<UAnimSequence>(AnimPath);
+            if (!AnimSeq)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[CreateBlendSpace] AnimSequence未找到，跳过: %s"), *AnimPath);
+                continue;
+            }
+
+            float X = (float)(*SampleObj)->GetNumberField(TEXT("x"));
+            float Y = NumAxes > 1 ? (float)(*SampleObj)->GetNumberField(TEXT("y")) : 0.f;
+            FVector SampleValue(X, Y, 0.f);
+            BlendSpace->AddSample(AnimSeq, SampleValue);
+        }
+    }
+
+    BlendSpace->MarkPackageDirty();
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+    FAssetRegistryModule::AssetCreated(BlendSpace);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("path"), AssetPath);
+    ResultObj->SetStringField(TEXT("name"), AssetName);
+    ResultObj->SetStringField(TEXT("skeleton"), SkeletonPath);
+    ResultObj->SetNumberField(TEXT("num_axes"), NumAxes);
+    ResultObj->SetNumberField(TEXT("num_samples"), BlendSpace->GetNumberOfBlendSamples());
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleSetAnimClass — 将 AnimBlueprint 分配给角色 Blueprint 的 Mesh 组件
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleSetAnimClass(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString CharacterBPPath;
+    if (!Args->TryGetStringField(TEXT("character_bp_path"), CharacterBPPath))
+    {
+        OutError = TEXT("缺少 character_bp_path 参数（角色Blueprint路径）");
+        return FString();
+    }
+
+    FString AnimBPPath = Args->GetStringField(TEXT("path"));
+    FString MeshName = TEXT("Mesh");
+    Args->TryGetStringField(TEXT("mesh_component_name"), MeshName);
+
+    // 加载 AnimBlueprint
+    UAnimBlueprint* AnimBP = LoadAssetHelper<UAnimBlueprint>(AnimBPPath);
+    if (!AnimBP)
+    {
+        OutError = FString::Printf(TEXT("AnimBlueprint未找到: %s"), *AnimBPPath);
+        return FString();
+    }
+
+    if (!AnimBP->GeneratedClass)
+    {
+        OutError = TEXT("AnimBlueprint没有有效的 GeneratedClass");
+        return FString();
+    }
+
+    // 加载角色 Blueprint
+    UBlueprint* CharBP = LoadAssetHelper<UBlueprint>(CharacterBPPath);
+    if (!CharBP)
+    {
+        OutError = FString::Printf(TEXT("角色Blueprint未找到: %s"), *CharacterBPPath);
+        return FString();
+    }
+
+    if (!CharBP->GeneratedClass)
+    {
+        OutError = TEXT("角色Blueprint没有有效的 GeneratedClass");
+        return FString();
+    }
+
+    // 获取 CDO
+    UObject* CDO = CharBP->GeneratedClass->GetDefaultObject();
+    if (!CDO)
+    {
+        OutError = TEXT("无法获取角色 CDO");
+        return FString();
+    }
+
+    // 通过反射查找 SkeletalMeshComponent 属性
+    FObjectProperty* MeshProp = CastField<FObjectProperty>(CharBP->GeneratedClass->FindPropertyByName(*MeshName));
+    if (!MeshProp)
+    {
+        // 尝试查找 ACharacter 父类的 Mesh 属性
+        MeshProp = CastField<FObjectProperty>(ACharacter::StaticClass()->FindPropertyByName(*MeshName));
+    }
+    if (!MeshProp)
+    {
+        OutError = FString::Printf(TEXT("未找到 Mesh 组件属性: %s"), *MeshName);
+        return FString();
+    }
+
+    USkeletalMeshComponent* MeshComp = Cast<USkeletalMeshComponent>(MeshProp->GetObjectPropertyValue_InContainer(CDO));
+    if (!MeshComp)
+    {
+        OutError = TEXT("Mesh 组件为空");
+        return FString();
+    }
+
+    // 设置 AnimClass
+    MeshComp->SetAnimInstanceClass(AnimBP->GeneratedClass);
+    MeshComp->MarkPackageDirty();
+    CharBP->MarkPackageDirty();
+
+    // 保存
+    UEditorAssetLibrary::SaveAsset(CharacterBPPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("character_bp"), CharacterBPPath);
+    ResultObj->SetStringField(TEXT("anim_bp"), AnimBPPath);
+    ResultObj->SetStringField(TEXT("anim_class"), AnimBP->GeneratedClass->GetPathName());
+    ResultObj->SetStringField(TEXT("mesh_component"), MeshName);
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
 // LoadAnimBlueprint — 加载 AnimBlueprint
 // ============================================================================
 
 UAnimBlueprint* USKAnimBlueprintTool::LoadAnimBlueprint(const FString& AssetPath, FString& OutError)
 {
-    UAnimBlueprint* AnimBP = LoadObject<UAnimBlueprint>(nullptr, *AssetPath);
+    UAnimBlueprint* AnimBP = LoadAssetHelper<UAnimBlueprint>(AssetPath);
     if (!AnimBP)
     {
         OutError = FString::Printf(TEXT("AnimBlueprint未找到: %s"), *AssetPath);

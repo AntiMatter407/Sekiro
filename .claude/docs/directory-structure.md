@@ -10,8 +10,9 @@
 │   ├── gdd/                     # 游戏设计文档（GDD、叙事、关卡、平衡性）
 │   └── engine-reference/        # 精选的引擎 API 快照（版本锁定，仅 UE）
 ├── Saved/                       # UE 运行时产出 + 日志、录像、截屏
+├── Script/                      # 项目自有 Python 脚本（Blender/UE5/管线/诊断）
+├── Tools/                       # 第三方工具 + C# 工具链（Yabber、Noesis、FlverToFbx C#等）
 ├── Tests/                       # 测试套件（单元测试、集成测试、性能测试、试玩测试）
-├── Tools/                       # 构建与管线工具（CI、构建、资产管线）
 └── .claude/                     # 代理定义、技能、钩子、规则、文档
     └── active.md                # 当前工作状态（唯一的进度文件）
 ```

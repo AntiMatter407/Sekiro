@@ -177,8 +177,8 @@ dotnet run -c Release --project D:/Sekiro/Tools/FlverToFbx/FlverToFbx -- \
   -o "Extracted/Sekiro_model_hkx.json"
 
 # 重新生成 Model FBX
-cd D:/Sekiro/Tools/FlverToFbx && "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe" --background --python import_model.py -- D:/Sekiro/Extracted/Sekiro_model_hkx.json D:/Sekiro/Extracted/Sekiro_common_anims.json D:/Sekiro/Extracted/Sekiro_Model.fbx D:/Sekiro/Extracted/
+cd D:/Sekiro/Script && "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe" --background --python import_model.py -- D:/Sekiro/Extracted/Sekiro_model_hkx.json D:/Sekiro/Extracted/Sekiro_common_anims.json D:/Sekiro/Extracted/Sekiro_Model.fbx D:/Sekiro/Extracted/
 
 # 重新生成 Anim FBX
-cd D:/Sekiro/Tools/FlverToFbx && "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe" --background --python export_common_anims.py -- D:/Sekiro/Extracted/Sekiro_model_hkx.json D:/Sekiro/Extracted/Sekiro_common_anims.json D:/Sekiro/Extracted/Sekiro_Anim.fbx D:/Sekiro/Extracted/
+cd D:/Sekiro/Script && "C:/Program Files/Blender Foundation/Blender 5.1/blender.exe" --background --python export_common_anims.py -- D:/Sekiro/Extracted/Sekiro_model_hkx.json D:/Sekiro/Extracted/Sekiro_common_anims.json D:/Sekiro/Extracted/Sekiro_Anim.fbx D:/Sekiro/Extracted/
 ```

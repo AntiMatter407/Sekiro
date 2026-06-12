@@ -34,6 +34,8 @@
 
 @.claude/docs/technical-preferences.md
 
+> **核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层（Python/BP/Lua）负责编排具体工作流。详见 technical-preferences.md 中「C++/脚本分工原则」。
+
 ## 协调规则
 
 @.claude/docs/coordination-rules.md

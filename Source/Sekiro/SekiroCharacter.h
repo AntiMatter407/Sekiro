@@ -17,11 +17,14 @@ class UInputMappingContext;
 class UInputAction;
 class USpringArmComponent;
 class UCameraComponent;
+class USekiroAnimInstance;
 
 UCLASS(config=Game)
-class ASekiroCharacter : public ACharacter
+class SEKIRO_API ASekiroCharacter : public ACharacter
 {
 	GENERATED_BODY()
+
+	friend class USekiroAnimInstance;
 
 	// ── 组件 ──────────────────────────────────────────────
 
@@ -96,6 +99,14 @@ class ASekiroCharacter : public ACharacter
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
 	float DodgeDirection = 0.f;
+
+	/**
+	 * 闪避横向方向（-1=左, 0=无, +1=右）
+	 * 与 DodgeDirection 同时由 Move() 计算；
+	 * 动画蓝图使用该值选择左/右闪避动画。
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State", meta = (AllowPrivateAccess = "true"))
+	float DodgeDirectionLateral = 0.f;
 
 	/** 允许空中闪避（忍具派生等场景） */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Dodge", meta = (AllowPrivateAccess = "true"))

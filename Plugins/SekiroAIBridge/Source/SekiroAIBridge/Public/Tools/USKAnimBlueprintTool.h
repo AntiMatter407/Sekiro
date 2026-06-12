@@ -14,10 +14,13 @@ class UAnimStateNode;
 class UAnimStateTransitionNode;
 
 /**
- * 动画蓝图操作工具
+ * 动画蓝图操作工具（通用接口）
  *
- * 支持创建动画蓝图、管理状态机（添加状态/转换）、
- * 以及向状态的动画图中添加动画节点（SequencePlayer/BlendSpacePlayer）。
+ * 支持：创建/编译 AnimBlueprint（可选 parent_class）、状态机管理（状态/转换）、
+ * 动画节点操作（SequencePlayer/BlendSpacePlayer）、AnimGraph 根节点连接、
+ * BlendSpace 资产创建。
+ *
+ * C++ 层只提供通用接口，具体工作流（路径、类名、参数）由脚本层编排。
  *
  * 风险：高（修改动画蓝图图结构，可能影响动画逻辑）。
  */
@@ -41,6 +44,9 @@ private:
     FString HandleAddAnimNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleGetInfo(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleCompile(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleSetupAnimGraph(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleCreateBlendSpace(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleSetAnimClass(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 
     UAnimBlueprint* LoadAnimBlueprint(const FString& AssetPath, FString& OutError);
     UAnimGraphNode_StateMachine* FindOrCreateStateMachineNode(UAnimBlueprint* AnimBP, FString& OutError);

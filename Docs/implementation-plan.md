@@ -3,7 +3,7 @@
 ## Context
 
 两套管线产生不同结果：
-1. **Blender/FBX管线**（`Tools/FlverToFbx/common_blender.py`）：JSON → Blender → FBX → UE5
+1. **Blender/FBX管线**（`Script/common_blender.py`）：JSON → Blender → FBX → UE5
 2. **C++ SekiroImport**：JSON → 直接UE资产，算法不同
 
 目标：C++插件**完全对齐**Blender管线逻辑，省略FBX中间文件。
