@@ -11,6 +11,7 @@
 │   └── engine-reference/        # 精选的引擎 API 快照（版本锁定，仅 UE）
 ├── Saved/                       # UE 运行时产出 + 日志、录像、截屏
 ├── Script/                      # 项目自有 Python 脚本（Blender/UE5/管线/诊断）
+│   └── temp/                     # 临时脚本和诊断输出（一次性使用，不提交到主线）
 ├── Tools/                       # 第三方工具 + C# 工具链（Yabber、Noesis、FlverToFbx C#等）
 ├── Tests/                       # 测试套件（单元测试、集成测试、性能测试、试玩测试）
 └── .claude/                     # 代理定义、技能、钩子、规则、文档

@@ -33,8 +33,10 @@ private:
     FString HandleInfo(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleExists(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleCreate(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleCreatePhysicsAsset(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleDelete(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleDuplicate(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleRename(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleSave(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleImportFile(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 };

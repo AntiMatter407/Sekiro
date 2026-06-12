@@ -8,11 +8,16 @@ allowed-tools: Bash, Read
 
 # SekiroAIBridge — UE5 编辑器 AI 操控
 
-通过 TCP JSON-RPC 连接运行中的 UE 编辑器，执行 8 类操作：
-查询、控制台、资产、Python、编译、Blueprint、EnhancedInput、AnimBlueprint。
+通过 TCP JSON-RPC 连接运行中的 UE 编辑器，执行 9 类操作：
+查询、控制台、资产、Python、编译、Blueprint、EnhancedInput、AnimBlueprint、PIE控制。
 
 > **前提**：UE 编辑器运行中，SekiroAIBridge 插件已加载（监听 127.0.0.1:9877）。
 > 用户可手动管理编辑器，也可请求 AI 通过 `editor start/stop/restart` 命令启停编辑器。
+
+> **Windows Git Bash 用户**：MSYS2 会自动把 `/Game/...` 等 Unix 风格路径转为 Windows 路径（如 `C:/Program Files/Git/Game/...`），导致资产操作失败。所有 bridge.py 命令前需加 `MSYS2_ARG_CONV_EXCL='*'` 禁用此行为：
+> ```bash
+> MSYS2_ARG_CONV_EXCL='*' python .claude/skills/aibridge/bridge.py asset list /Game/
+> ```
 
 ---
 
@@ -55,15 +60,22 @@ python3 .claude/skills/aibridge/bridge.py console "memreport"
 python3 .claude/skills/aibridge/bridge.py asset list /Game/
 python3 .claude/skills/aibridge/bridge.py asset info /Game/BP_Player
 python3 .claude/skills/aibridge/bridge.py asset create /Game/Data/DT_Config DataTable
+python3 .claude/skills/aibridge/bridge.py asset import_file /Game/Textures/T_MyTex "F:/path/to/texture.png"
 python3 .claude/skills/aibridge/bridge.py asset delete /Game/Temp/ToDelete
 python3 .claude/skills/aibridge/bridge.py asset rename /Game/Old /Game/New
 ```
+
+`import_file` imports a single file (PNG/TGA/BMP/DDS) as a Texture2D asset. The source path must be an absolute filesystem path. This is the recommended way to import textures — Python's `AssetImportTask` hangs when called via bridge (GameThread deadlock).
 
 ### Python 执行
 
 ```bash
 python3 .claude/skills/aibridge/bridge.py python "import unreal; print(unreal.get_editor_subsystem(...))"
+python3 .claude/skills/aibridge/bridge.py python --file "F:/path/to/script.py"
+python3 .claude/skills/aibridge/bridge.py python --file "F:/path/to/script.py" --args "/Game/config.json"
 ```
+
+`--file` executes a Python file. `--args` passes arguments visible to the script via `sys.argv[1:]`.
 
 ### 编译
 
@@ -134,6 +146,35 @@ python3 .claude/skills/aibridge/bridge.py anim_blueprint compile /Game/Anim/ABP_
 **add_transition 参数**: `<ABP路径> <源状态> <目标状态> [crossfade_duration] [blend_mode]`
   - blend_mode 可选: linear / cubic / sinusoidal / cubic_in_out 等
 
+### PIE 控制
+
+控制 Play In Editor 会话的启动、停止、暂停、恢复，支持多种运行模式和网络配置。
+
+```bash
+python3 .claude/skills/aibridge/bridge.py pie status                # 查询 PIE 状态
+python3 .claude/skills/aibridge/bridge.py pie start                 # 启动 PIE（默认：视口内）
+python3 .claude/skills/aibridge/bridge.py pie start standalone      # 独立进程
+python3 .claude/skills/aibridge/bridge.py pie start mobile          # 移动端预览
+python3 .claude/skills/aibridge/bridge.py pie start vulkan          # Vulkan 预览
+python3 .claude/skills/aibridge/bridge.py pie start vr              # VR 预览
+python3 .claude/skills/aibridge/bridge.py pie start simulate        # 模拟模式（无玩家）
+python3 .claude/skills/aibridge/bridge.py pie start --clients 2 --listen  # 2 客户端 ListenServer
+python3 .claude/skills/aibridge/bridge.py pie start --clients 4 --dedicated  # 4 客户端 DedicatedServer
+python3 .claude/skills/aibridge/bridge.py pie stop                  # 停止 PIE
+python3 .claude/skills/aibridge/bridge.py pie pause                 # 暂停 PIE
+python3 .claude/skills/aibridge/bridge.py pie resume                # 恢复 PIE
+python3 .claude/skills/aibridge/bridge.py pie late_join             # 添加一个客户端
+```
+
+**start 参数说明**:
+- 位置参数 `mode`: selected（默认）/ standalone / mobile / vulkan / vr / simulate
+- `--clients N`: 客户端数量（默认 1）
+- `--net_mode standalone|dedicated|listen`: 网络模式
+- `--dedicated`: DedicatedServer 快捷方式
+- `--listen`: ListenServer 快捷方式
+- `--server`: 等效 --listen
+- `--viewport`: 视口内运行（默认 true）
+
 ### 工具列表
 
 ```bash
@@ -186,12 +227,13 @@ python3 .claude/skills/aibridge/bridge.py crash list       # 列出历史崩溃
 | `blueprint addvar/addfunc/addnode` | 修改 Blueprint 结构 |
 | `enhanced_input map_key/unmap_key` | 修改输入映射配置 |
 | `anim_blueprint add_state/add_transition/add_node` | 修改动画蓝图图结构 |
+| `pie start` | 启动 PIE 会话 |
 | `console` 带写入命令 | 可能修改编辑器状态 |
 
 **确认格式**：
 > "即将执行 `[命令]`。这可能 [影响说明]。是否继续？"
 
-只读操作（`query`、`asset list`、`asset info`、`ping`、`tools`、`console "stat*"`）无需确认。
+只读操作（`query`、`asset list`、`asset info`、`ping`、`tools`、`console "stat*"`、`pie status`）无需确认。
 
 ---
 

@@ -30,5 +30,5 @@ public:
 
 private:
     FString ExecuteScript(const FString& Script, FString& OutError);
-    FString ExecuteFile(const FString& FilePath, FString& OutError);
+    FString ExecuteFile(const FString& FilePath, const FString& Args, FString& OutError);
 };

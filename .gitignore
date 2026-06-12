@@ -45,3 +45,9 @@
 # Dev tool scratch files
 /Tools/FlverToFbx/FlverToFbx/*.csx
 /Tools/InspectFlver/
+
+# Temporary scripts and diagnostic output
+/Script/temp/
+
+# Third-party marketplace content
+/Content/AdvancedLocomotionV4/

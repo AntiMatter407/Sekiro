@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SekiroCharacter.h"
+#include "Weapon/SekiroWeaponComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
@@ -45,13 +46,25 @@ ASekiroCharacter::ASekiroCharacter(const FObjectInitializer& ObjectInitializer)
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
+
+	WeaponComponent = CreateDefaultSubobject<USekiroWeaponComponent>(TEXT("WeaponComponent"));
 }
 
 void ASekiroCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (APlayerController* PC = Cast<APlayerController>(Controller))
+	if (WeaponComponent)
+	{
+		WeaponComponent->InitWeapon();
+	}
+}
+
+void ASekiroCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	if (APlayerController* PC = Cast<APlayerController>(NewController))
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Sub =
 			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))

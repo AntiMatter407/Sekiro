@@ -11,6 +11,8 @@
 #include "K2Node_CallFunction.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_ExecutionSequence.h"
+#include "K2Node_Event.h"
+#include "K2Node_CustomEvent.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Components/ActorComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -27,7 +29,7 @@ FString USKBlueprintTool::GetToolDescription() const
 
 FString USKBlueprintTool::GetInputSchemaJson() const
 {
-	return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_variable\",\"add_function\",\"add_component\",\"set_property\",\"get_info\",\"compile\",\"add_interface\",\"add_node\"]},\"path\":{\"type\":\"string\",\"description\":\"Blueprint asset path\"},\"parent_class\":{\"type\":\"string\",\"description\":\"Parent class name\"},\"name\":{\"type\":\"string\",\"description\":\"Variable/function/component name\"},\"type\":{\"type\":\"string\",\"description\":\"Variable type or component class\"},\"value\":{\"type\":\"string\",\"description\":\"Property value\"},\"interface_class\":{\"type\":\"string\",\"description\":\"Interface class path\"}},\"required\":[\"action\",\"path\"]}");
+	return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_variable\",\"add_function\",\"add_component\",\"set_property\",\"get_info\",\"compile\",\"add_interface\",\"add_node\",\"layout\"]},\"path\":{\"type\":\"string\",\"description\":\"Blueprint asset path\"},\"parent_class\":{\"type\":\"string\",\"description\":\"Parent class name\"},\"name\":{\"type\":\"string\",\"description\":\"Variable/function/component name\"},\"type\":{\"type\":\"string\",\"description\":\"Variable type or component class\"},\"value\":{\"type\":\"string\",\"description\":\"Property value\"},\"interface_class\":{\"type\":\"string\",\"description\":\"Interface class path\"}},\"required\":[\"action\",\"path\"]}");
 }
 
 bool USKBlueprintTool::RequiresConfirmation() const
@@ -74,6 +76,7 @@ FString USKBlueprintTool::Execute(const FString& ArgsJson, FString& OutError)
     if (Action == TEXT("compile"))         return HandleCompile(ArgsObj, OutError);
     if (Action == TEXT("add_interface"))   return HandleAddInterface(ArgsObj, OutError);
     if (Action == TEXT("add_node"))        return HandleAddNode(ArgsObj, OutError);
+    if (Action == TEXT("layout"))          return HandleLayout(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -878,6 +881,103 @@ FString USKBlueprintTool::HandleAddNode(const TSharedPtr<FJsonObject>& Args, FSt
     ResultObj->SetStringField(TEXT("graph"), GraphName);
     ResultObj->SetStringField(TEXT("node_type"), NodeType);
     ResultObj->SetStringField(TEXT("node_id"), NewNode->GetFName().ToString());
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleLayout — 自动排版 Blueprint 图中节点（Event/CustomEvent在上，其它垂直流）
+// ============================================================================
+
+FString USKBlueprintTool::HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString GraphName;
+    Args->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    UBlueprint* BP = LoadBlueprint(AssetPath, OutError);
+    if (!BP) return FString();
+
+    const UEdGraphSchema* Schema = GetDefault<UEdGraphSchema_K2>();
+
+    auto LayoutGraph = [&](UEdGraph* Graph) {
+        if (!Graph) return;
+
+        TArray<UEdGraphNode*> Nodes = Graph->Nodes;
+        if (Nodes.Num() == 0) return;
+
+        // 分类：Event/CustomEvent 在上方，其他按类型分
+        TArray<UEdGraphNode*> EventNodes;
+        TArray<UEdGraphNode*> OtherNodes;
+        for (UEdGraphNode* N : Nodes)
+        {
+            UK2Node_Event* Evt = Cast<UK2Node_Event>(N);
+            UK2Node_CustomEvent* CustEvt = Cast<UK2Node_CustomEvent>(N);
+            if (Evt || CustEvt)
+                EventNodes.Add(N);
+            else
+                OtherNodes.Add(N);
+        }
+
+        // Event 节点排在第一行 (y=0)，水平展开
+        for (int32 i = 0; i < EventNodes.Num(); ++i)
+            Schema->SetNodePosition(EventNodes[i], FVector2D(i * 400, 0));
+
+        // 其他节点按现有 Y 排序后垂直展开
+        OtherNodes.Sort([](UEdGraphNode& A, UEdGraphNode& B) {
+            if (A.NodePosY != B.NodePosY) return A.NodePosY < B.NodePosY;
+            return A.NodePosX < B.NodePosX;
+        });
+
+        int32 StartY = EventNodes.Num() > 0 ? 300 : 0;
+        for (int32 i = 0; i < OtherNodes.Num(); ++i)
+        {
+            // 保持相对 Y 间距，最小 250
+            int32 NewY = StartY + i * 250;
+            Schema->SetNodePosition(OtherNodes[i], FVector2D(OtherNodes[i]->NodePosX, NewY));
+        }
+    };
+
+    if (!GraphName.IsEmpty())
+    {
+        // 排版指定图
+        for (UEdGraph* Graph : BP->FunctionGraphs)
+        {
+            if (Graph && Graph->GetFName() == FName(*GraphName))
+            {
+                LayoutGraph(Graph);
+                break;
+            }
+        }
+        for (UEdGraph* Graph : BP->UbergraphPages)
+        {
+            if (Graph && Graph->GetFName() == FName(*GraphName))
+            {
+                LayoutGraph(Graph);
+                break;
+            }
+        }
+    }
+    else
+    {
+        // 排版所有图
+        for (UEdGraph* Graph : BP->FunctionGraphs)
+            LayoutGraph(Graph);
+        for (UEdGraph* Graph : BP->UbergraphPages)
+            LayoutGraph(Graph);
+    }
+
+    BP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(BP);
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
     ResultObj->SetBoolField(TEXT("success"), true);
 
     FString Output;

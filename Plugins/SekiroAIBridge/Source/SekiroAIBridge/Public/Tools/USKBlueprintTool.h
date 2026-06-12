@@ -46,6 +46,7 @@ private:
     FString HandleCompile(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddInterface(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 
     UBlueprint* LoadBlueprint(const FString& AssetPath, FString& OutError);
     FString BlueprintToJson(UBlueprint* BP) const;

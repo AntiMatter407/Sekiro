@@ -1,0 +1,103 @@
+{
+  "pipeline": {
+    "type": "instance",
+    "description": "Sekiro 角色材质实例 — 基于已导入纹理创建/更新 MaterialInstance",
+    "skip_mesh_assign": true
+  },
+  "target": {
+    "mesh": "/Game/Characters/Sekiro/Sekiro_SkeletalMesh",
+    "material_dir": "/Game/Characters/Sekiro/Materials",
+    "texture_dir": "/Game/Characters/Sekiro/Textures"
+  },
+  "materials": [
+    {
+      "_comment": "=== Body (BD) — 躯干/衣物 ===",
+      "name": "MI_BD_M_9000_body",
+      "parent": "M_BD_M_9000_body",
+      "slot": 0,
+      "overrides": [
+        {"parameter": "_a", "texture": "BD_M_9000_cloth_a"},
+        {"parameter": "_n", "texture": "BD_M_9000_cloth_n"}
+      ]
+    },
+    {
+      "name": "MI_BD_M_9000_tops1l",
+      "parent": "M_BD_M_9000_body",
+      "slot": 1,
+      "overrides": [
+        {"parameter": "_a", "texture": "BD_M_9000_tops_a"},
+        {"parameter": "_n", "texture": "BD_M_9000_tops_n"},
+        {"parameter": "_m", "texture": "BD_M_9000_tops_m"}
+      ]
+    },
+    {
+      "name": "MI_BD_M_9000_Court_Material",
+      "parent": "M_BD_M_9000_body",
+      "slot": 2,
+      "overrides": [
+        {"parameter": "_a", "texture": "BD_M_9000_Court_a"},
+        {"parameter": "_n", "texture": "BD_M_9000_Court_n"}
+      ]
+    },
+    {
+      "name": "MI_BD_M_9000_muffler",
+      "parent": "M_BD_M_9000_body",
+      "slot": 3,
+      "overrides": [
+        {"parameter": "_a", "texture": "BD_M_9000_cloth_a"},
+        {"parameter": "_n", "texture": "BD_M_9000_cloth_n"}
+      ]
+    },
+    {
+      "_comment": "=== Arm (AM) — 义手 ===",
+      "name": "MI_AM_M_9000_tops",
+      "parent": "M_AM_M_9000_tops",
+      "slot": 15,
+      "overrides": [
+        {"parameter": "_a", "texture": "AM_M_9000_Armor_a"},
+        {"parameter": "_n", "texture": "AM_M_9000_Armor_n"},
+        {"parameter": "_m", "texture": "AM_M_9000_Armor_m"}
+      ]
+    },
+    {
+      "name": "MI_AM_M_9000_body",
+      "parent": "M_AM_M_9000_tops",
+      "slot": 16,
+      "overrides": [
+        {"parameter": "_a", "texture": "AM_M_9000_Armor_a"},
+        {"parameter": "_n", "texture": "AM_M_9000_Armor_n"}
+      ]
+    },
+    {
+      "name": "MI_AM_M_9000_artificialarm",
+      "parent": "M_AM_M_9000_tops",
+      "slot": 17,
+      "overrides": [
+        {"parameter": "_a", "texture": "AM_M_9000_artificialarm_new_a"},
+        {"parameter": "_n", "texture": "AM_M_9000_artificialarm_new_n"},
+        {"parameter": "_m", "texture": "AM_M_9000_artificialarm_new_m"}
+      ]
+    },
+    {
+      "_comment": "=== Leg (LG) — 腿部 ===",
+      "name": "MI_LG_M_9000_bottoms1",
+      "parent": "M_LG_M_9000_bottoms1",
+      "slot": 25,
+      "overrides": [
+        {"parameter": "_a", "texture": "LG_M_9000_bottoms_new_a"},
+        {"parameter": "_n", "texture": "BD_M_9000_cloth_n"}
+      ]
+    },
+    {
+      "_comment": "=== Face (FC) — 面部/头发 ===",
+      "name": "MI_FC_M_0100_ck",
+      "parent": "M_FC_M_0100_body",
+      "slot": 32,
+      "overrides": [
+        {"parameter": "_a", "texture": "FC_M_0100_head_a"},
+        {"parameter": "_n", "texture": "FC_M_0100_head_n"},
+        {"parameter": "_m", "texture": "FC_M_0100_head_m"}
+      ]
+    }
+  ]
+}

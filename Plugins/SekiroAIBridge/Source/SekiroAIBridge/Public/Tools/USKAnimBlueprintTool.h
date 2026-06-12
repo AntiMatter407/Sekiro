@@ -41,15 +41,24 @@ private:
     FString HandleCreate(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddState(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddTransition(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleDeleteTransition(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddAnimNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleGetInfo(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleCompile(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleSetupAnimGraph(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleCreateBlendSpace(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleSetAnimClass(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 
     UAnimBlueprint* LoadAnimBlueprint(const FString& AssetPath, FString& OutError);
     UAnimGraphNode_StateMachine* FindOrCreateStateMachineNode(UAnimBlueprint* AnimBP, FString& OutError);
     UAnimStateNode* FindStateNode(UAnimationStateMachineGraph* SMGraph, const FString& StateName) const;
     FString AnimBlueprintToJson(UAnimBlueprint* AnimBP) const;
+
+    // 设置转换规则条件（bool/not_bool/float_compare/and/time_remaining）
+    bool SetupTransitionCondition(UAnimStateTransitionNode* TransNode, const TSharedPtr<FJsonObject>& ConditionObj, FString& OutError);
+    // 递归构建条件节点链，返回最终 bool 输出引脚（供 and 组合使用）
+    UEdGraphPin* CreateConditionOutput(class UAnimationTransitionGraph* TransGraph, const TSharedPtr<FJsonObject>& ConditionObj, int32& NodePosX, int32& NodePosY, FString& OutError);
+    // 在状态内为 BlendSpacePlayer 连接参数引脚（X→Angle, Y→Speed）
+    void SetupBlendSpacePinConnections(class UAnimGraphNode_BlendSpacePlayer* BspNode, UEdGraph* StateGraph, const TSharedPtr<FJsonObject>& PinConns);
 };

@@ -107,7 +107,7 @@ async def cmd_console(args):
 async def cmd_asset(args):
     """asset — 资产操作"""
     if not args:
-        return {"error": "用法: asset <list|info|create|delete|rename> [参数...]"}
+        return {"error": "用法: asset <list|info|create|create_physics_asset|delete|rename> [参数...]"}
 
     action = args[0]
     if action == "list":
@@ -131,6 +131,18 @@ async def cmd_asset(args):
             "name": "asset",
             "arguments": {"action": "create", "path": args[1], "type": args[2]}
         })
+    elif action == "create_physics_asset":
+        # bridge.py asset create_physics_asset <PA路径> <骨骼网格路径>
+        if len(args) < 3:
+            return {"error": "用法: asset create_physics_asset <PhysicsAsset路径> <SkeletalMesh路径>"}
+        return await send_request("tools/call", {
+            "name": "asset",
+            "arguments": {
+                "action": "create_physics_asset",
+                "path": args[1],
+                "skeletal_mesh_path": args[2]
+            }
+        })
     elif action == "delete":
         path = args[1] if len(args) > 1 else None
         if not path:
@@ -146,14 +158,36 @@ async def cmd_asset(args):
             "name": "asset",
             "arguments": {"action": "rename", "path": args[1], "newPath": args[2]}
         })
+    elif action == "import_file":
+        # bridge.py asset import_file <资产路径> <源文件路径>
+        if len(args) < 3:
+            return {"error": "用法: asset import_file <资产路径> <源文件路径>"}
+        return await send_request("tools/call", {
+            "name": "asset",
+            "arguments": {"action": "import_file", "path": args[1], "source_file": args[2]}
+        })
     else:
-        return {"error": f"未知资产操作: {action}，支持: list, info, create, delete, rename"}
+        return {"error": f"未知资产操作: {action}，支持: list, info, create, create_physics_asset, delete, rename, import_file"}
 
 
 async def cmd_python(args):
-    """python.execute — 执行 Python 脚本"""
+    """python.execute — 执行 Python 脚本或文件"""
     if not args:
-        return {"error": "用法: python <代码>"}
+        return {"error": "用法: python <代码>  或  python --file <文件路径>"}
+
+    if args[0] == "--file":
+        if len(args) < 2:
+            return {"error": "用法: python --file <文件路径> [--args <参数...>]"}
+        payload = {"file": args[1]}
+        if "--args" in args:
+            idx = args.index("--args")
+            if idx + 1 < len(args):
+                payload["args"] = " ".join(args[idx + 1:])
+        return await send_request("tools/call", {
+            "name": "python.execute",
+            "arguments": payload
+        })
+
     return await send_request("tools/call", {
         "name": "python.execute",
         "arguments": {"script": " ".join(args)}
@@ -425,6 +459,22 @@ async def cmd_blueprint(args):
             "name": "blueprint",
             "arguments": kwargs
         })
+    elif action == "set_property":
+        # bridge.py blueprint set_property <蓝图路径> <属性名> <值> [CDO|组件名]
+        if len(args) < 4:
+            return {"error": "用法: blueprint set_property <蓝图路径> <属性名> <值> [CDO|组件名]"}
+        setp_args = {
+            "action": "set_property",
+            "path": args[1],
+            "name": args[2],
+            "value": args[3]
+        }
+        if len(args) > 4:
+            setp_args["target"] = args[4]
+        return await send_request("tools/call", {
+            "name": "blueprint",
+            "arguments": setp_args
+        })
     elif action == "compile":
         path = args[1] if len(args) > 1 else None
         if not path:
@@ -433,8 +483,20 @@ async def cmd_blueprint(args):
             "name": "blueprint",
             "arguments": {"action": "compile", "path": path}
         })
+    elif action == "layout":
+        # bridge.py blueprint layout <蓝图路径> [图名]
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: blueprint layout <蓝图路径> [图名]"}
+        layout_args = {"action": "layout", "path": path}
+        if len(args) > 2:
+            layout_args["graph_name"] = args[2]
+        return await send_request("tools/call", {
+            "name": "blueprint",
+            "arguments": layout_args
+        })
     else:
-        return {"error": f"未知 Blueprint 操作: {action}，支持: create, addvar, addfunc, addnode, compile"}
+        return {"error": f"未知 Blueprint 操作: {action}，支持: create, addvar, addfunc, addnode, set_property, compile, layout"}
 
 
 async def cmd_enhanced_input(args):
@@ -513,7 +575,7 @@ async def cmd_enhanced_input(args):
 async def cmd_anim_blueprint(args):
     """anim_blueprint — 动画蓝图操作"""
     if not args:
-        return {"error": "用法: anim_blueprint <create|add_state|add_transition|add_node|info|compile> [参数...]"}
+        return {"error": "用法: anim_blueprint <create|add_state|add_transition|delete_transition|add_node|info|compile|layout|set_anim_class> [参数...]"}
 
     action = args[0]
     if action == "create":
@@ -533,36 +595,121 @@ async def cmd_anim_blueprint(args):
             "arguments": {"action": "add_state", "path": args[1], "state_name": args[2]}
         })
     elif action == "add_transition":
-        # bridge.py anim_blueprint add_transition <ABP路径> <源状态> <目标状态> [crossfade] [blend_mode]
+        # bridge.py anim_blueprint add_transition <ABP路径> <源状态> <目标状态> [crossfade] [blend_mode] [--auto-rule] [--condition type:var]
         if len(args) < 4:
-            return {"error": "用法: anim_blueprint add_transition <ABP路径> <源状态> <目标状态> [crossfade_duration] [blend_mode]"}
+            return {"error": "用法: anim_blueprint add_transition <ABP路径> <源状态> <目标状态> [crossfade_duration] [blend_mode] [--auto-rule] [--condition type:var]"}
         kwargs = {
             "action": "add_transition",
             "path": args[1],
             "from_state": args[2],
             "to_state": args[3]
         }
-        if len(args) > 4:
-            kwargs["crossfade_duration"] = float(args[4])
-        if len(args) > 5:
-            kwargs["blend_mode"] = args[5]
+        i = 4
+        while i < len(args):
+            if args[i] == "--auto-rule":
+                kwargs["bAutomaticRuleBasedOnSequencePlayerInState"] = True
+                i += 1
+            elif args[i] == "--condition":
+                if i + 1 < len(args):
+                    raw = args[i + 1]
+                    # JSON 格式（以 { 开头）直接解析
+                    if raw.startswith("{"):
+                        import json as _json
+                        try:
+                            kwargs["condition"] = _json.loads(raw)
+                        except _json.JSONDecodeError as e:
+                            return {"error": f"--condition JSON 解析失败: {e}"}
+                        i += 2
+                        continue
+                    parts = raw.split(":", 1)
+                    cond_type = parts[0]
+                    if cond_type == "time_remaining":
+                        kwargs["condition"] = {"type": "time_remaining"}
+                    elif cond_type in ("bool", "not_bool"):
+                        if len(parts) < 2:
+                            return {"error": f"--condition {cond_type} 需要 variable，格式: {cond_type}:VarName"}
+                        kwargs["condition"] = {"type": cond_type, "variable": parts[1]}
+                    elif cond_type == "float_compare":
+                        sub = parts[1].split(":") if len(parts) > 1 else []
+                        if len(sub) < 3:
+                            return {"error": "--condition float_compare 格式: float_compare:VarName:Op:Value"}
+                        try:
+                            val = float(sub[2])
+                        except ValueError:
+                            return {"error": f"float_compare value 必须是数字: {sub[2]}"}
+                        kwargs["condition"] = {"type": "float_compare", "variable": sub[0], "operator": sub[1], "value": val}
+                    else:
+                        return {"error": f"不支持的条件类型: {cond_type}，支持: bool, not_bool, float_compare, time_remaining, and(JSON)"}
+                    i += 2
+                else:
+                    return {"error": "--condition 需要参数"}
+            elif args[i] == "--bidirectional":
+                kwargs["bidirectional"] = True
+                i += 1
+            else:
+                try:
+                    kwargs["crossfade_duration"] = float(args[i])
+                except ValueError:
+                    kwargs["blend_mode"] = args[i]
+                i += 1
         return await send_request("tools/call", {
             "name": "anim_blueprint",
             "arguments": kwargs
         })
-    elif action == "add_node":
-        # bridge.py anim_blueprint add_node <ABP路径> <状态名> <sequence_player|blend_space_player> <资产路径>
-        if len(args) < 5:
-            return {"error": "用法: anim_blueprint add_node <ABP路径> <状态名> <节点类型> <动画资产路径>"}
+    elif action == "delete_transition":
+        # bridge.py anim_blueprint delete_transition <ABP路径> <源状态> <目标状态>
+        if len(args) < 4:
+            return {"error": "用法: anim_blueprint delete_transition <ABP路径> <源状态> <目标状态>"}
         return await send_request("tools/call", {
             "name": "anim_blueprint",
-            "arguments": {
-                "action": "add_node",
-                "path": args[1],
-                "state_name": args[2],
-                "node_type": args[3],
-                "asset_path": args[4]
-            }
+            "arguments": {"action": "delete_transition", "path": args[1], "from_state": args[2], "to_state": args[3]}
+        })
+    elif action == "add_node":
+        # bridge.py anim_blueprint add_node <ABP路径> <状态名> <sequence_player|blend_space_player> <资产路径> [--loop true|false] [--play-rate 1.0] [--pin-x Angle] [--pin-y Speed]
+        if len(args) < 5:
+            return {"error": "用法: anim_blueprint add_node <ABP路径> <状态名> <节点类型> <动画资产路径> [--loop true|false] [--pin-x VarName] [--pin-y VarName]"}
+        node_args = {
+            "action": "add_node",
+            "path": args[1],
+            "state_name": args[2],
+            "node_type": args[3],
+            "asset_path": args[4]
+        }
+        i = 5
+        while i < len(args):
+            if args[i] == "--loop":
+                if i + 1 < len(args):
+                    node_args["loop"] = args[i + 1].lower() in ("true", "1", "yes")
+                    i += 2
+                else:
+                    return {"error": "--loop 需要参数 (true/false)"}
+            elif args[i] == "--play-rate":
+                if i + 1 < len(args):
+                    node_args["play_rate"] = float(args[i + 1])
+                    i += 2
+                else:
+                    return {"error": "--play-rate 需要参数"}
+            elif args[i] == "--pin-x":
+                if i + 1 < len(args):
+                    if "pin_connections" not in node_args:
+                        node_args["pin_connections"] = {}
+                    node_args["pin_connections"]["X"] = args[i + 1]
+                    i += 2
+                else:
+                    return {"error": "--pin-x 需要参数 (变量名)"}
+            elif args[i] == "--pin-y":
+                if i + 1 < len(args):
+                    if "pin_connections" not in node_args:
+                        node_args["pin_connections"] = {}
+                    node_args["pin_connections"]["Y"] = args[i + 1]
+                    i += 2
+                else:
+                    return {"error": "--pin-y 需要参数 (变量名)"}
+            else:
+                i += 1
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": node_args
         })
     elif action == "info":
         path = args[1] if len(args) > 1 else None
@@ -580,8 +727,39 @@ async def cmd_anim_blueprint(args):
             "name": "anim_blueprint",
             "arguments": {"action": "compile", "path": path}
         })
+    elif action == "set_anim_class":
+        # bridge.py anim_blueprint set_anim_class <ABP路径> --character <角色BP路径> [--mesh Mesh]
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: anim_blueprint set_anim_class <ABP路径> --character <角色BP路径> [--mesh 组件名]"}
+        kwargs = {"action": "set_anim_class", "path": path}
+        i = 2
+        while i < len(args):
+            if args[i] == "--character" and i + 1 < len(args):
+                kwargs["character_bp_path"] = args[i + 1]
+                i += 2
+            elif args[i] == "--mesh" and i + 1 < len(args):
+                kwargs["mesh_component_name"] = args[i + 1]
+                i += 2
+            else:
+                i += 1
+        if "character_bp_path" not in kwargs:
+            return {"error": "缺少 --character <角色BP路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": kwargs
+        })
+    elif action == "layout":
+        # bridge.py anim_blueprint layout <ABP路径>
+        path = args[1] if len(args) > 1 else None
+        if not path:
+            return {"error": "用法: anim_blueprint layout <ABP路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {"action": "layout", "path": path}
+        })
     else:
-        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, add_node, info, compile"}
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, info, compile, layout, set_anim_class"}
 
 
 def _find_ue_editor():
@@ -961,6 +1139,52 @@ async def cmd_editor(args):
         return {"error": f"用法: editor <start|stop|restart>，当前: {action}"}
 
 
+async def cmd_pie(args):
+    """pie — PIE 控制（启动/停止/暂停/恢复/状态/加客户端）"""
+    action = args[0] if args else "status"
+    valid_actions = ("start", "stop", "pause", "resume", "status", "late_join")
+    valid_modes = ("selected", "standalone", "mobile", "vulkan", "vr", "simulate")
+
+    if action not in valid_actions:
+        return {"error": f"未知 PIE action: {action}，支持: {', '.join(valid_actions)}"}
+
+    arguments = {"action": action}
+
+    # 解析位置参数 mode（仅 start 操作）
+    mode_idx = 1
+    if action == "start" and len(args) > 1 and args[1] in valid_modes:
+        arguments["mode"] = args[1]
+        mode_idx = 2
+
+    # 解析可选参数
+    i = mode_idx
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--"):
+            key = arg[2:]
+            # --flag 形式（布尔标志）
+            if key in ("dedicated", "listen", "server", "viewport"):
+                arguments[key] = True
+            # --key value 形式
+            elif i + 1 < len(args) and not args[i + 1].startswith("--"):
+                if key == "clients":
+                    arguments["clients"] = int(args[i + 1])
+                    i += 1
+                elif key == "net_mode":
+                    arguments["net_mode"] = args[i + 1]
+                    i += 1
+                elif key == "mode":
+                    if args[i + 1] in valid_modes:
+                        arguments["mode"] = args[i + 1]
+                        i += 1
+        i += 1
+
+    return await send_request("tools/call", {
+        "name": "pie.control",
+        "arguments": arguments
+    })
+
+
 COMMANDS = {
     "query":           cmd_query,
     "console":         cmd_console,
@@ -972,6 +1196,7 @@ COMMANDS = {
     "anim_blueprint":  cmd_anim_blueprint,
     "crash":           cmd_crash,
     "editor":          cmd_editor,
+    "pie":             cmd_pie,
     "ping":            cmd_ping,
     "tools":           cmd_tools,
 }
@@ -997,6 +1222,7 @@ def print_help():
   blueprint addfunc <路径> <函数名>          添加函数
   blueprint addnode <路径> <图名> <节点类型>  添加K2节点
   blueprint compile <路径>                   编译 Blueprint
+  blueprint layout <路径> [图名]             自动排版 Blueprint 图中节点
   enhanced_input create_action <路径> [类型]  创建 InputAction
   enhanced_input create_context <路径>        创建 InputMappingContext
   enhanced_input map_key <IMC> <IA> <键>     绑定按键映射
@@ -1005,13 +1231,23 @@ def print_help():
   enhanced_input configure_triggers <路径> <T..> 配置 InputAction 触发器
   anim_blueprint create <路径> <骨架>         创建 AnimBlueprint
   anim_blueprint add_state <路径> <状态名>    添加状态
-  anim_blueprint add_transition <路径> <A> <B> 添加转换
-  anim_blueprint add_node <路径> <状态> <类型> <资产> 添加动画节点
+  anim_blueprint add_transition <路径> <A> <B> [crossfade] [blend] [--auto-rule] [--condition type:args] [--bidirectional]
+    条件类型: bool:Var | not_bool:Var | float_compare:Var:Op:Val | time_remaining | and (传JSON)
+  anim_blueprint delete_transition <路径> <A> <B>  删除转换
+  anim_blueprint add_node <路径> <状态> <类型> <资产> [--loop tf] [--pin-x Var] [--pin-y Var]
   anim_blueprint info <路径>                  查询 AnimBP 结构
   anim_blueprint compile <路径>               编译 AnimBlueprint
+  anim_blueprint layout <路径>                自动排版状态机节点（状态/Entry/内部节点）
+  anim_blueprint set_anim_class <路径> --character <BP> 将ABP赋给角色Mesh组件
   editor start                               启动 UE 编辑器（自动清理 cmd 窗口）
   editor stop                                关闭编辑器及子进程（LiveCoding 等）
   editor restart                             重启编辑器
+  pie start [mode] [--clients N] [--listen]  启动 PIE（模式: selected/standalone/mobile/vulkan/vr/simulate）
+  pie stop                                   停止 PIE
+  pie pause                                  暂停 PIE
+  pie resume                                 恢复 PIE
+  pie status                                 查询 PIE 状态
+  pie late_join                              添加客户端（多人已运行时）
   crash check                                检测最近一次运行是否崩溃
   crash analyze                              分析崩溃：错误信息、调用栈、源码定位
   crash list                                 列出历史崩溃报告

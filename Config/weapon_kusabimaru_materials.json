@@ -1,0 +1,86 @@
+{
+  "pipeline": {
+    "type": "material",
+    "description": "楔丸（Kusabimaru）武器材质"
+  },
+  "target": {
+    "mesh": "/Game/Weapons/Kusabimaru/WP_A_0300_Kusabimaru",
+    "material_dir": "/Game/Weapons/Kusabimaru/Materials",
+    "texture_dir": "/Game/Weapons/Kusabimaru/Textures"
+  },
+  "materials": [
+    {
+      "name": "M_Blade",
+      "slot": 2,
+      "textures": [
+        {
+          "texture": "WP_A_0300_a",
+          "param": "BaseColor",
+          "bindings": [{"property": "BaseColor", "channel": "RGB"}]
+        },
+        {
+          "texture": "WP_A_0300_n",
+          "param": "Normal",
+          "bindings": [{"property": "Normal", "channel": "RGB"}]
+        },
+        {
+          "texture": "WP_A_0300_m",
+          "param": "ORM",
+          "bindings": [
+            {"property": "AmbientOcclusion", "channel": "R"},
+            {"property": "Roughness", "channel": "G"},
+            {"property": "Metallic", "channel": "B"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "M_Decal",
+      "slot": 0,
+      "textures": [
+        {
+          "texture": "WP_A_0300_metalblend_a",
+          "param": "BaseColor",
+          "bindings": [{"property": "BaseColor", "channel": "RGB"}]
+        },
+        {
+          "texture": "WP_A_0300_metalblend_n",
+          "param": "Normal",
+          "bindings": [{"property": "Normal", "channel": "RGB"}]
+        }
+      ]
+    },
+    {
+      "name": "M_Tsuba",
+      "slot": 1,
+      "textures": [
+        {
+          "texture": "WP_A_0300_2_a",
+          "param": "BaseColor",
+          "bindings": [{"property": "BaseColor", "channel": "RGB"}]
+        },
+        {
+          "texture": "WP_A_0300_2_n",
+          "param": "Normal",
+          "bindings": [{"property": "Normal", "channel": "RGB"}]
+        }
+      ]
+    },
+    {
+      "name": "M_Sheath",
+      "slot": 3,
+      "textures": [
+        {
+          "texture": "WP_A_0300_2_a",
+          "param": "BaseColor",
+          "bindings": [{"property": "BaseColor", "channel": "RGB"}]
+        },
+        {
+          "texture": "WP_A_0300_2_n",
+          "param": "Normal",
+          "bindings": [{"property": "Normal", "channel": "RGB"}]
+        }
+      ]
+    }
+  ]
+}

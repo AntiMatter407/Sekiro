@@ -22,6 +22,10 @@
 #include "K2Node_VariableGet.h"
 #include "AnimationGraph.h"
 #include "AnimGraphNode_Base.h"
+#include "AnimGraphNode_TransitionResult.h"
+#include "AnimationTransitionGraph.h"
+#include "K2Node_CallFunction.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "EditorAssetLibrary.h"
@@ -106,7 +110,7 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
     return TEXT("{"
         "\"type\":\"object\","
         "\"properties\":{"
-            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"add_node\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\"]},"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
             "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
             "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
             "\"parent_class\":{\"type\":\"string\",\"description\":\"可选：AnimInstance父类脚本路径，如/Script/ModuleName.ClassName\"},"
@@ -115,10 +119,13 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
             "\"crossfade_duration\":{\"type\":\"number\",\"default\":0.2},"
             "\"blend_mode\":{\"type\":\"string\",\"enum\":[\"linear\",\"cubic\",\"hermite_cubic\",\"sinusoidal\",\"quadratic_in_out\",\"cubic_in_out\",\"quartic_in_out\",\"quintic_in_out\",\"circular_in_out\",\"exp_in_out\",\"custom\"]},"
             "\"bidirectional\":{\"type\":\"boolean\",\"default\":false},"
+            "\"bAutomaticRuleBasedOnSequencePlayerInState\":{\"type\":\"boolean\",\"description\":\"auto transition when source anim finishes\"},"
+            "\"condition\":{\"type\":\"object\",\"description\":\"add_transition: 条件 {type:bool|not_bool|time_remaining, variable:string}\"},"
             "\"node_type\":{\"type\":\"string\",\"enum\":[\"sequence_player\",\"blend_space_player\"]},"
             "\"asset_path\":{\"type\":\"string\",\"description\":\"动画资产路径（AnimSequence/BlendSpace）\"},"
             "\"play_rate\":{\"type\":\"number\",\"default\":1.0},"
             "\"loop\":{\"type\":\"boolean\",\"default\":true},"
+            "\"pin_connections\":{\"type\":\"object\",\"description\":\"add_node blend_space_player: {X:VariableName, Y:VariableName}\"},"
             "\"blend_space_path\":{\"type\":\"string\",\"description\":\"setup_anim_graph: BlendSpace资产路径\"},"
             "\"axes\":{\"type\":\"array\",\"description\":\"create_blend_space: 坐标轴 [{name,min,max,grid}]\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"min\":{\"type\":\"number\"},\"max\":{\"type\":\"number\"},\"grid\":{\"type\":\"integer\"}}}},"
             "\"samples\":{\"type\":\"array\",\"description\":\"create_blend_space: 样本 [{anim_path,x,y}]\",\"items\":{\"type\":\"object\",\"properties\":{\"anim_path\":{\"type\":\"string\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}},"
@@ -163,12 +170,14 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("create"))              return HandleCreate(ArgsObj, OutError);
     if (Action == TEXT("add_state"))           return HandleAddState(ArgsObj, OutError);
     if (Action == TEXT("add_transition"))      return HandleAddTransition(ArgsObj, OutError);
+    if (Action == TEXT("delete_transition"))   return HandleDeleteTransition(ArgsObj, OutError);
     if (Action == TEXT("add_node"))            return HandleAddAnimNode(ArgsObj, OutError);
     if (Action == TEXT("get_info"))            return HandleGetInfo(ArgsObj, OutError);
     if (Action == TEXT("compile"))             return HandleCompile(ArgsObj, OutError);
     if (Action == TEXT("setup_anim_graph"))    return HandleSetupAnimGraph(ArgsObj, OutError);
     if (Action == TEXT("create_blend_space"))  return HandleCreateBlendSpace(ArgsObj, OutError);
     if (Action == TEXT("set_anim_class"))      return HandleSetAnimClass(ArgsObj, OutError);
+    if (Action == TEXT("layout"))              return HandleLayout(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -323,8 +332,23 @@ FString USKAnimBlueprintTool::HandleAddState(const TSharedPtr<FJsonObject>& Args
     }
 
     int32 PosX = 200, PosY = 0;
-    Args->TryGetNumberField(TEXT("x"), PosX);
-    Args->TryGetNumberField(TEXT("y"), PosY);
+    if (!Args->HasField(TEXT("x")) && !Args->HasField(TEXT("y")))
+    {
+        // 自动计算网格位置：统计已有状态数量，4列排列，间距500x350
+        int32 StateCount = 0;
+        for (UEdGraphNode* Node : SMGraph->Nodes)
+        {
+            if (Cast<UAnimStateNode>(Node)) ++StateCount;
+        }
+        static const int32 Cols = 4, ColSpacing = 500, RowSpacing = 350;
+        PosX = 200 + (StateCount % Cols) * ColSpacing;
+        PosY = 0   + (StateCount / Cols) * RowSpacing;
+    }
+    else
+    {
+        Args->TryGetNumberField(TEXT("x"), PosX);
+        Args->TryGetNumberField(TEXT("y"), PosY);
+    }
 
     FGraphNodeCreator<UAnimStateNode> NodeCreator(*SMGraph);
     UAnimStateNode* StateNode = NodeCreator.CreateNode();
@@ -350,9 +374,10 @@ FString USKAnimBlueprintTool::HandleAddState(const TSharedPtr<FJsonObject>& Args
     }
     if (EntryNode)
     {
-        UEdGraphPin* EntryOut = EntryNode->FindPin(TEXT("Out"), EGPD_Output);
+        UEdGraphPin* EntryOut = EntryNode->FindPin(TEXT("Entry"), EGPD_Output);
         UEdGraphPin* StateIn = StateNode->FindPin(TEXT("In"), EGPD_Input);
-        if (EntryOut && StateIn)
+        // 仅第一个状态连 Entry，避免多重入口
+        if (EntryOut && StateIn && EntryOut->LinkedTo.Num() == 0)
         {
             EntryOut->MakeLinkTo(StateIn);
         }
@@ -461,8 +486,24 @@ FString USKAnimBlueprintTool::HandleAddTransition(const TSharedPtr<FJsonObject>&
         TransNode->Bidirectional = bBidirectional;
     }
 
+    bool bAutoRule = false;
+    if (Args->TryGetBoolField(TEXT("bAutomaticRuleBasedOnSequencePlayerInState"), bAutoRule))
+    {
+        TransNode->bAutomaticRuleBasedOnSequencePlayerInState = bAutoRule;
+    }
+
     // 连接状态
     TransNode->CreateConnections(FromNode, ToNode);
+
+    // 设置转换条件（必须在 CreateConnections 之后，此时 BoundGraph 已就绪）
+    const TSharedPtr<FJsonObject>* ConditionObj = nullptr;
+    if (Args->TryGetObjectField(TEXT("condition"), ConditionObj))
+    {
+        if (!SetupTransitionCondition(TransNode, *ConditionObj, OutError))
+        {
+            return FString();
+        }
+    }
 
     AnimBP->MarkPackageDirty();
     FKismetEditorUtilities::CompileBlueprint(AnimBP);
@@ -474,6 +515,75 @@ FString USKAnimBlueprintTool::HandleAddTransition(const TSharedPtr<FJsonObject>&
     ResultObj->SetStringField(TEXT("to_state"), ToState);
     ResultObj->SetNumberField(TEXT("crossfade_duration"), CrossfadeDuration);
     ResultObj->SetBoolField(TEXT("bidirectional"), bBidirectional);
+    ResultObj->SetBoolField(TEXT("auto_rule"), bAutoRule);
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleDeleteTransition — 删除状态间转换
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleDeleteTransition(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString FromState, ToState;
+    if (!Args->TryGetStringField(TEXT("from_state"), FromState)
+        || !Args->TryGetStringField(TEXT("to_state"), ToState))
+    {
+        OutError = TEXT("缺少 from_state 或 to_state 参数");
+        return FString();
+    }
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    if (!AnimBP) return FString();
+
+    UAnimGraphNode_StateMachine* SMNode = FindOrCreateStateMachineNode(AnimBP, OutError);
+    if (!SMNode) return FString();
+
+    UAnimationStateMachineGraph* SMGraph = SMNode->EditorStateMachineGraph;
+
+    UAnimStateNode* FromNode = FindStateNode(SMGraph, FromState);
+    UAnimStateNode* ToNode = FindStateNode(SMGraph, ToState);
+    if (!FromNode || !ToNode)
+    {
+        OutError = TEXT("源或目标状态未找到");
+        return FString();
+    }
+
+    UAnimStateTransitionNode* ToDelete = nullptr;
+    for (UEdGraphNode* Node : SMGraph->Nodes)
+    {
+        if (UAnimStateTransitionNode* T = Cast<UAnimStateTransitionNode>(Node))
+        {
+            if (T->GetPreviousState() == FromNode && T->GetNextState() == ToNode)
+            {
+                ToDelete = T;
+                break;
+            }
+        }
+    }
+    if (!ToDelete)
+    {
+        OutError = FString::Printf(TEXT("转换未找到: %s -> %s"), *FromState, *ToState);
+        return FString();
+    }
+
+    ToDelete->DestroyNode();
+
+    AnimBP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(AnimBP);
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObj->SetStringField(TEXT("from_state"), FromState);
+    ResultObj->SetStringField(TEXT("to_state"), ToState);
     ResultObj->SetBoolField(TEXT("success"), true);
 
     FString Output;
@@ -525,8 +635,22 @@ FString USKAnimBlueprintTool::HandleAddAnimNode(const TSharedPtr<FJsonObject>& A
     }
 
     int32 PosX = 0, PosY = 0;
-    Args->TryGetNumberField(TEXT("x"), PosX);
-    Args->TryGetNumberField(TEXT("y"), PosY);
+    if (!Args->HasField(TEXT("x")) && !Args->HasField(TEXT("y")))
+    {
+        // 自动偏移：统计状态内部图中已有节点数，每个节点Y偏移200
+        int32 NodeCount = 0;
+        for (UEdGraphNode* N : StateGraph->Nodes)
+        {
+            if (!Cast<UAnimGraphNode_StateResult>(N)) ++NodeCount;
+        }
+        PosX = -100;        // 居中偏左，给左侧 VariableGet 留空间
+        PosY = NodeCount * 200;
+    }
+    else
+    {
+        Args->TryGetNumberField(TEXT("x"), PosX);
+        Args->TryGetNumberField(TEXT("y"), PosY);
+    }
 
     UEdGraphNode* NewNode = nullptr;
 
@@ -617,6 +741,13 @@ FString USKAnimBlueprintTool::HandleAddAnimNode(const TSharedPtr<FJsonObject>& A
             FBoolProperty* LoopProp = CastField<FBoolProperty>(NodeStruct->FindPropertyByName(TEXT("bLoop")));
             if (LoopProp) LoopProp->SetPropertyValue(LoopProp->ContainerPtrToValuePtr<void>(NodeAddr), bLoop);
         }
+
+        // BlendSpace 参数引脚连接（X→Angle, Y→Speed）
+        const TSharedPtr<FJsonObject>* PinConns = nullptr;
+        if (Args->TryGetObjectField(TEXT("pin_connections"), PinConns))
+        {
+            SetupBlendSpacePinConnections(BspNode, StateGraph, *PinConns);
+        }
     }
     else
     {
@@ -638,7 +769,7 @@ FString USKAnimBlueprintTool::HandleAddAnimNode(const TSharedPtr<FJsonObject>& A
     if (ResultNode)
     {
         UEdGraphPin* OutputPose = NewNode->FindPin(TEXT("Pose"), EGPD_Output);
-        UEdGraphPin* InputPose = ResultNode->FindPin(TEXT("Pose"), EGPD_Input);
+        UEdGraphPin* InputPose = ResultNode->FindPin(TEXT("Result"), EGPD_Input);
         if (OutputPose && InputPose)
         {
             OutputPose->MakeLinkTo(InputPose);
@@ -1216,6 +1347,537 @@ UAnimStateNode* USKAnimBlueprintTool::FindStateNode(UAnimationStateMachineGraph*
         }
     }
     return nullptr;
+}
+
+// ============================================================================
+// CreateConditionOutput — 递归构建条件节点链，返回 bool 输出引脚
+// ============================================================================
+
+UEdGraphPin* USKAnimBlueprintTool::CreateConditionOutput(
+    UAnimationTransitionGraph* TransGraph,
+    const TSharedPtr<FJsonObject>& ConditionObj,
+    int32& NodePosX,
+    int32& NodePosY,
+    FString& OutError)
+{
+    FString CondType;
+    if (!ConditionObj->TryGetStringField(TEXT("type"), CondType))
+    {
+        OutError = TEXT("condition 缺少 type 字段");
+        return nullptr;
+    }
+
+    if (CondType == TEXT("bool"))
+    {
+        FString VarName;
+        if (!ConditionObj->TryGetStringField(TEXT("variable"), VarName))
+        {
+            OutError = TEXT("bool 条件缺少 variable 字段");
+            return nullptr;
+        }
+
+        UK2Node_VariableGet* VarGet = NewObject<UK2Node_VariableGet>(TransGraph);
+        VarGet->CreateNewGuid();
+        VarGet->VariableReference.SetSelfMember(FName(*VarName));
+        VarGet->AllocateDefaultPins();
+        TransGraph->AddNode(VarGet, false, false);
+        VarGet->PostPlacedNewNode();
+        VarGet->NodePosX = NodePosX;
+        VarGet->NodePosY = NodePosY;
+        NodePosX += 200;
+
+        return VarGet->FindPin(FName(*VarName), EGPD_Output);
+    }
+
+    if (CondType == TEXT("not_bool"))
+    {
+        FString VarName;
+        if (!ConditionObj->TryGetStringField(TEXT("variable"), VarName))
+        {
+            OutError = TEXT("not_bool 条件缺少 variable 字段");
+            return nullptr;
+        }
+
+        UK2Node_VariableGet* VarGet = NewObject<UK2Node_VariableGet>(TransGraph);
+        VarGet->CreateNewGuid();
+        VarGet->VariableReference.SetSelfMember(FName(*VarName));
+        VarGet->AllocateDefaultPins();
+        TransGraph->AddNode(VarGet, false, false);
+        VarGet->PostPlacedNewNode();
+        VarGet->NodePosX = NodePosX;
+        VarGet->NodePosY = NodePosY;
+        NodePosX += 200;
+
+        UK2Node_CallFunction* NotNode = NewObject<UK2Node_CallFunction>(TransGraph);
+        NotNode->CreateNewGuid();
+        UFunction* NotFunc = UKismetMathLibrary::StaticClass()->FindFunctionByName(TEXT("Not_PreBool"));
+        if (!NotFunc)
+        {
+            OutError = TEXT("未找到 Not_PreBool 函数");
+            return nullptr;
+        }
+        NotNode->SetFromFunction(NotFunc);
+        NotNode->AllocateDefaultPins();
+        TransGraph->AddNode(NotNode, false, false);
+        NotNode->PostPlacedNewNode();
+        NotNode->NodePosX = NodePosX;
+        NotNode->NodePosY = NodePosY;
+        NodePosX += 200;
+
+        UEdGraphPin* VarOut = VarGet->FindPin(FName(*VarName), EGPD_Output);
+        UEdGraphPin* NotIn = NotNode->FindPin(TEXT("A"), EGPD_Input);
+        if (VarOut && NotIn) VarOut->MakeLinkTo(NotIn);
+
+        return NotNode->FindPin(TEXT("ReturnValue"), EGPD_Output);
+    }
+
+    if (CondType == TEXT("float_compare"))
+    {
+        FString VarName, Operator;
+        double Value = 0.0;
+        if (!ConditionObj->TryGetStringField(TEXT("variable"), VarName)
+            || !ConditionObj->TryGetStringField(TEXT("operator"), Operator))
+        {
+            OutError = TEXT("float_compare 需要 variable 和 operator 字段");
+            return nullptr;
+        }
+        ConditionObj->TryGetNumberField(TEXT("value"), Value);
+
+        UK2Node_VariableGet* VarGet = NewObject<UK2Node_VariableGet>(TransGraph);
+        VarGet->CreateNewGuid();
+        VarGet->VariableReference.SetSelfMember(FName(*VarName));
+        VarGet->AllocateDefaultPins();
+        TransGraph->AddNode(VarGet, false, false);
+        VarGet->PostPlacedNewNode();
+        VarGet->NodePosX = NodePosX;
+        VarGet->NodePosY = NodePosY;
+        NodePosX += 200;
+
+        static const TMap<FString, FString> OpToFunc = {
+            {TEXT(">"),  TEXT("Greater_DoubleDouble")},
+            {TEXT(">="), TEXT("GreaterEqual_DoubleDouble")},
+            {TEXT("<"),  TEXT("Less_DoubleDouble")},
+            {TEXT("<="), TEXT("LessEqual_DoubleDouble")},
+            {TEXT("=="), TEXT("EqualEqual_DoubleDouble")},
+            {TEXT("!="), TEXT("NotEqual_DoubleDouble")},
+        };
+        const FString* FuncName = OpToFunc.Find(Operator);
+        if (!FuncName)
+        {
+            OutError = FString::Printf(TEXT("不支持的运算符: %s"), *Operator);
+            return nullptr;
+        }
+
+        UK2Node_CallFunction* CmpNode = NewObject<UK2Node_CallFunction>(TransGraph);
+        CmpNode->CreateNewGuid();
+        UFunction* CmpFunc = UKismetMathLibrary::StaticClass()->FindFunctionByName(**FuncName);
+        if (!CmpFunc)
+        {
+            OutError = FString::Printf(TEXT("未找到比较函数: %s"), **FuncName);
+            return nullptr;
+        }
+        CmpNode->SetFromFunction(CmpFunc);
+        CmpNode->AllocateDefaultPins();
+        TransGraph->AddNode(CmpNode, false, false);
+        CmpNode->PostPlacedNewNode();
+        CmpNode->NodePosX = NodePosX;
+        CmpNode->NodePosY = NodePosY;
+        NodePosX += 200;
+
+        UEdGraphPin* VarOut = VarGet->FindPin(FName(*VarName), EGPD_Output);
+        UEdGraphPin* CmpInA = CmpNode->FindPin(TEXT("A"), EGPD_Input);
+        if (VarOut && CmpInA) VarOut->MakeLinkTo(CmpInA);
+
+        UEdGraphPin* CmpInB = CmpNode->FindPin(TEXT("B"), EGPD_Input);
+        if (CmpInB) CmpInB->DefaultValue = FString::SanitizeFloat(Value);
+
+        return CmpNode->FindPin(TEXT("ReturnValue"), EGPD_Output);
+    }
+
+    if (CondType == TEXT("and"))
+    {
+        const TArray<TSharedPtr<FJsonValue>>* SubConditions = nullptr;
+        if (!ConditionObj->TryGetArrayField(TEXT("conditions"), SubConditions) || SubConditions->Num() < 2)
+        {
+            OutError = TEXT("and 条件需要 conditions 数组（至少2个子条件）");
+            return nullptr;
+        }
+
+        UEdGraphPin* ChainOut = nullptr;
+        for (int32 i = 0; i < SubConditions->Num(); ++i)
+        {
+            const TSharedPtr<FJsonObject>* SubObj = nullptr;
+            if (!(*SubConditions)[i]->TryGetObject(SubObj)) continue;
+
+            UEdGraphPin* SubOut = CreateConditionOutput(TransGraph, *SubObj, NodePosX, NodePosY, OutError);
+            if (!SubOut) return nullptr;
+
+            if (i == 0)
+            {
+                ChainOut = SubOut;
+            }
+            else
+            {
+                UK2Node_CallFunction* AndNode = NewObject<UK2Node_CallFunction>(TransGraph);
+                AndNode->CreateNewGuid();
+                UFunction* AndFunc = UKismetMathLibrary::StaticClass()->FindFunctionByName(TEXT("BooleanAND"));
+                if (!AndFunc)
+                {
+                    OutError = TEXT("未找到 BooleanAND 函数");
+                    return nullptr;
+                }
+                AndNode->SetFromFunction(AndFunc);
+                AndNode->AllocateDefaultPins();
+                TransGraph->AddNode(AndNode, false, false);
+                AndNode->PostPlacedNewNode();
+                AndNode->NodePosX = NodePosX;
+                AndNode->NodePosY = NodePosY;
+                NodePosX += 200;
+
+                UEdGraphPin* AndInA = AndNode->FindPin(TEXT("A"), EGPD_Input);
+                UEdGraphPin* AndInB = AndNode->FindPin(TEXT("B"), EGPD_Input);
+                if (ChainOut && AndInA) ChainOut->MakeLinkTo(AndInA);
+                if (SubOut && AndInB) SubOut->MakeLinkTo(AndInB);
+
+                ChainOut = AndNode->FindPin(TEXT("ReturnValue"), EGPD_Output);
+            }
+        }
+        return ChainOut;
+    }
+
+    OutError = FString::Printf(TEXT("不支持的条件类型: %s（支持: bool, not_bool, float_compare, and, time_remaining）"), *CondType);
+    return nullptr;
+}
+
+// ============================================================================
+// SetupTransitionCondition — 在转换 BoundGraph 中设置条件规则
+// ============================================================================
+
+bool USKAnimBlueprintTool::SetupTransitionCondition(UAnimStateTransitionNode* TransNode, const TSharedPtr<FJsonObject>& ConditionObj, FString& OutError)
+{
+    FString CondType;
+    if (!ConditionObj->TryGetStringField(TEXT("type"), CondType))
+    {
+        OutError = TEXT("condition 缺少 type 字段");
+        return false;
+    }
+
+    if (!TransNode->BoundGraph)
+    {
+        OutError = TEXT("转换 BoundGraph 为空");
+        return false;
+    }
+
+    UAnimationTransitionGraph* TransGraph = Cast<UAnimationTransitionGraph>(TransNode->BoundGraph);
+    if (!TransGraph)
+    {
+        OutError = TEXT("BoundGraph 不是 UAnimationTransitionGraph 类型");
+        return false;
+    }
+
+    UAnimGraphNode_TransitionResult* ResultNode = TransGraph->GetResultNode();
+    if (!ResultNode)
+    {
+        OutError = TEXT("未找到 TransitionResult 节点");
+        return false;
+    }
+
+    UEdGraphPin* CanEnterPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input);
+    if (!CanEnterPin)
+    {
+        OutError = TEXT("未找到 bCanEnterTransition 引脚");
+        return false;
+    }
+
+    // time_remaining：设自动规则 + 默认 true
+    if (CondType == TEXT("time_remaining"))
+    {
+        TransNode->bAutomaticRuleBasedOnSequencePlayerInState = true;
+        CanEnterPin->DefaultValue = TEXT("true");
+        return true;
+    }
+
+    // 其他类型：构建节点链并连接到 TransitionResult
+    int32 PosX = -400;
+    int32 PosY = 0;
+    UEdGraphPin* CondOut = CreateConditionOutput(TransGraph, ConditionObj, PosX, PosY, OutError);
+    if (!CondOut)
+    {
+        return false;
+    }
+
+    CondOut->MakeLinkTo(CanEnterPin);
+    return true;
+}
+
+// ============================================================================
+// SetupBlendSpacePinConnections — 在状态内为 BlendSpace 连接变量引脚
+// ============================================================================
+
+void USKAnimBlueprintTool::SetupBlendSpacePinConnections(
+    UAnimGraphNode_BlendSpacePlayer* BspNode,
+    UEdGraph* StateGraph,
+    const TSharedPtr<FJsonObject>& PinConns)
+{
+    int32 VarIdx = 0;
+
+    auto CreateVarGetAndConnect = [&](const FString& VarName, const TCHAR* BspPinName)
+    {
+        if (VarName.IsEmpty()) return;
+
+        UK2Node_VariableGet* VarGet = NewObject<UK2Node_VariableGet>(StateGraph);
+        VarGet->CreateNewGuid();
+        VarGet->VariableReference.SetSelfMember(FName(*VarName));
+        VarGet->AllocateDefaultPins();
+        StateGraph->AddNode(VarGet, false, false);
+        VarGet->PostPlacedNewNode();
+        VarGet->NodePosX = BspNode->NodePosX - 400;
+        VarGet->NodePosY = BspNode->NodePosY + VarIdx * 250;
+
+        UEdGraphPin* VarOutPin = VarGet->FindPin(FName(*VarName), EGPD_Output);
+        UEdGraphPin* BspInPin = BspNode->FindPin(FName(BspPinName), EGPD_Input);
+        if (VarOutPin && BspInPin)
+        {
+            VarOutPin->MakeLinkTo(BspInPin);
+        }
+
+        ++VarIdx;
+    };
+
+    FString XPinVar, YPinVar;
+    PinConns->TryGetStringField(TEXT("X"), XPinVar);
+    PinConns->TryGetStringField(TEXT("Y"), YPinVar);
+    CreateVarGetAndConnect(XPinVar, TEXT("X"));
+    CreateVarGetAndConnect(YPinVar, TEXT("Y"));
+}
+
+// ============================================================================
+// HandleLayout — 自动排版状态机：Entry、状态网格、内部节点、过渡节点
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    if (!AnimBP) return FString();
+
+    const UEdGraphSchema* Schema = GetDefault<UAnimationStateMachineSchema>();
+
+    // 收集所有状态机图
+    TArray<UEdGraph*> AllGraphs;
+    AllGraphs.Append(AnimBP->FunctionGraphs);
+    AllGraphs.Append(AnimBP->UbergraphPages);
+
+    int32 TotalStates = 0;
+
+    for (UEdGraph* Graph : AllGraphs)
+    {
+        if (!Graph) continue;
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            UAnimGraphNode_StateMachine* SMNode = Cast<UAnimGraphNode_StateMachine>(Node);
+            if (!SMNode || !SMNode->EditorStateMachineGraph) continue;
+
+            UAnimationStateMachineGraph* SMGraph = SMNode->EditorStateMachineGraph;
+            TArray<UAnimStateNode*> States;
+            UAnimStateEntryNode* EntryNode = nullptr;
+            TArray<UAnimStateTransitionNode*> Transitions;
+
+            // —— 收集节点 ——
+            for (UEdGraphNode* N : SMGraph->Nodes)
+            {
+                if (UAnimStateEntryNode* EN = Cast<UAnimStateEntryNode>(N))
+                    EntryNode = EN;
+                else if (UAnimStateNode* SN = Cast<UAnimStateNode>(N))
+                    States.Add(SN);
+                else if (UAnimStateTransitionNode* TN = Cast<UAnimStateTransitionNode>(N))
+                    Transitions.Add(TN);
+            }
+
+            if (States.Num() == 0) continue;
+
+            // —— 排序：Locomotion 始终第一 ——
+            States.Sort([](const UAnimStateNode& A, const UAnimStateNode& B) {
+                FString NA = A.GetNodeTitle(ENodeTitleType::ListView).ToString();
+                FString NB = B.GetNodeTitle(ENodeTitleType::ListView).ToString();
+                if (NA == TEXT("Locomotion")) return true;
+                if (NB == TEXT("Locomotion")) return false;
+                return NA < NB;
+            });
+
+            // —— 状态网格布局（4列，间距500x350）——
+            static const int32 Cols = 4, ColSpacing = 500, RowSpacing = 350, StartX = 200, StartY = 0;
+            for (int32 i = 0; i < States.Num(); ++i)
+            {
+                int32 NewX = StartX + (i % Cols) * ColSpacing;
+                int32 NewY = StartY + (i / Cols) * RowSpacing;
+                Schema->SetNodePosition(States[i], FVector2D(NewX, NewY));
+            }
+
+            // —— Entry 定位并连接第一个状态 ——
+            if (EntryNode)
+            {
+                int32 CenterY = States[0]->NodePosY;
+                Schema->SetNodePosition(EntryNode, FVector2D(-200, CenterY));
+
+                UEdGraphPin* EntryOut = EntryNode->FindPin(TEXT("Entry"), EGPD_Output);
+                UEdGraphPin* FirstIn = States[0]->FindPin(TEXT("In"), EGPD_Input);
+                if (EntryOut && FirstIn)
+                {
+                    if (EntryOut->LinkedTo.Num() > 0)
+                        EntryOut->BreakAllPinLinks();
+                    EntryOut->MakeLinkTo(FirstIn);
+                }
+            }
+
+            // —— 每个状态的内部节点排版 ——
+            for (UAnimStateNode* State : States)
+            {
+                if (!State->BoundGraph) continue;
+
+                UAnimGraphNode_StateResult* ResultNode = nullptr;
+                TArray<UEdGraphNode*> InnerAnimNodes;   // SequencePlayer / BlendSpacePlayer
+                TArray<UK2Node_VariableGet*> VarGets;
+
+                for (UEdGraphNode* N : State->BoundGraph->Nodes)
+                {
+                    if (UAnimGraphNode_StateResult* SR = Cast<UAnimGraphNode_StateResult>(N))
+                        ResultNode = SR;
+                    else if (Cast<UAnimGraphNode_SequencePlayer>(N) || Cast<UAnimGraphNode_BlendSpacePlayer>(N))
+                        InnerAnimNodes.Add(N);
+                    else if (UK2Node_VariableGet* VG = Cast<UK2Node_VariableGet>(N))
+                        VarGets.Add(VG);
+                }
+
+                // ResultNode 放最右
+                if (ResultNode)
+                    Schema->SetNodePosition(ResultNode, FVector2D(400, 0));
+
+                // AnimPlayer 放中心
+                for (int32 j = 0; j < InnerAnimNodes.Num(); ++j)
+                    Schema->SetNodePosition(InnerAnimNodes[j], FVector2D(0, j * 200));
+
+                // VariableGet 放左侧
+                for (int32 j = 0; j < VarGets.Num(); ++j)
+                    Schema->SetNodePosition(VarGets[j], FVector2D(-400, -200 + j * 250));
+
+                // —— 修复内部连线：AnimPlayer.Pose → ResultNode.Result ——
+                if (ResultNode)
+                {
+                    UEdGraphPin* ResultIn = ResultNode->FindPin(TEXT("Result"), EGPD_Input);
+                    for (UEdGraphNode* AnimNode : InnerAnimNodes)
+                    {
+                        UEdGraphPin* PoseOut = AnimNode->FindPin(TEXT("Pose"), EGPD_Output);
+                        if (PoseOut && ResultIn)
+                        {
+                            bool bAlready = false;
+                            for (UEdGraphPin* L : PoseOut->LinkedTo)
+                                if (L == ResultIn) { bAlready = true; break; }
+                            if (!bAlready)
+                                PoseOut->MakeLinkTo(ResultIn);
+                        }
+                    }
+                }
+
+                // —— 修复 BlendSpace 参数连线：VariableGet → X/Y ——
+                for (UEdGraphNode* AnimNode : InnerAnimNodes)
+                {
+                    UAnimGraphNode_BlendSpacePlayer* Bsp = Cast<UAnimGraphNode_BlendSpacePlayer>(AnimNode);
+                    if (!Bsp) continue;
+                    for (UK2Node_VariableGet* VG : VarGets)
+                    {
+                        FName VarName = VG->VariableReference.GetMemberName();
+                        const TCHAR* PinName = nullptr;
+                        if (VarName == TEXT("Angle")) PinName = TEXT("X");
+                        else if (VarName == TEXT("Speed")) PinName = TEXT("Y");
+                        if (!PinName) continue;
+
+                        UEdGraphPin* VarOut = VG->GetValuePin();
+                        UEdGraphPin* BspIn = Bsp->FindPin(FName(PinName), EGPD_Input);
+                        if (VarOut && BspIn)
+                        {
+                            bool bAlready = false;
+                            for (UEdGraphPin* L : VarOut->LinkedTo)
+                                if (L == BspIn) { bAlready = true; break; }
+                            if (!bAlready)
+                                VarOut->MakeLinkTo(BspIn);
+                        }
+                    }
+                }
+            }
+
+            // —— 过渡节点排版：放在源/目标状态中间 ——
+            for (UAnimStateTransitionNode* Trans : Transitions)
+            {
+                if (Trans->BoundGraph)
+                {
+                    // 过渡图中的条件结果节点重置到 (0,0)
+                    for (UEdGraphNode* N : Trans->BoundGraph->Nodes)
+                    {
+                        if (Cast<UAnimGraphNode_TransitionResult>(N))
+                            Schema->SetNodePosition(N, FVector2D(0, 0));
+                        else if (!Cast<UK2Node_CallFunction>(N) && !Cast<UK2Node_VariableGet>(N))
+                            continue;
+                        // 其他已由 CreateConditionOutput 放置，保持不变
+                    }
+                }
+            }
+
+            // —— 修复 AnimGraph 顶层连线：StateMachine → Root ——
+            {
+                UEdGraph* AnimGraph = Cast<UEdGraph>(SMNode->GetGraph());
+                if (AnimGraph)
+                {
+                    UAnimGraphNode_Root* RootNode = nullptr;
+                    for (UEdGraphNode* N : AnimGraph->Nodes)
+                    {
+                        RootNode = Cast<UAnimGraphNode_Root>(N);
+                        if (RootNode) break;
+                    }
+
+                    if (RootNode)
+                    {
+                        UEdGraphPin* SMPoseOut = SMNode->FindPin(TEXT("Pose"), EGPD_Output);
+                        UEdGraphPin* RootResultIn = RootNode->FindPin(TEXT("Result"), EGPD_Input);
+
+                        if (SMPoseOut && RootResultIn)
+                        {
+                            // 断开 BlendSpacePlayer → Root 的旧连线（如果有）
+                            if (RootResultIn->LinkedTo.Num() > 0)
+                                RootResultIn->BreakAllPinLinks();
+
+                            bool bAlready = false;
+                            for (UEdGraphPin* L : SMPoseOut->LinkedTo)
+                                if (L == RootResultIn) { bAlready = true; break; }
+                            if (!bAlready)
+                                SMPoseOut->MakeLinkTo(RootResultIn);
+                        }
+
+                        // Root 放到 StateMachine 右侧
+                        Schema->SetNodePosition(RootNode, FVector2D(400, 0));
+                    }
+                }
+            }
+
+            TotalStates += States.Num();
+        }
+    }
+
+    AnimBP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(AnimBP);
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObj->SetNumberField(TEXT("states_arranged"), TotalStates);
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
 }
 
 // ============================================================================

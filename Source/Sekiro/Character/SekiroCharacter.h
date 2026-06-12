@@ -18,6 +18,7 @@ class UInputAction;
 class USpringArmComponent;
 class UCameraComponent;
 class USekiroAnimInstance;
+class USekiroWeaponComponent;
 
 UCLASS(config=Game)
 class SEKIRO_API ASekiroCharacter : public ACharacter
@@ -33,6 +34,9 @@ class SEKIRO_API ASekiroCharacter : public ACharacter
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UCameraComponent> FollowCamera;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USekiroWeaponComponent> WeaponComponent;
 
 	// ── InputMappingContext ───────────────────────────────
 
@@ -117,6 +121,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void PossessedBy(AController* NewController) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	// ── 移动 ──────────────────────────────────────────────

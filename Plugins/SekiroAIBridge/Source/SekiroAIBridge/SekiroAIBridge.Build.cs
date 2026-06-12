@@ -50,6 +50,10 @@ public class SekiroAIBridge : ModuleRules
             "AnimGraph",
             "AnimGraphRuntime",
 
+            // Physics Asset 创建
+            "PhysicsUtilities",
+            "PhysicsCore",
+
             // 消息
             "ApplicationCore",
             "InputCore",

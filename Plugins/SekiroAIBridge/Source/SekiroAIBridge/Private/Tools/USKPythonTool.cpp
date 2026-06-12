@@ -12,7 +12,7 @@ FString USKPythonTool::GetToolDescription() const
 
 FString USKPythonTool::GetInputSchemaJson() const
 {
-	return TEXT("{\"type\":\"object\",\"properties\":{\"script\":{\"type\":\"string\",\"description\":\"Python code to execute\"},\"file\":{\"type\":\"string\",\"description\":\"Python file path\"}},\"oneOf\":[{\"required\":[\"script\"]},{\"required\":[\"file\"]}]}");
+	return TEXT("{\"type\":\"object\",\"properties\":{\"script\":{\"type\":\"string\",\"description\":\"Python code to execute\"},\"file\":{\"type\":\"string\",\"description\":\"Python file path\"},\"args\":{\"type\":\"string\",\"description\":\"Optional arguments passed to the script via sys.argv\"}},\"anyOf\":[{\"required\":[\"script\"]},{\"required\":[\"file\"]}]}");
 }
 
 FString USKPythonTool::GetConfirmationSummary(const FString& ArgsJson) const
@@ -23,8 +23,10 @@ FString USKPythonTool::GetConfirmationSummary(const FString& ArgsJson) const
     {
         FString Script;
         FString File;
+        FString Args;
         ArgsObj->TryGetStringField(TEXT("script"), Script);
         ArgsObj->TryGetStringField(TEXT("file"), File);
+        ArgsObj->TryGetStringField(TEXT("args"), Args);
 
         if (!Script.IsEmpty())
         {
@@ -33,6 +35,11 @@ FString USKPythonTool::GetConfirmationSummary(const FString& ArgsJson) const
         }
         if (!File.IsEmpty())
         {
+            if (!Args.IsEmpty())
+            {
+                FString ArgsPreview = Args.Len() > 60 ? Args.Left(57) + TEXT("...") : Args;
+                return FString::Printf(TEXT("执行Python文件: %s (args: %s)"), *File, *ArgsPreview);
+            }
             return FString::Printf(TEXT("执行Python文件: %s"), *File);
         }
     }
@@ -69,8 +76,10 @@ FString USKPythonTool::Execute(const FString& ArgsJson, FString& OutError)
 
     FString Script;
     FString File;
+    FString Args;
     ArgsObj->TryGetStringField(TEXT("script"), Script);
     ArgsObj->TryGetStringField(TEXT("file"), File);
+    ArgsObj->TryGetStringField(TEXT("args"), Args);
 
     if (!Script.IsEmpty())
     {
@@ -78,7 +87,7 @@ FString USKPythonTool::Execute(const FString& ArgsJson, FString& OutError)
     }
     else if (!File.IsEmpty())
     {
-        return ExecuteFile(File, OutError);
+        return ExecuteFile(File, Args, OutError);
     }
     else
     {
@@ -114,7 +123,7 @@ FString USKPythonTool::ExecuteScript(const FString& Script, FString& OutError)
     return Output;
 }
 
-FString USKPythonTool::ExecuteFile(const FString& FilePath, FString& OutError)
+FString USKPythonTool::ExecuteFile(const FString& FilePath, const FString& Args, FString& OutError)
 {
     IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
     if (!PythonPlugin)
@@ -123,9 +132,26 @@ FString USKPythonTool::ExecuteFile(const FString& FilePath, FString& OutError)
         return FString();
     }
 
-    // UE5.2: 使用 ExecPythonCommand 执行文件（无单独的 ExecPythonFile）
-    FString Command = FString::Printf(TEXT("exec(open(r'%s', encoding='utf-8').read())"), *FilePath);
-    bool bSuccess = PythonPlugin->ExecPythonCommand(*Command);
+    bool bSuccess;
+    if (Args.IsEmpty())
+    {
+        FString Command = FString::Printf(TEXT("exec(open(r'%s', encoding='utf-8').read())"), *FilePath);
+        bSuccess = PythonPlugin->ExecPythonCommand(*Command);
+    }
+    else
+    {
+        FPythonCommandEx CmdEx;
+        CmdEx.Command = FString::Printf(TEXT("\"%s\" %s"), *FilePath, *Args);
+        CmdEx.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
+        CmdEx.FileExecutionScope = EPythonFileExecutionScope::Private;
+        bSuccess = PythonPlugin->ExecPythonCommandEx(CmdEx);
+        if (!bSuccess)
+        {
+            OutError = CmdEx.CommandResult;
+            return FString();
+        }
+    }
+
     if (!bSuccess)
     {
         OutError = FString::Printf(TEXT("Python文件执行失败: %s"), *FilePath);

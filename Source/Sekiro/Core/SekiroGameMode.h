@@ -3,11 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/GameModeBase.h"
+#include "GameFramework/GameMode.h"
 #include "SekiroGameMode.generated.h"
 
 UCLASS(minimalapi)
-class ASekiroGameMode : public AGameModeBase
+class ASekiroGameMode : public AGameMode
 {
 	GENERATED_BODY()
 
