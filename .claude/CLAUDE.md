@@ -1,79 +1,47 @@
-# Claude Code Game Studios -- 游戏工作室代理架构
+# Sekiro → UE5.2
 
-通过 48 个协同的 Claude Code 子代理管理独立游戏开发。
-每个代理负责特定领域，强制关注点分离和质量控制。
+只狼游戏系统迁移到 Unreal Engine 5.2。
 
 ## 技术栈
 
 - **引擎**：Unreal Engine 5.2
-- **语言**：C++（主要），Blueprint + Lua（脚本层）
-- **版本控制**：Git，基于主干开发
-- **构建系统**：Unreal Build Tool (UBT)
-- **资产管线**：Unreal Content Pipeline
-
-> **注意**：本项目使用 Unreal Engine 5.2，配备专属的 UE 专家代理
-> （ue-blueprint-specialist、ue-gas-specialist、ue-replication-specialist、ue-umg-specialist 等）。
+- **语言**：C++（游戏核心 + 插件接口），Python（管线脚本），Lua（脚本层，UnLua）
+- **构建**：Unreal Build Tool (UBT)
 
 ## 项目结构
 
 @.claude/docs/directory-structure.md
 
-## 引擎版本参考
+## 编码规范
 
-@Docs/engine-reference/unreal/VERSION.md
+@.claude/rules/code-style.md
 
-## UE 技能库
+**核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层负责编排具体工作流。详见 code-style.md 和 plugin-programmer 硬性约束。
 
-@.claude/rules/ue-skills.md
+## 技能（/ 命令）
 
-技能文件位于 `Docs/engine-reference/unreal/skills/`，覆盖 UE 各子系统。
-所有 UE 代理在给出建议前必须查阅对应技能文件。
-发现技能内容有误或不足时，应立即勘误/扩充，并确保 SKILL.md 不超过 500 行。
+| 技能 | 用途 |
+|------|------|
+| `/breakdown` | 需求拆分 → `Docs/breakdown/`，支持递归、追踪、修改 |
+| `/tech-design` | 技术方案 + Agent 派发 → `Docs/tech-designs/`，逐子任务推进 |
+| `/review` | 代码审查，风格问题自动修复，违规派发对应 Agent |
 
-## 技术偏好
+## Agent
 
-@.claude/docs/technical-preferences.md
+| Agent | 职责 | 代码位置 |
+|-------|------|---------|
+| plugin-programmer | C++ 插件接口（零硬编码，只引用引擎） | `Plugins/` |
+| gameplay-programmer | 游戏机制（战斗/移动/角色） | `Source/Sekiro/` |
+| script-agent | 管线脚本（编译/导入/编排） | `Script/` |
+| review-agent | 代码审查（被 `/review` 调用） | — |
 
-> **核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层（Python/BP/Lua）负责编排具体工作流。详见 technical-preferences.md 中「C++/脚本分工原则」。
+## 工作流
 
-## 协调规则
+```
+/breakdown <需求>          → Docs/breakdown/<需求>.md
+/tech-design <需求> <任务>  → Docs/tech-designs/<需求>-<任务>.md
+  → Agent 执行
+/review <范围>              → 审查报告 + 修复
+```
 
-@.claude/docs/coordination-rules.md
-
-## 协作协议
-
-**用户驱动的协作，而非自主执行。**
-每个任务遵循：**提问 -> 选项 -> 决定 -> 草稿 -> 审批**
-
-- 代理在使用 Write/Edit 工具之前必须询问"可以将此内容写入 [文件路径] 吗？"
-- 代理必须在请求审批之前展示草稿或摘要
-- 多文件变更需要明确批准整个变更集
-- 没有用户指示，不得进行任何提交
-
-完整协议和示例请参见 `Docs/COLLABORATIVE-DESIGN-PRINCIPLE.md`。
-
-> **第一次使用？** 如果项目没有配置引擎且没有游戏概念，
-> 运行 `/start` 开始引导式入门流程。
-
-## 编码标准
-
-@.claude/docs/coding-standards.md
-
-## 上下文管理
-
-@.claude/docs/context-management.md
-所有对话、解释、建议必须使用**简体中文**。
-
-## 项目记忆（跨机器同步）
-
-@.claude/memory/MEMORY.md
-
-记忆文件位于 `.claude/memory/`，在仓库内版本控制，可在不同机器间同步。
-内容包括：项目概览、结构定义、用户偏好、当前工作进度。
-
-## 当前实施计划
-
-@Docs/implementation-plan.md
-
-SekiroImport C++ 插件重构计划（JSON→UE资产直接导入，对齐Blender管线）。
-进度：Phase 0+1+2 完成，Phase 3/4/5 待实施。
+所有对话、建议、文档使用**简体中文**。

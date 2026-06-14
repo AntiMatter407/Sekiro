@@ -247,12 +247,11 @@ USkeleton* FSekiroSkeletonBuilder::Build(const TArray<FSekiroImportBone>& Bones,
         return nullptr;
     }
 
-    // 创建USkeleton资产
-    FString AssetName = FString::Printf(TEXT("%s_Skeleton"), *SkeletonName);
-    USkeleton* Skeleton = NewObject<USkeleton>(Package, USkeleton::StaticClass(), FName(*AssetName), RF_Public | RF_Standalone);
+    // 创建USkeleton资产（对象名 = 包名，UE约定）
+    USkeleton* Skeleton = NewObject<USkeleton>(Package, USkeleton::StaticClass(), FName(*SkeletonName), RF_Public | RF_Standalone);
     if (!Skeleton)
     {
-        UE_LOG(LogSekiroImport, Error, TEXT("无法创建USkeleton: %s"), *AssetName);
+        UE_LOG(LogSekiroImport, Error, TEXT("无法创建USkeleton: %s"), *SkeletonName);
         return nullptr;
     }
 

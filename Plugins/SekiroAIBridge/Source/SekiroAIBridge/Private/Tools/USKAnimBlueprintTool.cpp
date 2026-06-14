@@ -178,6 +178,7 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("create_blend_space"))  return HandleCreateBlendSpace(ArgsObj, OutError);
     if (Action == TEXT("set_anim_class"))      return HandleSetAnimClass(ArgsObj, OutError);
     if (Action == TEXT("layout"))              return HandleLayout(ArgsObj, OutError);
+    if (Action == TEXT("rename_node"))         return HandleRenameNode(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -1649,6 +1650,78 @@ void USKAnimBlueprintTool::SetupBlendSpacePinConnections(
     PinConns->TryGetStringField(TEXT("Y"), YPinVar);
     CreateVarGetAndConnect(XPinVar, TEXT("X"));
     CreateVarGetAndConnect(YPinVar, TEXT("Y"));
+}
+
+// ============================================================================
+// HandleRenameNode — 重命名状态机或状态节点
+// args: path (ABP路径), target (state_machine|state), old_name, new_name
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleRenameNode(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString Target;
+    if (!Args->TryGetStringField(TEXT("target"), Target))
+    {
+        OutError = TEXT("缺少 target 参数 (state_machine 或 state)");
+        return FString();
+    }
+    FString OldName;
+    Args->TryGetStringField(TEXT("old_name"), OldName);
+    FString NewName = Args->GetStringField(TEXT("new_name"));
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    if (!AnimBP) return FString();
+
+    UAnimGraphNode_StateMachine* SMNode = FindOrCreateStateMachineNode(AnimBP, OutError);
+    if (!SMNode || !SMNode->EditorStateMachineGraph) return FString();
+
+    UAnimationStateMachineGraph* SMGraph = SMNode->EditorStateMachineGraph;
+
+    if (Target == TEXT("state_machine"))
+    {
+        SMGraph->Rename(*NewName);
+        AnimBP->Modify();
+        TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+        Result->SetStringField(TEXT("target"), TEXT("state_machine"));
+        Result->SetStringField(TEXT("new_name"), SMGraph->GetName());
+        Result->SetBoolField(TEXT("success"), true);
+        FString JsonResult;
+        TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonResult);
+        FJsonSerializer::Serialize(Result.ToSharedRef(), Writer);
+        return JsonResult;
+    }
+    else if (Target == TEXT("state"))
+    {
+        if (NewName.IsEmpty())
+        {
+            OutError = TEXT("缺少 new_name 参数");
+            return FString();
+        }
+        UAnimStateNode* StateNode = FindStateNode(SMGraph, OldName);
+        if (!StateNode)
+        {
+            OutError = FString::Printf(TEXT("状态不存在: %s"), *OldName);
+            return FString();
+        }
+        if (StateNode->BoundGraph)
+        {
+            StateNode->BoundGraph->Rename(*NewName);
+            AnimBP->Modify();
+            TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject());
+            Result->SetStringField(TEXT("target"), TEXT("state"));
+            Result->SetStringField(TEXT("old_name"), OldName);
+            Result->SetStringField(TEXT("new_name"), StateNode->BoundGraph->GetName());
+            Result->SetBoolField(TEXT("success"), true);
+            FString JsonResult;
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonResult);
+            FJsonSerializer::Serialize(Result.ToSharedRef(), Writer);
+            return JsonResult;
+        }
+    }
+
+    OutError = FString::Printf(TEXT("不支持的 target: %s (支持 state_machine, state)"), *Target);
+    return FString();
 }
 
 // ============================================================================

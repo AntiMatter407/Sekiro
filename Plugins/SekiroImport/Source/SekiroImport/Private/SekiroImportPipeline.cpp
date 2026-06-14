@@ -235,6 +235,7 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
 				Result.SkeletalMesh = SkeletalMesh;
 				ReportProgress(TEXT("S4: 骨骼网格体构建完成: %s (%d Section)"),
 					*SkeletalMesh->GetName(), ModelData.Meshes.Num());
+				if (Skeleton) Skeleton->SetPreviewMesh(SkeletalMesh);
 				FSekiroImportVerifier::SkeletalMesh(SkeletalMesh, ModelData, Skeleton);
 			}
 			else
@@ -275,6 +276,7 @@ FSekiroImportPipeline::FImportResult FSekiroImportPipeline::Run(const USekiroImp
 		if (SkeletalMesh)
 		{
 			ReportProgress(TEXT("S5.5: 加载已有网格体: %s"), *SkeletalMesh->GetPathName());
+				Skeleton->SetPreviewMesh(SkeletalMesh);
 		}
 	}
 

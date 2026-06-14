@@ -758,8 +758,31 @@ async def cmd_anim_blueprint(args):
             "name": "anim_blueprint",
             "arguments": {"action": "layout", "path": path}
         })
+    elif action == "rename_node":
+        # bridge.py anim_blueprint rename_node <ABP路径> state_machine <新名称>
+        # bridge.py anim_blueprint rename_node <ABP路径> state <旧名称> <新名称>
+        if len(args) < 4:
+            return {"error": "用法: anim_blueprint rename_node <ABP路径> <target> <...>\n"
+                             "  state_machine: rename_node <ABP> state_machine <新名称>\n"
+                             "  state:        rename_node <ABP> state <旧名称> <新名称>"}
+        kwargs = {
+            "action": "rename_node",
+            "path": args[1],
+            "target": args[2],
+        }
+        if args[2] == "state_machine":
+            kwargs["new_name"] = args[3]
+        elif args[2] == "state":
+            if len(args) < 5:
+                return {"error": "用法: anim_blueprint rename_node <ABP> state <旧名称> <新名称>"}
+            kwargs["old_name"] = args[3]
+            kwargs["new_name"] = args[4]
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": kwargs
+        })
     else:
-        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, info, compile, layout, set_anim_class"}
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, info, compile, layout, rename_node, set_anim_class"}
 
 
 def _find_ue_editor():
@@ -1103,10 +1126,6 @@ async def crash_analyze():
                 if not any(h["raw"] == hint["raw"] for h in source_hints):
                     source_hints.append(hint)
 
-            # 全路径匹配
-            full_path = os.path.join(project_root, "Plugins", "SekiroAIBridge", "Source", "*", path)
-            full_path2 = os.path.join(project_root, "Plugins", "SekiroImport", "Source", "*", path)
-
     info["sourceHints"] = source_hints
     info["hint"] = (
         "分析崩溃：先看 errorMessage，再看 logErrors 中的 Fatal/Assert 行，"
@@ -1238,6 +1257,8 @@ def print_help():
   anim_blueprint info <路径>                  查询 AnimBP 结构
   anim_blueprint compile <路径>               编译 AnimBlueprint
   anim_blueprint layout <路径>                自动排版状态机节点（状态/Entry/内部节点）
+  anim_blueprint rename_node <路径> state_machine <新名>  重命名状态机
+  anim_blueprint rename_node <路径> state <旧名> <新名>    重命名状态
   anim_blueprint set_anim_class <路径> --character <BP> 将ABP赋给角色Mesh组件
   editor start                               启动 UE 编辑器（自动清理 cmd 窗口）
   editor stop                                关闭编辑器及子进程（LiveCoding 等）

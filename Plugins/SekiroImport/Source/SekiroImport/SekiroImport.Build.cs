@@ -15,11 +15,11 @@ public class SekiroImport : ModuleRules
             "Slate",
             "SlateCore",
             "InputCore",
-            "UnrealEd",
-            "AssetTools",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[] {
+            "UnrealEd",
+            "AssetTools",
             "MeshBuilder",
             "MeshDescription",
             "SkeletalMeshDescription",
@@ -31,9 +31,10 @@ public class SekiroImport : ModuleRules
             "MainFrame",
             "AppFramework",
             "AssetRegistry",
-            "Sekiro",
             "AnimGraph",
+            "BlueprintGraph",
             "Kismet",
+            "KismetCompiler",
         });
     }
 }

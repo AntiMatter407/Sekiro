@@ -1,0 +1,7132 @@
+[
+  {
+    "name": "Anim_Sekiro_Attack_Charged",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Charged_Dash",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Charged_L",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Charged_Step",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Crouch",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Crouch_Charged",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Dodge_Back",
+    "length": 0.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Dodge_Charged",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Dodge_Dash",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Dodge_Fwd",
+    "length": 0.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Dodge_L",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Dodge_R",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_GuardBreak",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Jump",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Jump_Charged",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Jump_Fwd",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Quickstep_Bwd",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Quickstep_Fwd",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Quickstep_L",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Quickstep_R",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Combo01",
+    "length": 0.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Combo02",
+    "length": 0.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Combo03",
+    "length": 0.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Combo04",
+    "length": 0.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Dash01",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Dash02",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_L_Combo01",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_L_Combo02",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_L_Dash01",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_L_Step01",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_L_Step02",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Step01",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Step02",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_R1_Step03",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Slide_Fwd",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Slide_L",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Slide_R",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Sprint_R1",
+    "length": 0.833,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Sprint_Thrust",
+    "length": 2.333,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Thrust",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Thrust_Charged",
+    "length": 0.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_Thrust_Charged_L",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100103",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100202",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100203",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100321",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100411",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100421",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100620",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_100801",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_101101",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_101301",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102101",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102111",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102301",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102311",
+    "length": 0.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102320",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102321",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102391",
+    "length": 0.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_102392",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_103101",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_103301",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_104101",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_104301",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_110011",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_190031",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_190040",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_190041",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_190050",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_190055",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_191100",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_191510",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_191511",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_191600",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192410",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192420",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192421",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192430",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192510",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192540",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192550",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192560",
+    "length": 5.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192570",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192600",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192610",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192611",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192700",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192701",
+    "length": 2.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192900",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192910",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192911",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192920",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192930",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192931",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192950",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_192970",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_193000",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_193020",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_193050",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_193070",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_199201",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_199211",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_199300",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a000_199301",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120000",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120100",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120101",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120102",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120103",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120104",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120105",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120200",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120201",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120202",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120203",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120204",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120205",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120300",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120301",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120302",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_120700",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122101",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122102",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122111",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122112",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122302",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122312",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122700",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122710",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122900",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122901",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122910",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_122911",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_123100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_123300",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_124100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_124300",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_129920",
+    "length": 2.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130100",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130101",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130102",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130200",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130201",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130202",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130300",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130301",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130302",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_130700",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132101",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132102",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132111",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132112",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132301",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132302",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132311",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132312",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132700",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_132710",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_133100",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_133300",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_134100",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_134300",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_139900",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_139910",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_139920",
+    "length": 2.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_139930",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_140000",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_140001",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_150000",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_150001",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190100",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190120",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190130",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190150",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190155",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190500",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190501",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Attack_a050_190502",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_AshinaCross",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_AshinaCross_Alt",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_AshinaCross_Dash",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_HighMonk",
+    "length": 5.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_HighMonk_Leap",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Ichimonji",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Ichimonji_Alt",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Ichimonji_Double",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Ichimonji_Double_Alt",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Ichimonji_Double_Jump",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Ichimonji_Jump",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Lightning",
+    "length": 4.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_MortalDraw",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_MortalDraw_Empowered",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_MortalDraw_Jump",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_MortalDraw_Jump_Empowered",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Nightjar",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Nightjar_Reversal",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_OneMind",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_PhantomKunai",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_PrayingStrikes",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_PrayingStrikes_Alt",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_SakuraDance",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_SenThrow",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Shadowrush",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Shadowrush_Alt",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Shadowrush_Dash",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Whirlwind",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Whirlwind_Alt",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_CombatArt_Whirlwind_L",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Back",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Fall",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Fall_Long",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Front",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Grab",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Immortal",
+    "length": 8.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Immortal_Fall",
+    "length": 8.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Immortal_Recover",
+    "length": 8.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_L",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Plunge",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_R",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Snake",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Death_Special",
+    "length": 8.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Air",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Air_Alt",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Air_Receive",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Back",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Back_Alt",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Back_Receive",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Climb",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Front",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Front_Alt",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Front_Receive",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Ledge",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Plunge",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_Sneak",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220007",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220013",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220014",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220015",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220016",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220017",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220023",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220024",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220025",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220026",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_220027",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226010",
+    "length": 2.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226100",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226101",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226110",
+    "length": 0.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226111",
+    "length": 0.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226120",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deathblow_a000_226130",
+    "length": 1.367,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_200021",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_200903",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_200907",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_200908",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201100",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201101",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201102",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201103",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201104",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201105",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201106",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201107",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201111",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201112",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201113",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201114",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201115",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201116",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201117",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201143",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201144",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201145",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201146",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201147",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201340",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201341",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201350",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201360",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201411",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201461",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201510",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201511",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201640",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201660",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201700",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201701",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201800",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201801",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201802",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201803",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201804",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201805",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201806",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_201807",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202011",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202012",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202035",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202110",
+    "length": 1.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202112",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202310",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_202410",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_205021",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_205031",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206110",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206111",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206112",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206113",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206121",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206122",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_206123",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_210011",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_210012",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_210051",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_210160",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_210161",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_210300",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_213111",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_216021",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217100",
+    "length": 0.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217102",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217103",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217106",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217107",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217120",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217121",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217122",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217130",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217131",
+    "length": 3.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217132",
+    "length": 3.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217202",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217203",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217206",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217207",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217220",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217221",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217222",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217230",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217231",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217232",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217500",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217520",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217600",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217620",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217700",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217710",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_217720",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218103",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218104",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218105",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218106",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218107",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218111",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218112",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_218490",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a000_219000",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203000",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203001",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203005",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203006",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203010",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203011",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203012",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203015",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203016",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203017",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203100",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203300",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203310",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203320",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203330",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203400",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203500",
+    "length": 0.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203510",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203520",
+    "length": 2.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203540",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203541",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203600",
+    "length": 0.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203601",
+    "length": 0.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203602",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203610",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203620",
+    "length": 2.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203621",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203622",
+    "length": 2.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203640",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_203641",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_206200",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_206201",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_206202",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Defense_a050_206203",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Counter_R1",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Counter_Step",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Counter_Step_L",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Counter_Step_R",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Jump",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Jump_Receive",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Receive_01",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Deflect_Receive_02",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grab_Escape",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grab_Receive",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grab_Receive_Alt",
+    "length": 0.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grab_Throw_Receive",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Attack",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Attack_Bwd",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Attack_Fwd",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Attack_L",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Attack_R",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Fly",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Land",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Ledge",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Start",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Swing",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Swing_End",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Swing_L",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Swing_R",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_To_Ledge",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_Vault",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_a000_790140",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_a000_790150",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_a000_790510",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Grapple_a000_790520",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Break",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Break_Attack",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Break_Attack_L",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Break_L",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Break_Recover",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Break_Recover_Fast",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Counter",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Counter_Alt",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Heavy_Hit",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Heavy_Hit_Back",
+    "length": 0.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Heavy_Hit_Fwd",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Heavy_Hit_KnockBack",
+    "length": 0.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Heavy_Hit_L",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Heavy_Hit_R",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Idle",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Into_Attack",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Into_Parry",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Lower",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Lower_Fast",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Guard_Raise",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Air_Recover",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Ground_Recover",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_HeadShot",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Heavy_Back",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Heavy_Front",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Heavy_L",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Heavy_R",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_KnockBack",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_KnockBack_Heavy",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_KnockBack_L",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_KnockBack_R",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Light_Back",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Light_Front",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Light_L",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Light_R",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Medium_Back",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Medium_Front",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Medium_L",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Medium_R",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Poison",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Stagger",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Stagger_Heavy",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Terror",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_Terror_Death",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250201",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250210",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250211",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250310",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250700",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250701",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250800",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_250900",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251440",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251441",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251460",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251461",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251510",
+    "length": 8.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251610",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251700",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251710",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251900",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251901",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251902",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251910",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251911",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_251912",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_252010",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_259440",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_259441",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_259460",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a000_259461",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a010_251700",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Hit_a010_251710",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Idle",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Idle_Combat",
+    "length": 0.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Idle_Combat_L",
+    "length": 0.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Idle_Combat_R",
+    "length": 0.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Idle_Combat_Shift",
+    "length": 0.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Idle_Default",
+    "length": 3.333,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Idle_WeaponOut",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Idle_WeaponOut_L",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Idle_WeaponOut_R",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Idle_WeaponOut_Shift",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Idle_WeaponSheathe",
+    "length": 0.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jog_Fwd",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Jog_Fwd_L",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Jog_Fwd_R",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Jog_Fwd_Stop",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Bwd",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Fall",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Fall_Long",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Fwd",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Fwd_Land",
+    "length": 1.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_L",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Land",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Ledge_Grab",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_Neutral",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_R",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_WallKick_Bwd",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_WallKick_Fwd",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_WallKick_L",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Jump_WallKick_R",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000410",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000411",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000412",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000413",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000432",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000433",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000442",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000443",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000501",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000502",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000503",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000601",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000602",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a000_000603",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a010_000410",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a010_000432",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a010_000433",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a010_000442",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Locomotion_a010_000443",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_Counter",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_Counter_Alt",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_Receive",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_Receive_Alt",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_Recover",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_Stab",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Mikiri_StepIn",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020102",
+    "length": 0.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020103",
+    "length": 0.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020112",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020113",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020202",
+    "length": 0.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020203",
+    "length": 0.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020212",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020213",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020302",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020303",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020312",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020313",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020402",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020403",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020412",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020413",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020422",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020423",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020432",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_020433",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021102",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021103",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021202",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021203",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021302",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021303",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021402",
+    "length": 0.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021403",
+    "length": 0.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021502",
+    "length": 0.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021503",
+    "length": 0.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021602",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_021603",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_030012",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_030013",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_040013",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_040111",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_040121",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_040211",
+    "length": 1.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_040220",
+    "length": 1.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_040221",
+    "length": 1.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041404",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041405",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041406",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041407",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041414",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041415",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041416",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041417",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041424",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041425",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041440",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041441",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a000_041442",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a050_032000",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Movement_a050_042000",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Deflect",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Deflect_Bwd",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Deflect_Fwd",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Deflect_L",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Deflect_R",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Deflect_Success",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Idle",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Into_Guard",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Lower",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Raise",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Recover",
+    "length": 0.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Parry_Recover_L",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_Fall",
+    "length": 5.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_KnockDown",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_KnockDown_Recover",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_Receive",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_Receive_Heavy",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_Recover",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_PostureBreak_Stagger",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Axe",
+    "length": 3.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Axe_Charged",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Axe_Dash",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Axe_Jump",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_DivineAbduction",
+    "length": 2.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_DivineAbduction_Charged",
+    "length": 2.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_FingerWhistle",
+    "length": 7.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Firecracker",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Firecracker_Alt",
+    "length": 11.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Firecracker_Dash",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Firecracker_Dash_Alt",
+    "length": 7.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_FlameVent",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_FlameVent_Charged",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_FlameVent_Dash",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_FlameVent_Jump",
+    "length": 3.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_MistRaven",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_MistRaven_Bwd",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_MistRaven_Fwd",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_MistRaven_L",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_MistRaven_R",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Sabimaru",
+    "length": 10.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Sabimaru_Combo",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Sabimaru_Dash",
+    "length": 1.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Shuriken",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Shuriken_Charged",
+    "length": 6.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Shuriken_Dash",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Shuriken_Jump",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Shuriken_Slide",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Shuriken_Sprint",
+    "length": 7.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Spear",
+    "length": 3.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Spear_Charged",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Spear_Dash",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Spear_Jump",
+    "length": 3.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Umbrella",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Umbrella_Attack",
+    "length": 3.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Umbrella_Open",
+    "length": 6.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Umbrella_Spin",
+    "length": 7.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Whistle",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_Whistle_Charged",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700210",
+    "length": 12.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700220",
+    "length": 12.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700230",
+    "length": 6.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700250",
+    "length": 9.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700260",
+    "length": 6.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700270",
+    "length": 6.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700290",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700310",
+    "length": 7.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700320",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700330",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700400",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700402",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700403",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700410",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700420",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700422",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700423",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700501",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700510",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_700511",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710101",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710102",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710201",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710203",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710320",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710330",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710340",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710360",
+    "length": 6.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710370",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_710540",
+    "length": 14.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711101",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711202",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711212",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711221",
+    "length": 5.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711320",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711321",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711322",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711330",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711331",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711332",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711333",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a000_711610",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a010_700250",
+    "length": 9.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Prosthetic_a010_710330",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Quickstep_Bwd",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Quickstep_Fwd",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Quickstep_L",
+    "length": 3.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Quickstep_R",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Resurrect_01",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Resurrect_02",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_Fwd",
+    "length": 1.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_Fwd_L",
+    "length": 1.967,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_Fwd_R",
+    "length": 1.8,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_Fwd_Stop",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_L",
+    "length": 1.333,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_L_Stop",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_R",
+    "length": 1.467,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Run_Fast_R_Stop",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run_To_Idle",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run_To_Jog",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Run_To_Walk",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sprint",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_Fwd",
+    "length": 1.333,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_Fwd_L",
+    "length": 1.167,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_Fwd_R",
+    "length": 1.067,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_Fwd_Stop",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_To_Idle",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_To_Idle_Fast",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_To_Jog",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sprint_To_Run",
+    "length": 0.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_StepDodge_Bwd",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_StepDodge_Dash",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_StepDodge_Fwd",
+    "length": 2.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_StepDodge_L",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_StepDodge_R",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sweep_Jump",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sweep_JumpKick",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sweep_JumpKick_L",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sweep_Jump_Bwd",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sweep_Jump_L",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Sweep_Jump_R",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_L135",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_L180",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_L180_Fast",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_L45",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_L90",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_L90_Fast",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_R135",
+    "length": 1.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_R180",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_R45",
+    "length": 2.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_R90",
+    "length": 2.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Turn_R90_Fast",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Bwd",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Bwd_L",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Bwd_R",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Bwd_Stop",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Fwd",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Fwd_L",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Fwd_R",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Fwd_Stop",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_L",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_LSlow",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_L_Stop",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_R",
+    "length": 2.667,
+    "loop": true
+  },
+  {
+    "name": "Anim_Sekiro_Walk_RSlow",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_R_Stop",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_Stop_Turn",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_To_Idle",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_Walk_To_Jog",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001402",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001403",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001410",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001500",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001510",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001511",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_001512",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005012",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005013",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005101",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005102",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005103",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005112",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005113",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005201",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005202",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005203",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005301",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005302",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005303",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005401",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005402",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005403",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005411",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005412",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005413",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005501",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005502",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005503",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005600",
+    "length": 1.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005601",
+    "length": 1.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005602",
+    "length": 1.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a000_005603",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002000",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002010",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002011",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002012",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002013",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002200",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002201",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002202",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_WeaponPose_a050_002203",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a000_299000",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a000_299020",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a000_299200",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a000_299300",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a000_412090",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300001",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300010",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300011",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300020",
+    "length": 1.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300030",
+    "length": 1.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300040",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300100",
+    "length": 1.633,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300101",
+    "length": 1.633,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300110",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_300111",
+    "length": 1.633,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_301000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_301050",
+    "length": 1.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_301100",
+    "length": 1.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_302010",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_302011",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_304011",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_304012",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_304021",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_304022",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_304121",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_304122",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_305000",
+    "length": 1.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_305001",
+    "length": 1.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_305100",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_305101",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308000",
+    "length": 0.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308010",
+    "length": 0.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308020",
+    "length": 0.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308050",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308060",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308070",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308900",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308901",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308910",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_308911",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_309000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_309050",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310000",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310010",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310020",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310100",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310110",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310200",
+    "length": 3.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_310201",
+    "length": 3.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311000",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311010",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311020",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311100",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311110",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311200",
+    "length": 3.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_311201",
+    "length": 3.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_313001",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_313002",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_314000",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_314010",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_315000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a050_390000",
+    "length": 3.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_400000",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_400010",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_400020",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_400100",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_400110",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_400900",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_401000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_402000",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_402010",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_402020",
+    "length": 1.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_402100",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_402110",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403000",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403010",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403020",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403050",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403060",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403070",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_403900",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_410000",
+    "length": 2.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412000",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412001",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412002",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412003",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412004",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412005",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412006",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412007",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412008",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412010",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412100",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412103",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_412106",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_422900",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_422910",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_424900",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a070_424901",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_400000",
+    "length": 2.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_400100",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_401000",
+    "length": 2.633,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_402000",
+    "length": 2.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_402100",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_403000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_403050",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a071_410000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_400000",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_400100",
+    "length": 1.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_400200",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_400300",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_400400",
+    "length": 1.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_401000",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_403000",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_403050",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a072_410000",
+    "length": 2.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_400000",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_400010",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_400100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_401000",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_403000",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_403050",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_403100",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_403150",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_410000",
+    "length": 2.567,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a073_410001",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404000",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404008",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404009",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404010",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404011",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404012",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404013",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404014",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404016",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404017",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404018",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404019",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404040",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_404041",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_413000",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_413010",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_413100",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_413150",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419000",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419001",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419010",
+    "length": 0.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419020",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419030",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419031",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419040",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419050",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a074_419100",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_400000",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_400010",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_400020",
+    "length": 1.367,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_400030",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_400040",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_400050",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_401000",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_403000",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_403050",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_410000",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_410002",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_410003",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_410004",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_415000",
+    "length": 1.367,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_415010",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_415020",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_415030",
+    "length": 1.633,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_415040",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a075_415050",
+    "length": 1.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405010",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405011",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405012",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405020",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405030",
+    "length": 1.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405060",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405110",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405111",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405112",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405113",
+    "length": 1.6,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405200",
+    "length": 0.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405210",
+    "length": 0.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405230",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405231",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_405400",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_410000",
+    "length": 2.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421000",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421010",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421020",
+    "length": 1.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421030",
+    "length": 0.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421040",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421050",
+    "length": 1.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421210",
+    "length": 0.933,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421400",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a076_421401",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_400000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_400500",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_401000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_401500",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_403000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_403050",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_403700",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_403750",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a077_410000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_400000",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_400010",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_400100",
+    "length": 1.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_401000",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_403000",
+    "length": 2.367,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_403050",
+    "length": 2.367,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_410000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_410010",
+    "length": 1.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_425000",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_425100",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_426000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a078_427000",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_400000",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_400100",
+    "length": 1.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_400600",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_400650",
+    "length": 1.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_402000",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_402100",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_402600",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_402650",
+    "length": 1.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_403000",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_403050",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_403800",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_403850",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_410000",
+    "length": 1.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_422000",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_422010",
+    "length": 1.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_424000",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a079_424001",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a100_316000",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a100_316200",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a100_316210",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a100_316300",
+    "length": 2.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a101_316001",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a101_316002",
+    "length": 2.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a101_316200",
+    "length": 0.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a101_316210",
+    "length": 1.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a101_316220",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a101_316230",
+    "length": 1.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a102_316000",
+    "length": 3.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a102_316010",
+    "length": 2.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a102_316100",
+    "length": 2.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a102_316200",
+    "length": 2.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a102_316210",
+    "length": 2.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a102_316300",
+    "length": 3.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a103_316000",
+    "length": 4.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a103_316100",
+    "length": 2.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a103_316200",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a103_316210",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a103_316300",
+    "length": 4.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316000",
+    "length": 2.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316200",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316210",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316220",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316230",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316240",
+    "length": 0.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316250",
+    "length": 0.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316300",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316500",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316510",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316511",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316512",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316513",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316514",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316520",
+    "length": 0.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316530",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316531",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316532",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_316533",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_317000",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a104_317010",
+    "length": 2.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316010",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316020",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316030",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316040",
+    "length": 2.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316200",
+    "length": 1.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316210",
+    "length": 1.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_316300",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a105_317020",
+    "length": 2.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316000",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316010",
+    "length": 4.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316100",
+    "length": 3.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316110",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316200",
+    "length": 3.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316210",
+    "length": 3.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a106_316300",
+    "length": 4.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316010",
+    "length": 1.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316020",
+    "length": 2.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316030",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316200",
+    "length": 0.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316210",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316700",
+    "length": 0.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316710",
+    "length": 1.1,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316720",
+    "length": 3.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316730",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316740",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a107_316770",
+    "length": 0.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316010",
+    "length": 1.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316020",
+    "length": 1.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316100",
+    "length": 1.433,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316200",
+    "length": 0.967,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316210",
+    "length": 1.633,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316220",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316230",
+    "length": 1.3,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a108_316300",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316000",
+    "length": 3.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316100",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316200",
+    "length": 2.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316210",
+    "length": 2.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316300",
+    "length": 3.2,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316600",
+    "length": 1.567,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316650",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a109_316660",
+    "length": 1.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316200",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316210",
+    "length": 1.267,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316260",
+    "length": 0.8,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316270",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316700",
+    "length": 0.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316710",
+    "length": 1.7,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316720",
+    "length": 2.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316730",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a110_316740",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_500000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_500200",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_500600",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_500700",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_500800",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_500810",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_501900",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_502500",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_505000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510000",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510100",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510110",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510200",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510210",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510220",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510230",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510300",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510310",
+    "length": 3.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510400",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510410",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510600",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510700",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510800",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510810",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_510900",
+    "length": 7.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511110",
+    "length": 3.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511120",
+    "length": 1.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511300",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511310",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511500",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511510",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511800",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_511900",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_512500",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a200_515000",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_500000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510000",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510001",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510100",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510110",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510111",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510200",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510201",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510210",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510220",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510230",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510300",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510310",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_510311",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_511100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_511110",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_511111",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_511120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_511800",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a201_511900",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_500000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_500200",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_500600",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_500700",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_500800",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_500810",
+    "length": 1.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_502500",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510000",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510100",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510110",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510200",
+    "length": 3.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510210",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510220",
+    "length": 3.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510230",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510600",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510700",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510800",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_510810",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a202_512500",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a210_511800",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a210_600000",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a210_600001",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a210_610001",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_510000",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_510100",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_510110",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_510300",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_510310",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_511100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_511110",
+    "length": 5.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_511120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_511700",
+    "length": 9.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a211_511800",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a212_510300",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a212_510310",
+    "length": 21.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a212_510320",
+    "length": 11.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a212_510900",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_500000",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_510000",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_510300",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_510310",
+    "length": 5.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_600030",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_600031",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_600040",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_600041",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_610031",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a213_610041",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a214_510000",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a214_600050",
+    "length": 8.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a214_600051",
+    "length": 1.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a214_610051",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a215_510000",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a215_510100",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a215_510110",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a215_510300",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a215_510310",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a215_511500",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_511800",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_512500",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_512501",
+    "length": 2.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_600060",
+    "length": 5.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_600061",
+    "length": 0.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_610061",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a216_610063",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_500000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_510000",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_510100",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_510110",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_510120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_510900",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_511100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_511110",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_511120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_511800",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_600070",
+    "length": 5.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_600071",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_600080",
+    "length": 5.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_600081",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_610071",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a217_610081",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a218_511300",
+    "length": 1.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a218_511310",
+    "length": 3.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a219_600090",
+    "length": 5.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a219_600091",
+    "length": 3.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a219_610091",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a220_600100",
+    "length": 4.567,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a220_600101",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a220_610101",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_500000",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_510000",
+    "length": 5.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_510100",
+    "length": 1.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_510110",
+    "length": 4.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_511500",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_511510",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_511700",
+    "length": 10.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_600110",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_600111",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_600120",
+    "length": 8.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_600121",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_610111",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a221_610121",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a222_502000",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a222_512000",
+    "length": 7.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a222_600130",
+    "length": 6.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a222_600131",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a222_610131",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600140",
+    "length": 8.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600141",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600350",
+    "length": 10.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600351",
+    "length": 3.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600352",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600370",
+    "length": 10.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600371",
+    "length": 3.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_600372",
+    "length": 4.133,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_610141",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_610351",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a223_610371",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a224_600150",
+    "length": 3.867,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a224_600151",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a224_610151",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_510000",
+    "length": 5.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_510001",
+    "length": 7.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_510090",
+    "length": 10.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_510100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_510120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_511600",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_511610",
+    "length": 5.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_600160",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_600161",
+    "length": 2.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a225_610161",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a226_510900",
+    "length": 4.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a227_600170",
+    "length": 6.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a227_600171",
+    "length": 5.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a227_610171",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_510000",
+    "length": 4.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_510110",
+    "length": 4.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_510120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_511110",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_511120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_511500",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_511510",
+    "length": 3.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_511700",
+    "length": 10.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_600180",
+    "length": 6.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_600181",
+    "length": 3.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a228_610181",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a229_510000",
+    "length": 3.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a229_510001",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a229_600190",
+    "length": 8.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a229_600191",
+    "length": 2.467,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a229_610191",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_510000",
+    "length": 5.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_511700",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_600200",
+    "length": 4.767,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_600201",
+    "length": 1.567,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_600380",
+    "length": 2.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a230_610201",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a231_510000",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a231_510100",
+    "length": 1.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a231_510110",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a231_510120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a231_510400",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a231_510410",
+    "length": 3.533,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a233_510900",
+    "length": 28.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a235_510000",
+    "length": 4.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a235_510001",
+    "length": 6.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a235_510090",
+    "length": 7.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a235_510900",
+    "length": 8.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_502400",
+    "length": 1.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_512400",
+    "length": 5.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_600310",
+    "length": 9.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_600311",
+    "length": 1.067,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_600340",
+    "length": 9.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_600341",
+    "length": 2.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a236_610311",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a237_600320",
+    "length": 6.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a237_600321",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a237_610321",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_500000",
+    "length": 1.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_510000",
+    "length": 9.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_510300",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_510310",
+    "length": 6.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_511200",
+    "length": 9.4,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_511400",
+    "length": 2.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a238_511410",
+    "length": 8.367,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a239_600210",
+    "length": 6.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a239_600211",
+    "length": 3.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a239_610211",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a240_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a240_510000",
+    "length": 5.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a240_511700",
+    "length": 10.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a241_511110",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a242_600390",
+    "length": 5.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a242_600391",
+    "length": 3.9,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a242_610391",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a243_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a243_510900",
+    "length": 16.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a243_511700",
+    "length": 14.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a243_511800",
+    "length": 2.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a244_501700",
+    "length": 0.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a244_511700",
+    "length": 10.333,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a245_600330",
+    "length": 6.733,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a245_600331",
+    "length": 2.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a245_610331",
+    "length": 0.033,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a246_510000",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a246_510110",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a246_511110",
+    "length": 5.667,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a246_511510",
+    "length": 4.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a246_600400",
+    "length": 5.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a247_510000",
+    "length": 4.0,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a247_510200",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a247_511100",
+    "length": 2.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a247_511110",
+    "length": 3.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a247_511120",
+    "length": 1.233,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a247_511200",
+    "length": 3.167,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a250_600360",
+    "length": 5.5,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a250_600361",
+    "length": 2.833,
+    "loop": false
+  },
+  {
+    "name": "Anim_Sekiro_a250_610361",
+    "length": 0.033,
+    "loop": false
+  }
+]

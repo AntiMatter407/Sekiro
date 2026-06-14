@@ -173,7 +173,7 @@ def create_anim_blueprint():
     anim_bp_factory = unreal.AnimBlueprintFactory()
     anim_bp_factory.set_editor_property("target_skeleton", skeleton)
     # 设置父类为 USekiroAnimInstance
-    anim_bp_factory.set_editor_property("parent_class", unreal.load_class(None, "/Script/Sekiro.SekiroAnimInstance"))
+    anim_bp_factory.set_editor_property("parent_class", unreal.load_class(None, "/Script/Sekiro.SKAnimInstance"))
 
     anim_bp = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
         abp_name, OUTPUT_PATH, unreal.AnimBlueprint, anim_bp_factory
