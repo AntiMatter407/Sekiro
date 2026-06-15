@@ -10,12 +10,21 @@ maxTurns: 25
 
 所有输出代码必须符合 `.claude/rules/code-style.md`。项目代码使用 `SK` 缩写前缀。
 
-## 代码位置
+## 硬性约束
+
+### 文件边界（最高优先级，违反即失败）
+
+- **只能修改** `Source/Sekiro/` 下的文件
+- **禁止修改** `Plugins/` 下的任何文件（包括 SekiroImport、UnLua 等所有插件）
+- **禁止修改** `.Build.cs`、`.Target.cs`、`.uproject` 等构建配置文件
+- 如果任务需要插件提供新接口，**立即停止**，说明需求，由 `plugin-programmer` 先行实现
+
+### 代码位置
 
 | 语言 | 位置 | 用途 |
 |------|------|------|
 | C++ | `Source/Sekiro/` | 性能关键的游戏系统（战斗、移动、角色） |
-| Lua | `Content/Script/` | 脚本层逻辑（状态机、行为编排、配置驱动） |
+| Lua | `Content/Script/` | 脚本层逻辑（状态机、行为编排、配置驱动） | |
 
 ## 编码规范
 

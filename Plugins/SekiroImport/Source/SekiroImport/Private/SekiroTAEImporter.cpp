@@ -7,6 +7,29 @@
 #include "Misc/FileHelper.h"
 
 // ============================================================================
+// 帧级行为标志位掩码（与 SekiroAnimDataBuilder 中保持一致）
+// ============================================================================
+namespace
+{
+    constexpr uint32 Bit_DisableTurning      = 1 << 0;              // JumpTableID 7
+    constexpr uint32 Bit_DisableMovement     = 1 << 1;              // JumpTableID 89
+    constexpr uint32 Bit_DisableMapHit       = 1 << 2;              // JumpTableID 19
+    constexpr uint32 Bit_EnableParry         = 1 << 3;              // JumpTableID 119
+    constexpr uint32 Bit_DisableParry        = 1 << 4;              // JumpTableID 137
+    constexpr uint32 Bit_DisableSpecial      = 1 << 5;              // JumpTableID 133
+    constexpr uint32 Bit_DisableItem         = 1 << 6;              // JumpTableID 134
+    constexpr uint32 Bit_Invincible          = 1 << 7;              // JumpTableID 51
+    constexpr uint32 Bit_SetNoGravity        = 1 << 8;              // JumpTableID 27
+    constexpr uint32 Bit_FlagAsDodging       = 1 << 9;              // JumpTableID 8
+    constexpr uint32 Bit_InvokeDeath         = 1 << 10;             // JumpTableID 12
+    constexpr uint32 Bit_LimitMoveSpeedWalk  = 1 << 11;             // JumpTableID 90
+    constexpr uint32 Bit_LimitMoveSpeedDash  = 1 << 12;             // JumpTableID 91
+    constexpr uint32 Bit_EnterMovement       = 1 << 13;             // JumpTableID 32
+    constexpr uint32 Bit_ExitMovement        = 1 << 14;             // JumpTableID 31
+    constexpr uint32 Bit_Staggered           = 1 << 15;             // JumpTableID 55
+}
+
+// ============================================================================
 // 公共 API
 // ============================================================================
 
@@ -217,6 +240,9 @@ FSKAnimationLogicIR FSekiroTAEImporter::ParseAnimationEntry(const TSharedPtr<FJs
     // 从 JumpTable 事件提取取消窗口
     ExtractCancelWindows(Logic.AllEvents, Logic.CancelWindows);
 
+    // 从 JumpTable 事件提取帧级行为标志
+    ExtractFrameFlags(Logic.AllEvents, Logic.JumpTableFlags);
+
     return Logic;
 }
 
@@ -256,8 +282,8 @@ void FSekiroTAEImporter::ExtractCancelWindows(const TArray<FSKTAEEventIR>& Event
         FString TypeNameLower = Evt.TypeName.ToLower();
         bool bIsCancelStart = TypeNameLower.Contains(TEXT("cancelstart")) ||
             (JumpTableID == 1 || JumpTableID == 9 || JumpTableID == 21 ||
-             JumpTableID == 25 || JumpTableID == 30 || JumpTableID == 105 ||
-             JumpTableID == 111 || JumpTableID == 120);
+             JumpTableID == 25 || JumpTableID == 26 || JumpTableID == 30 ||
+             JumpTableID == 105 || JumpTableID == 111 || JumpTableID == 120);
         bool bIsCancelEnd = TypeNameLower.Contains(TEXT("cancelend")) ||
             TypeNameLower.Contains(TEXT("invokeanimcancelend")) ||
             (JumpTableID == 34 || JumpTableID == 115 || JumpTableID == 116 ||
@@ -275,6 +301,7 @@ void FSekiroTAEImporter::ExtractCancelWindows(const TArray<FSKTAEEventIR>& Event
             switch (Action)
             {
             case ESKJumpTableAction::AnimCancelStart_R1:
+            case ESKJumpTableAction::GenericCancelStart:
                 Window.TargetAction = TEXT("Attack"); break;
             case ESKJumpTableAction::AnimCancelStart_L1:
             case ESKJumpTableAction::AnimCancelStart_Guard:
@@ -292,6 +319,56 @@ void FSekiroTAEImporter::ExtractCancelWindows(const TArray<FSKTAEEventIR>& Event
             }
 
             OutWindows.Add(Window);
+        }
+    }
+}
+
+// ============================================================================
+// 帧级行为标志提取
+// ============================================================================
+
+void FSekiroTAEImporter::ExtractFrameFlags(const TArray<FSKTAEEventIR>& Events,
+    TMap<int32, int32>& OutFrameFlags)
+{
+    for (const FSKTAEEventIR& Evt : Events)
+    {
+        if (Evt.Category != ESKTAEEventCategory::JumpTable)
+            continue;
+
+        int32 JumpTableID = 0;
+        if (Evt.Params.Contains(TEXT("JumpTableID")))
+            JumpTableID = FCString::Atoi(*Evt.Params[TEXT("JumpTableID")]);
+
+        uint32 Mask = 0;
+        switch (JumpTableID)
+        {
+        case 7:   Mask = Bit_DisableTurning;    break;              // DisableTurning
+        case 89:  Mask = Bit_DisableMovement;   break;              // DisableAllMovement
+        case 19:  Mask = Bit_DisableMapHit;     break;              // DisableMapHit
+        case 119: Mask = Bit_EnableParry;       break;              // EnableParry
+        case 137: Mask = Bit_DisableParry;      break;              // DisableParry
+        case 133: Mask = Bit_DisableSpecial;    break;              // DisableSpecial
+        case 134: Mask = Bit_DisableItem;       break;              // DisableItem
+        case 51:  Mask = Bit_Invincible;        break;              // InvincibilityFrame
+        case 27:  Mask = Bit_SetNoGravity;      break;              // SetNoGravity
+        case 8:   Mask = Bit_FlagAsDodging;     break;              // FlagAsDodging
+        case 12:  Mask = Bit_InvokeDeath;       break;              // InvokeDeath
+        case 90:  Mask = Bit_LimitMoveSpeedWalk; break;             // LimitMoveSpeedWalk
+        case 91:  Mask = Bit_LimitMoveSpeedDash; break;             // LimitMoveSpeedDash
+        case 32:  Mask = Bit_EnterMovement;     break;              // EnterMovement
+        case 31:  Mask = Bit_ExitMovement;      break;              // ExitMovement
+        case 55:  Mask = Bit_Staggered;         break;              // StaggerFlag
+        default:  continue;
+        }
+
+        // 在事件帧范围内设置标志位（OR 累积到已有值）
+        for (int32 Frame = Evt.StartFrame; Frame <= Evt.EndFrame && Frame < 3000; ++Frame)
+        {
+            int32* Existing = OutFrameFlags.Find(Frame);
+            if (Existing)
+                *Existing |= static_cast<int32>(Mask);
+            else
+                OutFrameFlags.Add(Frame, static_cast<int32>(Mask));
         }
     }
 }
@@ -427,17 +504,28 @@ ESKJumpTableAction FSekiroTAEImporter::MapJumpTableToAction(int32 JumpTableID)
     switch (JumpTableID)
     {
     case 1:  return ESKJumpTableAction::AnimCancelStart_R1;
+    case 3:  return ESKJumpTableAction::SetTurnSpeed;
     case 5:  return ESKJumpTableAction::EnableParry;
     case 7:  return ESKJumpTableAction::DisableTurning;
     case 8:  return ESKJumpTableAction::FlagAsDodging;
     case 9:  return ESKJumpTableAction::AnimCancelStart_L1;
+    case 11: return ESKJumpTableAction::SwitchHKSLayer;
     case 12: return ESKJumpTableAction::InvokeDeath;
     case 19: return ESKJumpTableAction::DisableMapHit;
     case 21: return ESKJumpTableAction::AnimCancelStart_Guard;
     case 25: return ESKJumpTableAction::AnimCancelStart_Dodge;
+    case 26: return ESKJumpTableAction::GenericCancelStart;
     case 27: return ESKJumpTableAction::SetNoGravity;
+    case 28: return ESKJumpTableAction::SetMoveSpeedNormal;
     case 30: return ESKJumpTableAction::AnimCancelStart_Item;
+    case 31: return ESKJumpTableAction::ExitMovement;
+    case 32: return ESKJumpTableAction::EnterMovement;
     case 34: return ESKJumpTableAction::AnimCancelEnd_General;
+    case 50: return ESKJumpTableAction::ActionRestriction;
+    case 51: return ESKJumpTableAction::InvincibilityFrame;
+    case 55: return ESKJumpTableAction::StaggerFlag;
+    case 63: return ESKJumpTableAction::SpecialActionFlag;
+    case 65: return ESKJumpTableAction::LookAtTarget;
     case 87: return ESKJumpTableAction::InvokeAttackAction;
     case 89: return ESKJumpTableAction::DisableAllMovement;
     case 90: return ESKJumpTableAction::LimitMoveSpeedWalk;
@@ -453,6 +541,10 @@ ESKJumpTableAction FSekiroTAEImporter::MapJumpTableToAction(int32 JumpTableID)
     case 118: return ESKJumpTableAction::AnimCancelEnd_L2;
     case 119: return ESKJumpTableAction::EnableParry;
     case 121: return ESKJumpTableAction::AnimCancelEnd_General;
+    case 133: return ESKJumpTableAction::DisableSpecial;
+    case 134: return ESKJumpTableAction::DisableItem;
+    case 137: return ESKJumpTableAction::DisableParry;
+    case 154: return ESKJumpTableAction::ItemUseWindow;
     default:  return ESKJumpTableAction::None;
     }
 }

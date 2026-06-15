@@ -7,7 +7,6 @@
 #include "SKAnimInstance.generated.h"
 
 class ASKCharacter;
-struct FAnimNode_BlendSpacePlayer;
 
 UCLASS()
 class SEKIRO_API USKAnimInstance : public UAnimInstance
@@ -91,7 +90,4 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<USKMovementComponent> OwnerMovement;
-
-	// Locomotion BlendSpace 节点缓存（NativeInitializeAnimation 中初始化的裸指针）
-	FAnimNode_BlendSpacePlayer* CachedBlendSpacePlayer = nullptr;
 };

@@ -12,6 +12,8 @@ description: "根据需求文档编写技术方案，生成架构文档，并协
 | `/tech-design <需求名称>` | 为整个需求编写技术方案并派发 |
 | `/tech-design <需求名称> <子任务ID>` | 只针对某个子任务编写技术方案 |
 | `/tech-design <需求名称> --dispatch` | 跳过方案编写，直接进入任务派发 |
+| `/tech-design <需求名称> --verify <任务ID>` | 手动触发功能验证（编译已通过后） |
+| `/tech-design <需求名称> --auto-verify <任务ID>` | 自主验证模式，无需逐项确认，tech-design 全权负责 |
 | `/tech-design list` | 列出所有技术方案及对应需求状态 |
 
 ## 工作流
@@ -144,7 +146,16 @@ tech-design 1.1 → agent 完成 → tech-design 1.2 → agent 完成 → tech-d
 ```
 
 2. 用户确认后，调用 Agent 执行
-3. Agent 完成后，更新 breakdown 和 tech-design 文档状态（🔄 → ✅）
+3. Agent 完成后，先检查改动文件是否在允许范围内（参考「Agent 派发安全规则」）
+4. **自动调用 function-validator 验证编译**：
+   - 检查编译是否 0 错误通过
+   - 编译失败 → 分析错误日志，反馈对应 Agent 修复
+   - 编译通过 → 更新 breakdown 和 tech-design 文档状态（🔄 → ✅）
+   - **编译通过后提醒用户**：输出「编译通过。`--verify` 手动验证 / `--auto-verify` 自主验证」
+5. **功能性验证由用户手动发起**：
+   - `--verify`：手动模式，复杂测试需确认方案后执行，用户全程掌控
+   - `--auto-verify`：自主模式，用户明确授权后，tech-design 全权负责方案生成、脚本委派、执行，无需逐项确认。用户随时可打断收回控制权
+   - 需要测试脚本时，tech-design 协调 script-agent 编写
 
 ## 操作规则
 
@@ -153,3 +164,35 @@ tech-design 1.1 → agent 完成 → tech-design 1.2 → agent 完成 → tech-d
 - Agent 完成后自动回写 breakdown 状态
 - 同一子任务可多次 `/tech-design` 调整方案并重新派发
 - 方案变更时记录到变更记录
+
+## Agent 派发安全规则
+
+### 派发时必须在 prompt 中明确
+
+每个 Agent 派发时必须附带以下约束，防止 Agent 越界修改：
+
+```
+## 文件边界
+- 只能修改 Source/Sekiro/ 下的文件
+- 禁止修改 Plugins/ 下的任何文件
+- 禁止修改 .Build.cs / .Target.cs / .uproject
+- 如需插件新接口，停止并反馈，由 plugin-programmer 先行实现
+```
+
+### Agent 完成后验证
+
+1. 用 `git diff --stat` 或 `git status` 检查 Agent 实际改动的文件列表
+2. 与 tech-design 中「涉及文件」清单对比
+3. 发现越界文件（Plugin 目录、构建文件）→ **立即 `git checkout` 逐文件回滚**，不接受该 Agent 输出
+4. 合法的意外改动（Agent 清理了无关代码）→ 记录到变更记录
+
+### Agent 改错时的回滚流程
+
+```
+git status                     → 列出所有改动文件
+git diff --stat                → 确认改动范围
+逐文件 git checkout -- <path>  → 回滚越界文件（不用目录级，避免误伤）
+保留合法文件 → 手动修复或重新派发
+```
+
+**禁止目录级 `git checkout -- <目录>/`**：会误伤该目录下之前的合法改动。始终逐文件回滚。

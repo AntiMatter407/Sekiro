@@ -2,8 +2,6 @@
 #include "Character/SKCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "KismetAnimationLibrary.h"
-#include "AnimNodes/AnimNode_BlendSpacePlayer.h"
-#include "Animation/AnimBlueprintGeneratedClass.h"
 
 int32 USKAnimInstance::GetActionPriority(FName Action)
 {
@@ -38,22 +36,6 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
 	Super::NativeUpdateAnimation(DeltaSeconds);
 
-	// 缓存 ABP 中的 BlendSpacePlayer 节点（驱动 Locomotion Speed 轴）
-	if (!CachedBlendSpacePlayer)
-	{
-		if (UAnimBlueprintGeneratedClass* AnimClass = Cast<UAnimBlueprintGeneratedClass>(GetClass()))
-		{
-			for (TFieldIterator<FStructProperty> It(AnimClass); It; ++It)
-			{
-				if (It->Struct == FAnimNode_BlendSpacePlayer::StaticStruct())
-				{
-					CachedBlendSpacePlayer = It->ContainerPtrToValuePtr<FAnimNode_BlendSpacePlayer>(this);
-					break;
-				}
-			}
-		}
-	}
-
 	if (!OwnerCharacter)
 	{
 		OwnerCharacter = Cast<ASKCharacter>(TryGetPawnOwner());
@@ -79,20 +61,6 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 
 	Speed = OwnerCharacter->GetVelocity().Size2D();
 	Angle = UKismetAnimationLibrary::CalculateDirection(OwnerCharacter->GetVelocity(), OwnerCharacter->GetActorRotation());
-
-	// 通过 UPROPERTY 反射写入 BlendSpace X 参数（X 为 private，不可直接访问）
-	if (CachedBlendSpacePlayer)
-	{
-		static FFloatProperty* XProp = nullptr;
-		if (!XProp)
-		{
-			XProp = CastField<FFloatProperty>(FAnimNode_BlendSpacePlayer::StaticStruct()->FindPropertyByName(TEXT("X")));
-		}
-		if (XProp)
-		{
-			XProp->SetPropertyValue_InContainer(CachedBlendSpacePlayer, Speed);
-		}
-	}
 
 	// Dodge state
 	bIsDodging = OwnerCharacter->bIsDodging;

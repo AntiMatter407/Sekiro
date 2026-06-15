@@ -31,6 +31,10 @@ private:
     static void ExtractCancelWindows(const TArray<FSKTAEEventIR>& Events,
         TArray<FSKCancelWindowIR>& OutWindows);
 
+    /// 从 JumpTable 事件提取帧级行为标志
+    static void ExtractFrameFlags(const TArray<FSKTAEEventIR>& Events,
+        TMap<int32, int32>& OutFrameFlags);
+
     /// 构建状态机过渡规则
     static void BuildTransitions(const TMap<int32, FSKAnimationLogicIR>& AnimLogicMap,
         FSKStateMachineIR& OutSM);

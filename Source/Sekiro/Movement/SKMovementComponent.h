@@ -7,11 +7,12 @@
 UENUM(BlueprintType)
 enum class ESKMovementTier : uint8
 {
-	Walk,
-	Jog,
-	Run,
-	Sprint,
-	Crouch
+	Idle,                                                           // 静止
+	Walk,                                                           // 步行
+	Jog,                                                            // 慢跑
+	Run,                                                            // 奔跑
+	Sprint,                                                         // 冲刺
+	Crouch                                                          // 蹲行
 };
 
 UCLASS()

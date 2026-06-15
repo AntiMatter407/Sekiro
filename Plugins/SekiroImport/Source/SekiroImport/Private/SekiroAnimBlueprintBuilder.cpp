@@ -1270,7 +1270,9 @@ USKAnimationLogicData* FSekiroAnimBlueprintBuilder::BuildDataAsset(
             Cfg.EndFrame = Hit.EndFrame;
             Cfg.BehaviorJudgeID = Hit.BehaviorJudgeID;
             Cfg.AttackType = Hit.AttackType;
-            DataAsset->AttackHitboxConfigs.Add(Pair.Key, Cfg);
+            FSKAttackHitboxList HitboxList;
+            HitboxList.Hitboxes.Add(Cfg);
+            DataAsset->AttackHitboxConfigs.Add(Pair.Key, HitboxList);
         }
 
         // SpEffect（全部）

@@ -34,6 +34,7 @@
 | gameplay-programmer | 游戏机制（战斗/移动/角色） | `Source/Sekiro/` |
 | script-agent | 管线脚本（编译/导入/编排） | `Script/` |
 | review-agent | 代码审查（被 `/review` 调用） | — |
+| function-validator | 功能验证（编译/AIBridge/脚本），不写代码 | — |
 
 ## 工作流
 

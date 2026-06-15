@@ -22,13 +22,49 @@ bool USKAnimationLogicData::CanCancelTo(int32 AnimID, float CurrentTime,
 bool USKAnimationLogicData::GetAttackHitboxAtFrame(int32 AnimID, int32 Frame,
 	FSKAttackHitboxConfig& OutConfig) const
 {
-	const FSKAttackHitboxConfig* Cfg = AttackHitboxConfigs.Find(AnimID);
-	if (!Cfg) return false;
+	const FSKAttackHitboxList* List = AttackHitboxConfigs.Find(AnimID);
+	if (!List) return false;
 
-	if (Frame >= Cfg->StartFrame && Frame <= Cfg->EndFrame)
+	for (const FSKAttackHitboxConfig& Cfg : List->Hitboxes)
 	{
-		OutConfig = *Cfg;
-		return true;
+		if (Frame >= Cfg.StartFrame && Frame <= Cfg.EndFrame)
+		{
+			OutConfig = Cfg;
+			return true;
+		}
 	}
 	return false;
+}
+
+bool USKAnimationLogicData::GetFrameFlags(int32 AnimID, int32 Frame,
+	FSKFrameFlags& OutFlags) const
+{
+	const FSKAnimFrameData* FrameData = AnimFrameFlags.Find(AnimID);
+	if (!FrameData || FrameData->KeyFrames.Num() == 0)
+	{
+		OutFlags = FSKFrameFlags();
+		return false;
+	}
+
+	// 二分查找：找到 <= Frame 的最大关键帧
+	int32 Index = -1;
+	for (int32 i = 0; i < FrameData->KeyFrames.Num(); ++i)
+	{
+		if (FrameData->KeyFrames[i] <= Frame)
+		{
+			Index = i;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	if (Index < 0)
+	{
+		return false;
+	}
+
+	OutFlags = FrameData->Flags[Index];
+	return true;
 }

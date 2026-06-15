@@ -59,6 +59,23 @@ enum class ESKJumpTableAction : uint8
     EnableParry,              // JumpTableID 119: 弹刀模式
     InvokeAttackAction,       // JumpTableID 87
     SetHeightCorrection,      // JumpTableID 113
+
+    // ── 扩展行为标志 ──────────────────────────────────────────
+    SetTurnSpeed,             // JumpTableID 3: 转向速度设置
+    SwitchHKSLayer,           // JumpTableID 11: HKS动画层切换
+    GenericCancelStart,       // JumpTableID 26: 通用取消窗口（不限定武器类型）
+    SetMoveSpeedNormal,       // JumpTableID 28: 恢复正常移速
+    ExitMovement,             // JumpTableID 31: 退出移动/锁定步伐
+    EnterMovement,            // JumpTableID 32: 进入移动状态
+    ActionRestriction,        // JumpTableID 50: 动作限制（禁移动+转向）
+    InvincibilityFrame,       // JumpTableID 51: 无敌帧
+    StaggerFlag,              // JumpTableID 55: 硬直标志
+    SpecialActionFlag,        // JumpTableID 63: 特殊动作标志
+    LookAtTarget,             // JumpTableID 65: 追踪目标
+    DisableSpecial,           // JumpTableID 133: 禁止义手/战技
+    DisableItem,              // JumpTableID 134: 禁止道具
+    DisableParry,             // JumpTableID 137: 禁止弹刀
+    ItemUseWindow,            // JumpTableID 154: 道具使用开启窗口
 };
 
 // ── ABIR: 单个 TAE 事件 ───────────────────────────────────────
@@ -165,6 +182,9 @@ struct FSKAnimationLogicIR
     UPROPERTY() int32 TotalFrames = 0;                     // 从最大事件帧推断
     UPROPERTY() FString InferredCategory;                  // "Locomotion", "Attack", "Deflect", "Dodge", "Hit", "Death", etc.
     UPROPERTY() int32 ComboNextAnimID = -1;                // 连段下一动画ID
+
+    UPROPERTY()
+    TMap<int32, int32> JumpTableFlags;                    // Frame → bitmask 逐帧JumpTable行为标志
 };
 
 // ── ABIR: 状态机过渡规则 ──────────────────────────────────────
