@@ -1,7 +1,25 @@
-﻿$Root = 'D:\Sekiro'
-$Pythonw = 'C:\Users\yanping.guo\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\pythonw.exe'
-$Python = 'C:\Users\yanping.guo\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-$ProxyScript = Join-Path $Root '.claude\proxy\proxy.py'
+﻿$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
+# Locate python: prefer system PATH lookup, then probe known cache directories
+$Python = (Get-Command 'python3' -ErrorAction SilentlyContinue).Source
+if (-not $Python) {
+    $Python = (Get-Command 'python' -ErrorAction SilentlyContinue).Source
+}
+if (-not $Python) {
+    $CacheDirs = @(
+        "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python"
+        "$env:LOCALAPPDATA\Programs\Python"
+    )
+    foreach ($dir in $CacheDirs) {
+        foreach ($exe in @('pythonw.exe', 'python.exe')) {
+            $candidate = Join-Path $dir $exe
+            if (Test-Path $candidate) { $Python = $candidate; break }
+        }
+        if ($Python) { break }
+    }
+}
+
+$ProxyScript = Join-Path $PSScriptRoot 'proxy.py'
 $Port = 4000
 $HealthUrl = "http://127.0.0.1:$Port/health"
 
@@ -33,8 +51,8 @@ for ($i = 0; $i -lt 10; $i++) {
     Start-Sleep -Milliseconds 300
 }
 
-$Launcher = if (Test-Path $Pythonw) { $Pythonw } else { $Python }
-if (-not (Test-Path $Launcher)) {
+$Launcher = $Python
+if (-not $Launcher) {
     Write-Host "ERROR: Python launcher not found: $Launcher"
     exit 1
 }
@@ -53,5 +71,5 @@ for ($i = 0; $i -lt 20; $i++) {
     }
 }
 
-Write-Host "ERROR: Proxy failed to start. Check D:\Sekiro\.claude\proxy\proxy.log"
+Write-Host "ERROR: Proxy failed to start. Check $PSScriptRoot\proxy.log"
 exit 1

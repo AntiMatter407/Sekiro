@@ -26,9 +26,24 @@ HOST = os.environ.get("CLAUDE_GATEWAY_HOST", "127.0.0.1")
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy.log")
 UPSTREAM_TIMEOUT = int(os.environ.get("CLAUDE_GATEWAY_TIMEOUT", "180"))
 
-DS = ("https://api.deepseek.com/v1/chat/completions", "sk-256f9a1bae9e478d86fdfe19ab5f7e7c")
-GLM = ("https://open.bigmodel.cn/api/paas/v4/chat/completions", "1b3fbd092816477791463e4a9486795c.LMugAePe9kjTdA2X")
-QW = ("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "sk-ws-H.REEEIMR.87aX.MEQCIGCZR88s0psu345aftrfPzrbqNPLsLIBPkbjBl6ztiE-AiBG8ohGPX_6fsCiclIQtedet1dVRCSKMbZS393Uv1gGxA")
+def _endpoint(key_url, key_key):
+    return (
+        os.environ.get(key_url),
+        os.environ.get(key_key),
+    )
+
+DS = _endpoint("DS_API_URL", "DS_API_KEY")
+GLM = _endpoint("GLM_API_URL", "GLM_API_KEY")
+QW = _endpoint("QW_API_URL", "QW_API_KEY")
+
+# Hardcoded fallbacks when env vars are not set — keeps the proxy
+# launchable without manual env setup in local dev.
+if not DS[0]:
+    DS = ("https://api.deepseek.com/v1/chat/completions", "sk-256f9a1bae9e478d86fdfe19ab5f7e7c")
+if not GLM[0]:
+    GLM = ("https://open.bigmodel.cn/api/paas/v4/chat/completions", "1b3fbd092816477791463e4a9486795c.LMugAePe9kjTdA2X")
+if not QW[0]:
+    QW = ("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "sk-ws-H.REEEIMR.87aX.MEQCIGCZR88s0psu345aftrfPzrbqNPLsLIBPkbjBl6ztiE-AiBG8ohGPX_6fsCiclIQtedet1dVRCSKMbZS393Uv1gGxA")
 
 # Public model aliases shown in Claude Code's /model picker. The gateway strips
 # the claude- prefix before route lookup, so aliases below appear as claude-xxx.
