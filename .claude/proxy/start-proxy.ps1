@@ -1,19 +1,43 @@
 ﻿$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 # Locate python: prefer system PATH lookup, then probe known cache directories
-$Python = (Get-Command 'python3' -ErrorAction SilentlyContinue).Source
-if (-not $Python) {
-    $Python = (Get-Command 'python' -ErrorAction SilentlyContinue).Source
+function Test-PythonWorks($exePath) {
+    try {
+        $result = & $exePath --version 2>&1
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
 }
+
+$Python = $null
+# 1) Try python3 / python from PATH (but validate — WindowsApps stub fails silently)
+foreach ($cmdName in @('python3', 'python')) {
+    $candidate = (Get-Command $cmdName -ErrorAction SilentlyContinue).Source
+    if ($candidate -and (Test-PythonWorks $candidate)) {
+        $Python = $candidate
+        break
+    }
+}
+# 2) Fall back to common Windows Python install directories (machine-agnostic)
 if (-not $Python) {
-    $CacheDirs = @(
-        "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python"
+    $SearchDirs = @(
         "$env:LOCALAPPDATA\Programs\Python"
+        "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python"
     )
-    foreach ($dir in $CacheDirs) {
-        foreach ($exe in @('pythonw.exe', 'python.exe')) {
+    # Also cover C:\Python3* and C:\Program Files\Python3* (Python.org installer defaults)
+    foreach ($root in @("C:\", "C:\Program Files")) {
+        foreach ($d in (Get-ChildItem $root -Directory -Filter "Python3*" -ErrorAction SilentlyContinue | Sort-Object Name -Descending)) {
+            $SearchDirs += $d.FullName
+        }
+    }
+    foreach ($dir in $SearchDirs) {
+        foreach ($exe in @('python.exe', 'pythonw.exe', 'python3.exe')) {
             $candidate = Join-Path $dir $exe
-            if (Test-Path $candidate) { $Python = $candidate; break }
+            if ((Test-Path $candidate) -and (Test-PythonWorks $candidate)) {
+                $Python = $candidate
+                break
+            }
         }
         if ($Python) { break }
     }

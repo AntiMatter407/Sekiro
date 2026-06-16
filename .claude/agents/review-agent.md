@@ -48,7 +48,7 @@ maxTurns: 20
 
 ### 4. 需求符合性（不可自行修复）
 
-对比 `Docs/tech-designs/` 和 `Docs/breakdown/` 中的对应文档：
+对比 `.claude/docs/tech-designs/` 和 `.claude/docs/breakdown/` 中的对应文档：
 
 - [ ] 实现是否匹配技术方案中的 API 设计？
 - [ ] 涉及文件是否在方案规划的范围内？

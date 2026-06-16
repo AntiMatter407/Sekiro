@@ -291,3 +291,363 @@
 [17:37:13]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
 [17:37:14] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
 [17:37:15]     -> 200 stream
+[23:49:46] Starting Claude Code gateway on http://127.0.0.1:4000
+[23:49:46] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[23:49:52] >>> GET /health
+[23:49:52] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:49:56] >>> GET /v1/models
+[23:49:56] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[23:49:56]     -> 200 models=11
+[23:49:57] >>> POST /v1/messages/count_tokens
+[23:49:57] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[23:49:57]     model=deepseek-v4-pro count_tokens=7
+[23:50:02] >>> POST /v1/messages
+[23:50:02]     bad request: 'utf-8' codec can't decode byte 0xd3 in position 110: invalid continuation byte
+[23:50:02] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 400 -
+[23:50:19] >>> POST /v1/messages
+[23:50:19]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=False
+[23:50:20] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[23:50:20]     -> 200
+[23:50:28] >>> POST /v1/messages
+[23:50:28]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[23:50:28] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[23:50:29]     stream error: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+[23:50:29] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 502 -
+[23:52:17] >>> GET /health
+[23:52:17] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:52:34] >>> GET /health
+[23:52:34] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:52:38] >>> GET /health
+[23:52:38] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:56:10] Starting Claude Code gateway on http://127.0.0.1:4000
+[23:56:10] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[23:56:11] >>> GET /health
+[23:56:11] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:56:15] >>> GET /health
+[23:56:15] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:56:15] >>> POST /v1/messages
+[23:56:15]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=False
+[23:56:16] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[23:56:16]     -> 200
+[23:57:32] >>> GET /health
+[23:57:32] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:59:53] >>> GET /health
+[23:59:53] GET /health -> "GET /health HTTP/1.1" 200 -
+[23:59:53] >>> GET /v1/models
+[23:59:53] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[23:59:53]     -> 200 models=11
+[23:59:53] >>> POST /v1/messages/count_tokens
+[23:59:53] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[23:59:53]     model=deepseek-v4-pro count_tokens=6
+[23:59:53] >>> POST /v1/messages
+[23:59:53]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=False
+[23:59:54] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[23:59:54]     -> 200
+[00:01:06] >>> GET /health
+[00:01:06] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:02:04] >>> GET /v1/models/claude-deepseek-v4-pro
+[00:02:04] GET /v1/models/claude-deepseek-v4-pro -> "GET /v1/models/claude-deepseek-v4-pro HTTP/1.1" 404 -
+[00:02:04] >>> GET /v1/models/claude-deepseek-v4-flash
+[00:02:04] GET /v1/models/claude-deepseek-v4-flash -> "GET /v1/models/claude-deepseek-v4-flash HTTP/1.1" 404 -
+[00:04:05] >>> GET /health
+[00:04:05] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:04:31] Starting Claude Code gateway on http://127.0.0.1:4000
+[00:04:31] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[00:04:32] >>> GET /health
+[00:04:32] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:04:35] >>> GET /v1/models/claude-deepseek-v4-pro
+[00:04:35] GET /v1/models/claude-deepseek-v4-pro -> "GET /v1/models/claude-deepseek-v4-pro HTTP/1.1" 200 -
+[00:04:35]     -> 200 model=deepseek-v4-pro
+[00:04:35] >>> GET /v1/models/claude-deepseek-v4-flash
+[00:04:35] GET /v1/models/claude-deepseek-v4-flash -> "GET /v1/models/claude-deepseek-v4-flash HTTP/1.1" 200 -
+[00:04:35]     -> 200 model=deepseek-v4-flash
+[00:04:35] >>> GET /v1/models/claude-nonexistent
+[00:04:35] GET /v1/models/claude-nonexistent -> "GET /v1/models/claude-nonexistent HTTP/1.1" 404 -
+[00:04:35]     -> 404 model=nonexistent
+[00:07:32] >>> GET /health
+[00:07:32] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:08:01] Starting Claude Code gateway on http://127.0.0.1:4000
+[00:08:01] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[00:08:01] >>> GET /health
+[00:08:01] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:09:33] >>> GET /health
+[00:09:33] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:12:21] >>> GET /v1/models
+[00:12:21] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[00:12:21]     -> 200 models=11
+[00:13:58] >>> GET /health
+[00:13:58] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:14:03] >>> POST /v1/messages
+[00:14:03]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=False
+[00:14:04] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[00:14:04]     -> 200
+[00:14:04] >>> POST /v1/messages
+[00:14:04]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=False
+[00:14:05] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[00:14:05]     -> 200
+[00:15:08] >>> GET /health
+[00:15:08] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:21:23] >>> GET /health
+[00:21:23] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:25:48] >>> POST /v1/messages
+[00:25:48] >>> POST /v1/messages
+[00:25:48]     model=glm-4-flash upstream_model=glm-4-flash stream=True
+[00:25:48]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:25:49] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:25:49] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:25:50]     -> 200 stream
+[00:25:51]     -> 200 stream
+[00:25:52] >>> POST /v1/messages
+[00:25:52]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:25:53] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:25:55]     -> 200 stream
+[00:26:24] >>> POST /v1/messages
+[00:26:24]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:26:25] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:26:26]     -> 200 stream
+[00:26:27] >>> POST /v1/messages
+[00:26:27]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:26:27] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:26:28]     -> 200 stream
+[00:26:29] >>> POST /v1/messages
+[00:26:29]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:26:29] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:26:32]     -> 200 stream
+[00:26:32] >>> POST /v1/messages
+[00:26:32]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:26:33] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:26:35]     -> 200 stream
+[00:26:35] >>> POST /v1/messages
+[00:26:35]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:26:36] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:26:37]     -> 200 stream
+[00:27:15] >>> POST /v1/messages
+[00:27:15]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:27:15] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:27:18]     -> 200 stream
+[00:27:31] >>> POST /v1/messages
+[00:27:31]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:27:31] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:27:34]     -> 200 stream
+[00:27:34] >>> POST /v1/messages
+[00:27:34]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[00:27:34] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:27:36]     -> 200 stream
+[00:27:46] >>> GET /health
+[00:27:46] GET /health -> "GET /health HTTP/1.1" 200 -
+[00:28:43] >>> POST /v1/messages
+[00:28:43]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:28:43] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:28:45]     -> 200 stream
+[00:29:30] >>> POST /v1/messages
+[00:29:30] >>> POST /v1/messages
+[00:29:30]     model=glm-4-flash upstream_model=glm-4-flash stream=True
+[00:29:30]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:30] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:30] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:31]     -> 200 stream
+[00:29:31]     -> 200 stream
+[00:29:32] >>> POST /v1/messages
+[00:29:32]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:32] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:33]     -> 200 stream
+[00:29:34] >>> POST /v1/messages
+[00:29:34]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:34] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:37]     -> 200 stream
+[00:29:46] >>> POST /v1/messages
+[00:29:46]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:46] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:48]     -> 200 stream
+[00:29:48] >>> POST /v1/messages
+[00:29:48]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:49] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:50]     -> 200 stream
+[00:29:50] >>> POST /v1/messages
+[00:29:50]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:51] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:53]     -> 200 stream
+[00:29:53] >>> POST /v1/messages
+[00:29:53]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:29:53] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:29:56]     -> 200 stream
+[00:31:34] >>> POST /v1/messages
+[00:31:34]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:31:34] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:31:35]     -> 200 stream
+[00:31:36] >>> POST /v1/messages
+[00:31:36]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:31:36] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:31:38]     -> 200 stream
+[00:31:39] >>> POST /v1/messages
+[00:31:39]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:31:39] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:31:44]     -> 200 stream
+[00:33:09] >>> POST /v1/messages
+[00:33:09]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:33:10] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:33:16]     -> 200 stream
+[00:38:24] >>> POST /v1/messages
+[00:38:24]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:38:24] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:38:26]     -> 200 stream
+[00:38:26] >>> POST /v1/messages
+[00:38:26]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:38:26] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:38:30]     -> 200 stream
+[00:38:43] >>> POST /v1/messages
+[00:38:43]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:38:44] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:38:45]     -> 200 stream
+[00:39:07] >>> POST /v1/messages
+[00:39:07]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:39:07] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:39:10]     -> 200 stream
+[00:39:20] >>> POST /v1/messages
+[00:39:20]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:39:20] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:39:21]     -> 200 stream
+[00:41:28] >>> POST /v1/messages
+[00:41:28]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:41:28] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:41:31]     -> 200 stream
+[00:41:32] >>> POST /v1/messages
+[00:41:32]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:41:32] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:41:34]     -> 200 stream
+[00:41:34] >>> POST /v1/messages
+[00:41:34]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:41:35] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:41:36]     -> 200 stream
+[00:41:36] >>> POST /v1/messages
+[00:41:36]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:41:37] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:41:43]     -> 200 stream
+[00:42:55] >>> POST /v1/messages
+[00:42:55]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:42:56] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:42:58]     -> 200 stream
+[00:42:59] >>> POST /v1/messages
+[00:42:59]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:42:59] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:01]     -> 200 stream
+[00:43:02] >>> POST /v1/messages
+[00:43:02]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:02] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:04]     -> 200 stream
+[00:43:04] >>> POST /v1/messages
+[00:43:04]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:05] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:05]     -> 200 stream
+[00:43:06] >>> POST /v1/messages
+[00:43:06]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:06] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:07]     -> 200 stream
+[00:43:08] >>> POST /v1/messages
+[00:43:08]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:09] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:10]     -> 200 stream
+[00:43:11] >>> POST /v1/messages
+[00:43:11]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:12] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:13]     -> 200 stream
+[00:43:26] >>> POST /v1/messages
+[00:43:26]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:26] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:27]     -> 200 stream
+[00:43:41] >>> POST /v1/messages
+[00:43:41]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:41] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:43]     -> 200 stream
+[00:43:43] >>> POST /v1/messages
+[00:43:43]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:43:44] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:43:45]     -> 200 stream
+[00:44:08] >>> POST /v1/messages
+[00:44:08]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:44:08] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:44:11]     -> 200 stream
+[00:44:29] >>> POST /v1/messages
+[00:44:29]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:44:29] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:44:31]     -> 200 stream
+[00:44:31] >>> POST /v1/messages
+[00:44:31]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:44:31] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:44:32]     -> 200 stream
+[00:44:33] >>> POST /v1/messages
+[00:44:33]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:44:33] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:44:34]     -> 200 stream
+[00:44:51] >>> POST /v1/messages
+[00:44:51]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:44:52] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:44:53]     -> 200 stream
+[00:45:13] >>> POST /v1/messages
+[00:45:13]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:45:13] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:45:14]     -> 200 stream
+[00:45:15] >>> POST /v1/messages
+[00:45:15]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:45:15] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:45:17]     -> 200 stream
+[00:45:56] >>> POST /v1/messages
+[00:45:56]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:45:56] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:46:00]     -> 200 stream
+[00:46:22] >>> POST /v1/messages
+[00:46:22]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:46:23] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:46:24]     -> 200 stream
+[00:46:24] >>> POST /v1/messages
+[00:46:24]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:46:25] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:46:26]     -> 200 stream
+[00:46:43] >>> POST /v1/messages
+[00:46:43]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:46:43] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:46:44]     -> 200 stream
+[00:46:44] >>> POST /v1/messages
+[00:46:44]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:46:45] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:46:46]     -> 200 stream
+[00:46:58] >>> POST /v1/messages
+[00:46:58]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:46:58] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:00]     -> 200 stream
+[00:47:00] >>> POST /v1/messages
+[00:47:00]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:00] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:02]     -> 200 stream
+[00:47:12] >>> POST /v1/messages
+[00:47:12]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:13] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:14]     -> 200 stream
+[00:47:14] >>> POST /v1/messages
+[00:47:14]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:15] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:17]     -> 200 stream
+[00:47:30] >>> POST /v1/messages
+[00:47:30]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:30] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:32]     -> 200 stream
+[00:47:32] >>> POST /v1/messages
+[00:47:32]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:32] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:33]     -> 200 stream
+[00:47:43] >>> POST /v1/messages
+[00:47:43]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:43] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:45]     -> 200 stream
+[00:47:45] >>> POST /v1/messages
+[00:47:45]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:45] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:47]     -> 200 stream
+[00:47:47] >>> POST /v1/messages
+[00:47:47]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:48] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:51]     -> 200 stream
+[00:47:52] >>> POST /v1/messages
+[00:47:52]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[00:47:52] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[00:47:53]     -> 200 stream

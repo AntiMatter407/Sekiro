@@ -56,7 +56,7 @@ static void LoadMesh(const FString& AssetPath, /* out */ UStaticMesh*& OutMesh);
 tech-design 派发接口需求
         │
         ▼
-  1. 读取技术方案文档（Docs/tech-designs/）
+  1. 读取技术方案文档（`.claude/docs/tech-designs/`）
   2. 确认每个接口的签名和职责
   3. 检查是否有违规风险（引用项目代码、硬编码）
         │

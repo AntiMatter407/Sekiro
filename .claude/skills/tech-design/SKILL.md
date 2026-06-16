@@ -19,7 +19,7 @@ description: "根据需求文档编写技术方案，生成架构文档，并协
 ## 工作流
 
 ```
-Docs/breakdown/<需求>.md
+.claude/docs/breakdown/<需求>.md
         │
         ├── /tech-design <需求>            → 完整技术方案 + 全部派发
         │
@@ -28,7 +28,7 @@ Docs/breakdown/<需求>.md
                 ▼
           1. 读取需求文档，提取目标子任务
           2. 探索相关代码
-          3. 编写子任务技术方案 → Docs/tech-designs/<需求>-<子任务ID>.md
+          3. 编写子任务技术方案 → .claude/docs/tech-designs/<需求>-<子任务ID>.md
           4. 确认 → 派发对应 Agent → 完成该子任务
           5. 完成后更新 breakdown 文档该任务状态
 ```
@@ -43,14 +43,14 @@ tech-design 1.1 → agent 完成 → tech-design 1.2 → agent 完成 → tech-d
 
 ### 完整需求方案（`/tech-design <需求>`）
 
-新建方案时，在 `Docs/tech-designs/<slug>.md` 创建：
+新建方案时，在 `.claude/docs/tech-designs/<slug>.md` 创建：
 
 ```markdown
 # [需求名称] — 技术方案
 
 | 需求文档 | 状态 | 创建 | 更新 |
 |-----------|------|------|------|
-| [需求名称](../breakdown/<slug>.md) | 🟡 设计中 | YYYY-MM-DD | YYYY-MM-DD |
+| [需求名称](../../../.claude/docs/breakdown/<slug>.md) | 🟡 设计中 | YYYY-MM-DD | YYYY-MM-DD |
 
 ## 架构设计
 （类图、模块划分、数据流）
@@ -85,14 +85,14 @@ tech-design 1.1 → agent 完成 → tech-design 1.2 → agent 完成 → tech-d
 
 ### 子任务方案（`/tech-design <需求> <子任务ID>`）
 
-在 `Docs/tech-designs/<需求>-<子任务ID>.md` 创建轻量方案：
+在 `.claude/docs/tech-designs/<需求>-<子任务ID>.md` 创建轻量方案：
 
 ```markdown
 # [需求名称] / [子任务ID] — 技术方案
 
 | 需求文档 | 子任务 | 状态 | 创建 |
 |-----------|--------|------|------|
-| [需求](../breakdown/<slug>.md) | 1.1 | 🔄 进行中 | YYYY-MM-DD |
+| [需求](../../../.claude/docs/breakdown/<slug>.md) | 1.1 | 🔄 进行中 | YYYY-MM-DD |
 
 ## 任务描述
 （从 breakdown 摘取的任务内容）
@@ -141,7 +141,7 @@ tech-design 遇到复杂问题
       │
       ▼
   tech-design 将方案文档作为子任务的技术方案
-      → 写入 Docs/tech-designs/<需求>-<子任务ID>.md
+      → 写入 .claude/docs/tech-designs/<需求>-<子任务ID>.md
       → 按正常流程派发 Agent 实现
 ```
 
@@ -159,7 +159,7 @@ tech-design 遇到复杂问题
 1. AI 读取 breakdown 文档，提取目标子任务
 2. 在对话中输出方案草稿（聚焦该子任务的实现方案、涉及文件、接口设计）
 3. 用户可以调整方案、修改文件范围
-4. 用户确认后，AI 写入 `Docs/tech-designs/<需求>-<子任务ID>.md`
+4. 用户确认后，AI 写入 `.claude/docs/tech-designs/<需求>-<子任务ID>.md`
 5. 回写 breakdown 文档，标记该任务 🔄 进行中
 
 ### Agent 派发确认
@@ -169,7 +169,7 @@ tech-design 遇到复杂问题
 ### gameplay-programmer
 - 子任务：1.1 实现 XXX
 - 涉及文件：Source/Sekiro/Combat/SKCombatComp.h, SKCombatComp.cpp
-- 输入：Docs/tech-designs/战斗系统-1.1.md
+- 输入：.claude/docs/tech-designs/战斗系统-1.1.md
 - 依赖：无
 ```
 

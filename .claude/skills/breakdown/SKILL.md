@@ -10,14 +10,14 @@ description: "需求拆分与追踪工具。将需求智能拆分为可执行的
 | 命令 | 作用 |
 |------|------|
 | `/breakdown <需求描述>` | 创建新需求文档，智能拆分并输出任务树 |
-| `/breakdown list` | 列出 `Docs/breakdown/` 中所有需求及状态 |
+| `/breakdown list` | 列出 `.claude/docs/breakdown/` 中所有需求及状态 |
 | `/breakdown <名称>` | 打开指定需求文档，恢复/继续/修改该需求 |
 
-`<名称>` 匹配 `Docs/breakdown/` 中的文件名（不含 `.md`），支持模糊匹配。
+`<名称>` 匹配 `.claude/docs/breakdown/` 中的文件名（不含 `.md`），支持模糊匹配。
 
 ## 文档模板
 
-新建需求时，在 `Docs/breakdown/<slug>.md` 创建：
+新建需求时，在 `.claude/docs/breakdown/<slug>.md` 创建：
 
 ```markdown
 # [需求名称]
@@ -57,7 +57,7 @@ description: "需求拆分与追踪工具。将需求智能拆分为可执行的
 
 1. AI 分析需求后，**先在对话中输出任务树草稿**
 2. 用户可以增删改任意任务、调整依赖、修改描述
-3. 用户确认（"OK / 写入 / 下一步"）后，AI 写入 `Docs/breakdown/<slug>.md`
+3. 用户确认（"OK / 写入 / 下一步"）后，AI 写入 `.claude/docs/breakdown/<slug>.md`
 4. 后续修改任务时，同样先展示变更 → 确认 → 再写入
 5. 递归拆分时，每层都需要确认
 
@@ -68,3 +68,25 @@ description: "需求拆分与追踪工具。将需求智能拆分为可执行的
 - **任务变更**：增删改任务时，在变更记录中注明
 - **完成不删除**：状态改为 🟢 已完成，文档保留
 - **继续旧需求**：通过 `/breakdown <名称>` 打开，可在原文档上修改、追加、重启
+
+## 执行规范
+
+### `/breakdown list` 固定步骤
+
+```
+1. Glob path=".claude/docs/breakdown" pattern="**/*.md"
+2. 遍历结果，用 Read 读取每个文件头几行提取状态
+3. 按格式输出
+```
+
+### `/breakdown <名称>` 固定步骤
+
+```
+1. Glob path=".claude/docs/breakdown" pattern="{名称}.md"
+   未命中时模糊匹配：Glob path=".claude/docs/breakdown" pattern="**/*.md"，找名称相似的文件
+2. Read 匹配文件，输出任务树和状态
+```
+
+### 写入路径
+
+所有 breakdown 文档统一写入 `.claude/docs/breakdown/`。

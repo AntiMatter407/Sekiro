@@ -2,7 +2,9 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:4000",
+    "ANTHROPIC_AUTH_TOKEN": "",
     "ANTHROPIC_API_KEY": "anything",
+    "ANTHROPIC_MODEL": "claude-deepseek-v4-pro",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-deepseek-v4-pro",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-qwen-plus",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-glm-4-flash",
@@ -21,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File D:/Sekiro/.claude/proxy/start-proxy.ps1"
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/proxy/start-proxy.ps1"
           }
         ]
       }

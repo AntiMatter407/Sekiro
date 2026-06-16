@@ -22,8 +22,8 @@
 
 | 技能 | 用途 |
 |------|------|
-| `/breakdown` | 需求拆分 → `Docs/breakdown/`，支持递归、追踪、修改 |
-| `/tech-design` | 技术方案 + Agent 派发 → `Docs/tech-designs/`，逐子任务推进 |
+| `/breakdown` | 需求拆分 → `.claude/docs/breakdown/`，支持递归、追踪、修改 |
+| `/tech-design` | 技术方案 + Agent 派发 → `.claude/docs/tech-designs/`，逐子任务推进 |
 | `/review` | 代码审查，风格问题自动修复，违规派发对应 Agent |
 
 ## Agent
@@ -39,8 +39,8 @@
 ## 工作流
 
 ```
-/breakdown <需求>          → Docs/breakdown/<需求>.md
-/tech-design <需求> <任务>  → Docs/tech-designs/<需求>-<任务>.md
+/breakdown <需求>          → .claude/docs/breakdown/<需求>.md
+/tech-design <需求> <任务>  → .claude/docs/tech-designs/<需求>-<任务>.md
   → Agent 执行
 /review <范围>              → 审查报告 + 修复
 ```
