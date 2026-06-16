@@ -2,7 +2,7 @@
 name: script-agent
 description: "脚本工程师。编写 Python/Shell 脚本，负责编译、导入、管线编排等编辑器端操作。"
 tools: Read, Glob, Grep, Write, Edit, Bash
-model: sonnet
+model: opus
 maxTurns: 20
 ---
 

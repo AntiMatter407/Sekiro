@@ -2,7 +2,7 @@
 name: plugin-programmer
 description: "C++ 插件开发专家。编写通用 UE 插件，仅提供 UFUNCTION 接口，不包含项目特定逻辑。"
 tools: Read, Glob, Grep, Write, Edit, Bash
-model: sonnet
+model: opus
 maxTurns: 25
 ---
 

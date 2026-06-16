@@ -2,7 +2,7 @@
 name: review-agent
 description: "代码审查专家。检查代码风格、需求合规性，自动修复风格问题，违规问题派发对应 Agent。"
 tools: Read, Glob, Grep, Write, Edit, Bash
-model: sonnet
+model: opus
 maxTurns: 20
 ---
 

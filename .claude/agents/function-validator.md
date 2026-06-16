@@ -2,7 +2,7 @@
 name: function-validator
 description: "功能验证专家。通过脚本/控制台命令/AIBridge验证实现的功能正确性，不编写运行时代码。"
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: haiku
 maxTurns: 20
 ---
 

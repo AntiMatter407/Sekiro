@@ -2,7 +2,7 @@
 name: gameplay-programmer
 description: "游戏性程序员。实现战斗、技能、移动等游戏机制，使用 C++ 或 Lua 编写项目 Source/ 下的代码。"
 tools: Read, Glob, Grep, Write, Edit, Bash
-model: sonnet
+model: opus
 maxTurns: 25
 ---
 

@@ -1,5 +1,32 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:4000",
+    "ANTHROPIC_API_KEY": "anything",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-deepseek-v4-pro",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-qwen-plus",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-glm-4-flash",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-qwen3-coder-plus",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION": "claude-deepseek-reasoner",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME": "DeepSeek Reasoner",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION2": "claude-qwen-max",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME2": "Qwen Max",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION3": "claude-glm-5.1",
+    "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME3": "GLM 5.1"
+  },
+  "model": "claude-deepseek-v4-pro",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File D:/Sekiro/.claude/proxy/start-proxy.ps1"
+          }
+        ]
+      }
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "bash 'statusline.sh'"
@@ -15,11 +42,11 @@
       "Edit",
       "Bash(*)",
       "WebFetch",
-      "Bash(git status)", 
-      "Bash(git diff *)",       
-      "Bash(git log *)",     
-      "Bash(git add *)",       
-      "Bash(git commit *)"     
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ],
     "ask": [
       "Bash(rm -rf *)",
@@ -28,8 +55,8 @@
       "Edit(F:/UnrealEngine-5.2/**)",
       "Write(D:/Program Files/Epic Games/UE_5.2/**)",
       "Edit(D:/Program Files/Epic Games/UE_5.2/**)",
-      "Bash(git push *)",     
-      "Bash(git reset *)"      
+      "Bash(git push *)",
+      "Bash(git reset *)"
     ],
     "deny": [
       "Read(./.env*)",

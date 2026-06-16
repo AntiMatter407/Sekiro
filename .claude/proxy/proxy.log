@@ -1,0 +1,293 @@
+
+[15:02:20] Starting proxy on http://localhost:4000
+[15:02:20] Models: deepseek-v4-pro, deepseek-v4-flash, glm-5.1, glm-4-plus, glm-4-flash, qwen-max, qwen-plus, qwen-flash, qwen3-coder-plus
+[15:02:22] >>> GET /v1/models
+[15:02:22] GET /v1/models → GET /v1/models HTTP/1.1 200
+[15:02:22]     ← 200 (9 models)
+[15:03:01] Starting proxy on http://localhost:4000
+[15:03:01] Models: deepseek-v4-pro, deepseek-v4-flash, glm-5.1, glm-4-plus, glm-4-flash, qwen-max, qwen-plus, qwen-flash, qwen3-coder-plus
+[15:03:01] Starting proxy on http://localhost:4000
+[15:03:01] Models: deepseek-v4-pro, deepseek-v4-flash, glm-5.1, glm-4-plus, glm-4-flash, qwen-max, qwen-plus, qwen-flash, qwen3-coder-plus
+[15:05:39] Starting proxy on http://localhost:4000
+[15:05:39] Models: deepseek-v4-pro, deepseek-v4-flash, glm-5.1, glm-4-plus, glm-4-flash, qwen-max, qwen-plus, qwen-flash, qwen3-coder-plus
+[15:12:57] Starting proxy on http://localhost:4000
+[15:12:57] Models: deepseek-v4-pro, deepseek-v4-flash, glm-5.1, glm-4-plus, glm-4-flash, qwen-max, qwen-plus, qwen-flash, qwen3-coder-plus
+[15:19:08] >>> GET /v1/models
+[15:19:08] GET /v1/models → GET /v1/models HTTP/1.1 200
+[15:19:08]     ← 200 (9 models)
+[15:19:16] >>> POST /v1/messages
+[15:19:20] >>> POST /v1/messages
+[15:19:20]     model=claude-deepseek-v4-pro stream=False
+[15:19:20]     → https://api.deepseek.com/v1/chat/completions (model=deepseek-v4-pro)
+[15:19:22] POST /v1/messages → POST /v1/messages HTTP/1.1 200
+[15:19:22]     ← 200
+[15:25:33] Starting proxy on http://localhost:4000
+[15:25:33] Models: deepseek-v4-pro, deepseek-v4-flash, glm-5.1, glm-4-plus, glm-4-flash, qwen-max, qwen-plus, qwen-flash, qwen3-coder-plus
+[15:43:34] Starting Claude Code gateway on http://127.0.0.1:4000
+[15:43:34] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[15:43:35] >>> GET /health
+[15:43:35] GET /health -> "GET /health HTTP/1.1" 200 -
+[15:43:35] >>> GET /v1/models
+[15:43:35] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[15:43:35]     -> 200 models=11
+[15:43:36] >>> POST /v1/messages/count_tokens
+[15:43:36] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[15:43:36]     model=deepseek-chat count_tokens=15
+[15:52:05] Starting Claude Code gateway on http://127.0.0.1:4000
+[15:52:05] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[15:52:11] >>> GET /health
+[15:52:11] GET /health -> "GET /health HTTP/1.1" 200 -
+[15:52:11] >>> GET /v1/models
+[15:52:11] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[15:52:11]     -> 200 models=11
+[15:52:13] >>> POST /v1/messages/count_tokens
+[15:52:13] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[15:52:13]     model=deepseek-chat count_tokens=41
+[15:52:17] >>> POST /v1/messages
+[15:52:17]     model=deepseek-chat upstream_model=deepseek-chat stream=False
+[15:52:18] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[15:52:18]     -> 200
+[15:52:23] >>> POST /v1/messages
+[15:52:23]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[15:52:23] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[15:52:24]     -> 200 stream
+[15:54:28] >>> POST /v1/messages
+[15:54:28]     model=deepseek-chat upstream_model=deepseek-chat stream=False
+[15:54:29] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[15:54:29]     -> 200
+[15:55:12] >>> POST /v1/messages
+[15:55:12]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[15:55:12] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[15:55:13]     -> 200 stream
+[15:55:30] >>> POST /v1/messages
+[15:55:30]     model=deepseek-chat upstream_model=deepseek-chat stream=False
+[15:55:31] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[15:55:31]     -> 200
+[15:57:10] Starting Claude Code gateway on http://127.0.0.1:4000
+[15:57:10] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[15:57:38] Starting Claude Code gateway on http://127.0.0.1:4000
+[15:57:38] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[15:57:44] >>> GET /health
+[15:57:44] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:02:39] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:02:39] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:04:00] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:04:00] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:04:05] >>> GET /health
+[16:04:05] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:10:02] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:10:02] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:10:08] >>> GET /health
+[16:10:08] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:14:48] >>> GET /v1/models
+[16:14:48] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[16:14:48]     -> 200 models=1
+[16:14:48] >>> POST /v1/messages/count_tokens
+[16:14:48] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[16:14:48]     model=test-model count_tokens=12
+[16:14:48] >>> POST /v1/messages
+[16:14:48]     model=test-model upstream_model=fake-chat stream=False
+[16:14:48] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:14:48]     -> 200
+[16:14:48] >>> POST /v1/messages
+[16:14:48]     model=test-model upstream_model=fake-chat stream=False
+[16:14:48] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:14:48]     -> 200
+[16:14:48] >>> POST /v1/messages
+[16:14:48]     model=test-model upstream_model=fake-chat stream=True
+[16:14:48] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:14:48]     -> 200 stream
+[16:15:57] >>> GET /v1/models
+[16:15:58] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[16:15:58]     -> 200 models=1
+[16:15:58] >>> POST /v1/messages/count_tokens
+[16:15:58] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[16:15:58]     model=test-model count_tokens=12
+[16:15:58] >>> POST /v1/messages
+[16:15:58]     model=test-model upstream_model=fake-chat stream=False
+[16:15:58] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:15:58]     -> 200
+[16:15:58] >>> POST /v1/messages
+[16:15:58]     model=test-model upstream_model=fake-chat stream=False
+[16:15:58] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:15:58]     -> 200
+[16:15:58] >>> POST /v1/messages
+[16:15:58]     model=test-model upstream_model=fake-chat stream=True
+[16:15:58] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:15:58]     -> 200 stream
+[16:19:40] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:19:40] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:19:57] >>> GET /health
+[16:19:57] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:19:57] >>> GET /v1/models
+[16:19:57] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[16:19:57]     -> 200 models=11
+[16:37:47] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:37:47] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:39:20] >>> GET /health
+[16:39:20] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:39:33] >>> GET /v1/models
+[16:39:33] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[16:39:33]     -> 200 models=11
+[16:39:34] >>> POST /v1/messages/count_tokens
+[16:39:34] POST /v1/messages/count_tokens -> "POST /v1/messages/count_tokens HTTP/1.1" 200 -
+[16:39:34]     model=deepseek-v4-pro count_tokens=6
+[16:39:34] >>> POST /v1/messages
+[16:39:34]     model=deepseek-chat upstream_model=deepseek-chat stream=False
+[16:39:35] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:39:35]     -> 200
+[16:39:35] >>> POST /v1/messages
+[16:39:35]     model=deepseek-chat upstream_model=deepseek-chat stream=True
+[16:39:35] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 200 -
+[16:39:36]     stream error: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+[16:39:36] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 502 -
+[16:40:28] >>> GET /v1/models
+[16:40:28] GET /v1/models?limit=1000 -> "GET /v1/models?limit=1000 HTTP/1.1" 200 -
+[16:40:28]     -> 200 models=11
+[16:46:48] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:46:48] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:46:48] >>> GET /health
+[16:46:48] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:46:48] >>> GET /health
+[16:46:48] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:48:55] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:48:55] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:48:56] >>> GET /health
+[16:48:56] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:48:59] >>> GET /health
+[16:48:59] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:49:55] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:49:55] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:50:46] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:50:46] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:50:46] >>> GET /health
+[16:50:46] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:50:51] >>> GET /health
+[16:50:51] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:54:03] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:54:03] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:54:04] >>> GET /health
+[16:54:04] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:54:12] >>> GET /health
+[16:54:12] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:55:08] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:55:08] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:55:08] >>> GET /health
+[16:55:08] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:55:13] >>> POST /v1/messages
+[16:55:13]     model=deepseek-chat upstream_model=deepseek-chat stream=False
+[16:55:13]     upstream error: <urlopen error [WinError 10013] 以一种访问权限不允许的方式做了一个访问套接字的尝试。>
+[16:55:13] POST /v1/messages -> "POST /v1/messages HTTP/1.1" 502 -
+[16:58:43] Starting Claude Code gateway on http://127.0.0.1:4000
+[16:58:43] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[16:58:45] >>> GET /health
+[16:58:45] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:58:46] >>> GET /v1/models
+[16:58:46] GET /v1/models?limit=1000 -> "GET /v1/models?limit=1000 HTTP/1.1" 200 -
+[16:58:46]     -> 200 models=11
+[16:58:47] >>> GET /health
+[16:58:47] GET /health -> "GET /health HTTP/1.1" 200 -
+[16:59:00] >>> POST /v1/messages
+[16:59:00]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[16:59:00] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[16:59:03]     -> 200 stream
+[17:01:01] Starting Claude Code gateway on http://127.0.0.1:4000
+[17:01:01] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[17:01:09] >>> GET /health
+[17:01:09] GET /health -> "GET /health HTTP/1.1" 200 -
+[17:01:09] >>> GET /v1/models
+[17:01:09] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[17:01:09]     -> 200 models=11
+[17:03:05] Starting Claude Code gateway on http://127.0.0.1:4000
+[17:03:05] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[17:03:06] >>> GET /health
+[17:03:06] GET /health -> "GET /health HTTP/1.1" 200 -
+[17:03:14] >>> GET /health
+[17:03:14] GET /health -> "GET /health HTTP/1.1" 200 -
+[17:03:14] >>> GET /v1/models
+[17:03:14] GET /v1/models -> "GET /v1/models HTTP/1.1" 200 -
+[17:03:14]     -> 200 models=11
+[17:06:18] Starting Claude Code gateway on http://127.0.0.1:4000
+[17:06:18] Models: claude-deepseek-v4-pro, claude-deepseek-v4-flash, claude-deepseek-chat, claude-deepseek-reasoner, claude-glm-5.1, claude-glm-4-plus, claude-glm-4-flash, claude-qwen-max, claude-qwen-plus, claude-qwen-flash, claude-qwen3-coder-plus
+[17:06:18] >>> GET /health
+[17:06:18] GET /health -> "GET /health HTTP/1.1" 200 -
+[17:06:18] >>> POST /v1/messages
+[17:06:18]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:06:19] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:06:23]     -> 200 stream
+[17:06:29] >>> POST /v1/messages
+[17:06:29]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:06:29] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:06:33]     -> 200 stream
+[17:06:33] >>> GET /health
+[17:06:33] GET /health -> "GET /health HTTP/1.1" 200 -
+[17:06:33] >>> POST /v1/messages
+[17:06:33]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:06:34] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:06:35]     -> 200 stream
+[17:06:35] >>> POST /v1/messages
+[17:06:35]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:06:36] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:06:36]     -> 200 stream
+[17:06:53] >>> GET /health
+[17:06:53] GET /health -> "GET /health HTTP/1.1" 200 -
+[17:07:29] >>> POST /v1/messages
+[17:07:29]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:07:30] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:07:33]     -> 200 stream
+[17:07:34] >>> POST /v1/messages
+[17:07:34]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:07:35] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:07:36]     -> 200 stream
+[17:07:36] >>> POST /v1/messages
+[17:07:36]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:07:37] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:07:38]     -> 200 stream
+[17:07:38] >>> POST /v1/messages
+[17:07:38]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:07:39] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:07:40]     -> 200 stream
+[17:07:40] >>> POST /v1/messages
+[17:07:40]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:07:40] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:07:43]     -> 200 stream
+[17:16:51] >>> POST /v1/messages
+[17:16:51]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:16:52] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:16:58]     -> 200 stream
+[17:16:58] >>> POST /v1/messages
+[17:16:58]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:16:59] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:17:03]     -> 200 stream
+[17:27:17] >>> POST /v1/messages
+[17:27:17]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:27:18] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:27:19]     -> 200 stream
+[17:27:20] >>> POST /v1/messages
+[17:27:20]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:27:20] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:27:23]     -> 200 stream
+[17:27:46] >>> POST /v1/messages
+[17:27:46]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:27:47] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:27:48]     -> 200 stream
+[17:27:49] >>> POST /v1/messages
+[17:27:49]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:27:49] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:27:50]     -> 200 stream
+[17:27:51] >>> POST /v1/messages
+[17:27:51]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:27:51] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:27:57]     -> 200 stream
+[17:27:57] >>> POST /v1/messages
+[17:27:57]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:27:57] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:27:58]     -> 200 stream
+[17:37:09] >>> POST /v1/messages
+[17:37:09]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:37:09] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:37:10]     -> 200 stream
+[17:37:13] >>> POST /v1/messages
+[17:37:13]     model=deepseek-v4-pro upstream_model=deepseek-chat stream=True
+[17:37:14] POST /v1/messages?beta=true -> "POST /v1/messages?beta=true HTTP/1.1" 200 -
+[17:37:15]     -> 200 stream
