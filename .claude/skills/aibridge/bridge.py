@@ -921,36 +921,85 @@ async def cmd_editor_start(args):
 
 
 async def cmd_editor_stop(args):
-    """关闭 UE 编辑器并清理子进程和 cmd 窗口"""
-    import subprocess
+    """关闭本项目对应的 UE 编辑器，不影响其他项目的编辑器
 
-    processes = [
-        "UnrealEditor.exe",
-        "UE4Editor-Win64-DebugGame.exe",
+    通过进程命令行中的 .uproject 路径来区分是否为本项目。
+    """
+    import subprocess
+    import os
+    import re
+
+    project_uproject = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject")
+    )
+    project_name = os.path.splitext(os.path.basename(project_uproject))[0]  # "Sekiro"
+
+    # 要清理的子进程列表（按项目筛选）
+    child_processes = [
         "LiveCodingConsole.exe",
         "UnrealTraceServer.exe",
         "UnrealCEFSubProcess.exe",
     ]
 
+    def find_editor_pids():
+        """通过 wmic 查找属于本项目的 UE 编辑器 PID"""
+        pids = []
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where", "name='UnrealEditor.exe'", "get", "ProcessId,CommandLine", "/format:csv"],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.strip().split("\n")[1:]:
+                if not line.strip():
+                    continue
+                parts = line.split(",")
+                if len(parts) >= 3:
+                    cmdline = parts[1] if len(parts) >= 2 else ""
+                    pid_str = parts[2] if len(parts) >= 3 else parts[1]
+                    if project_uproject.replace("/", "\\") in cmdline or project_uproject.replace("\\", "/") in cmdline:
+                        try:
+                            pids.append(int(pid_str.strip()))
+                        except ValueError:
+                            pass
+        except Exception:
+            pass
+        return pids
+
     killed = []
-    for proc in processes:
+
+    # 只杀本项目对应的编辑器进程
+    editor_pids = find_editor_pids()
+    if editor_pids:
+        for pid in editor_pids:
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    killed.append(f"UnrealEditor.exe (PID:{pid})")
+            except Exception:
+                pass
+    else:
+        return {"status": "not_running", "message": f"未发现 {project_name} 项目对应的编辑器进程"}
+
+    # 清理编辑器启动的子进程（关编辑器后连带清理）
+    await asyncio.sleep(1)
+    for proc in child_processes:
         try:
             result = subprocess.run(
                 ["taskkill", "/F", "/IM", proc],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=5
             )
-            if "SUCCESS" in result.stdout or "成功" in result.stdout:
-                killed.append(proc)
-            elif result.returncode == 0:
+            if result.returncode == 0:
                 killed.append(proc)
         except Exception:
             pass
 
-    # 清理可能残留的 cmd 窗口（如果编辑器是从 cmd 启动的）
     await asyncio.sleep(1)
 
     if not killed:
-        return {"status": "not_running", "message": "编辑器未在运行"}
+        return {"status": "not_running", "message": f"未发现 {project_name} 项目对应的编辑器进程"}
 
     return {"status": "stopped", "message": f"已关闭: {', '.join(killed)}"}
 
@@ -1204,6 +1253,47 @@ async def cmd_pie(args):
     })
 
 
+async def cmd_input_simulate(args):
+    """input.simulate — 在 PIE 运行时模拟玩家输入"""
+    if not args:
+        return {"error": "用法: input_simulate <action> [--x <value>] [--y <value>] [--hold <seconds>] [--delay <seconds>]"}
+
+    action = args[0]
+    valid_actions = ("attack", "attack_release", "guard", "guard_release", "dodge", "dodge_release",
+                     "jump", "jump_release", "interact", "use_item", "healing_gourd", "grapple",
+                     "prosthetic", "lock_on", "crouch", "move", "look", "cycle_item_next",
+                     "cycle_item_prev", "pause", "menu")
+
+    if action not in valid_actions:
+        return {"error": f"未知 action: {action}，支持: {', '.join(valid_actions)}"}
+
+    arguments = {"action": action}
+
+    # 解析可选参数 --x, --y, --hold, --delay
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        if arg == "--x" and i + 1 < len(args):
+            arguments["value_x"] = float(args[i + 1])
+            i += 2
+        elif arg == "--y" and i + 1 < len(args):
+            arguments["value_y"] = float(args[i + 1])
+            i += 2
+        elif arg == "--hold" and i + 1 < len(args):
+            arguments["hold_time"] = float(args[i + 1])
+            i += 2
+        elif arg == "--delay" and i + 1 < len(args):
+            arguments["delay"] = float(args[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    return await send_request("tools/call", {
+        "name": "input.simulate",
+        "arguments": arguments
+    })
+
+
 COMMANDS = {
     "query":           cmd_query,
     "console":         cmd_console,
@@ -1216,6 +1306,7 @@ COMMANDS = {
     "crash":           cmd_crash,
     "editor":          cmd_editor,
     "pie":             cmd_pie,
+    "input_simulate":  cmd_input_simulate,
     "ping":            cmd_ping,
     "tools":           cmd_tools,
 }
@@ -1269,6 +1360,12 @@ def print_help():
   pie resume                                 恢复 PIE
   pie status                                 查询 PIE 状态
   pie late_join                              添加客户端（多人已运行时）
+  pie late_join                              添加客户端（多人已运行时）
+  input_simulate <action> [--x <值>] [--y <值>] [--hold <秒>] [--delay <秒>]  在PIE运行时模拟玩家输入
+    动作: attack, guard, dodge, jump, interact, use_item, healing_gourd, grapple,
+          prosthetic, lock_on, crouch, move, look, cycle_item_next/prev, pause, menu
+    --hold <秒>: 长按后自动释放（适用于attack/guard/dodge/jump）
+    --delay <秒>: 延迟执行
   crash check                                检测最近一次运行是否崩溃
   crash analyze                              分析崩溃：错误信息、调用栈、源码定位
   crash list                                 列出历史崩溃报告

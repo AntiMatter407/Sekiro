@@ -6,6 +6,7 @@
 #include "Input/SKInputHandler.h"
 #include "Animation/SKAnimInstance.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimSequence.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
 
@@ -49,6 +50,38 @@ void USKAnimationController::BeginPlay()
 
 	InputHandler = OwnerCharacter->GetInputHandler();
 	Mesh = OwnerCharacter->GetMesh();
+
+	// 自动加载 AnimLogicData（如果在蓝图中未手动赋值）
+	if (!AnimLogicData)
+	{
+		AnimLogicData = LoadObject<USKAnimationLogicData>(nullptr,
+			TEXT("/Game/Characters/Sekiro/SK_AnimLogicData.SK_AnimLogicData"));
+		if (AnimLogicData)
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("AnimController[%s]: AnimLogicData auto-loaded from /Game/Characters/Sekiro/SK_AnimLogicData"),
+				*GetNameSafe(OwnerCharacter.Get()));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("AnimController[%s]: AnimLogicData not set and failed to load from default path"),
+				*GetNameSafe(OwnerCharacter.Get()));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Verbose,
+			TEXT("AnimController[%s]: AnimLogicData already set via Blueprint"),
+			*GetNameSafe(OwnerCharacter.Get()));
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("AnimController[%s]: Initialized (InputHandler=%s, Mesh=%s, AnimLogicData=%s)"),
+		*GetNameSafe(OwnerCharacter.Get()),
+		InputHandler.IsValid() ? TEXT("OK") : TEXT("NULL"),
+		Mesh.IsValid() ? TEXT("OK") : TEXT("NULL"),
+		AnimLogicData ? TEXT("OK") : TEXT("NULL"));
 }
 
 void USKAnimationController::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -130,6 +163,14 @@ void USKAnimationController::ProcessIntents()
 		return;
 	}
 
+	// 如果 AnimLogicData 为空，输入无法映射为动画，打 Log 但继续执行（后续 TryPlayAction 会自行拦截）
+	if (!AnimLogicData)
+	{
+		UE_LOG(LogTemp, Verbose,
+			TEXT("AnimController[%s]: ProcessIntents() called but AnimLogicData is null — input will be consumed but no animation plays"),
+			*GetNameSafe(OwnerCharacter.Get()));
+	}
+
 	// 优先级 8: 受击（预留，由战斗系统后续填充）
 
 	// 优先级 7: 闪避
@@ -171,6 +212,9 @@ bool USKAnimationController::TryPlayAction(FName Action, int32 Priority)
 {
 	if (!AnimLogicData)
 	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("AnimController[%s]: TryPlayAction(%s) skipped — AnimLogicData is null"),
+			*GetNameSafe(OwnerCharacter.Get()), *Action.ToString());
 		return false;
 	}
 
@@ -187,6 +231,8 @@ bool USKAnimationController::TryPlayAction(FName Action, int32 Priority)
 	{
 		if (!AnimLogicData->CanCancelTo(CurrentAnimID, CurrentAnimTime, Action, Crossfade))
 		{
+			UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: TryPlayAction(%s) CancelWindow拒绝(AnimID=%d, Time=%.2f)"),
+				*GetNameSafe(OwnerCharacter.Get()), *Action.ToString(), CurrentAnimID, CurrentAnimTime);
 			return false;
 		}
 	}
@@ -195,6 +241,8 @@ bool USKAnimationController::TryPlayAction(FName Action, int32 Priority)
 	int32 TargetAnimID = ResolveAnimID(Action);
 	if (TargetAnimID <= 0)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: TryPlayAction(%s) ResolveAnimID失败(返回%d)"),
+			*GetNameSafe(OwnerCharacter.Get()), *Action.ToString(), TargetAnimID);
 		return false;
 	}
 
@@ -219,6 +267,14 @@ void USKAnimationController::ProcessLocomotion()
 	// 仅当无更高优先级动作时处理移动
 	if (CurrentPriority > ESKActionPriority::Locomotion)
 	{
+		return;
+	}
+
+	if (!AnimLogicData)
+	{
+		UE_LOG(LogTemp, Verbose,
+			TEXT("AnimController[%s]: ProcessLocomotion() skipped — AnimLogicData is null"),
+			*GetNameSafe(OwnerCharacter.Get()));
 		return;
 	}
 
@@ -545,7 +601,7 @@ void USKAnimationController::PlayLocomotionMontage(int32 AnimID, bool bLooping)
 
 	EnsureMontageLoaded(AnimID);
 
-	TObjectPtr<UAnimMontage>* Found = MontageCache.Find(AnimID);
+	TObjectPtr<UAnimSequence>* Found = MontageCache.Find(AnimID);
 	if (!Found || !*Found)
 	{
 		return;
@@ -562,21 +618,30 @@ void USKAnimationController::PlayLocomotionMontage(int32 AnimID, bool bLooping)
 		return;
 	}
 
-	UAnimMontage* Montage = *Found;
+	UAnimSequence* Seq = *Found;
 
 	if (bLooping)
 	{
-		// 循环动画：播放后设置 Section 跳转实现自循环
-		AnimInst->Montage_Play(Montage, 1.0f, EMontagePlayReturnType::MontageLength, 0.15f);
-		AnimInst->Montage_SetNextSection(TEXT("Default"), TEXT("Default"));
+		// 循环动画：使用 PlaySlotAnimationAsDynamicMontage 播放，循环模式
+		UAnimMontage* DynMontage = AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, 0.15f, 0.0f);
+		if (DynMontage)
+		{
+			// 循环动画：播完后重新播放自身实现自循环
+			FOnMontageEnded EndDelegate;
+			EndDelegate.BindUObject(this, &USKAnimationController::OnLocoTransitionEnded);
+			AnimInst->Montage_SetEndDelegate(EndDelegate, DynMontage);
+		}
 	}
 	else
 	{
 		// 过渡动画：播放后绑定 EndDelegate，播完衔接目标循环
-		AnimInst->Montage_Play(Montage, 1.0f, EMontagePlayReturnType::MontageLength, 0.1f);
-		FOnMontageEnded EndDelegate;
-		EndDelegate.BindUObject(this, &USKAnimationController::OnLocoTransitionEnded);
-		AnimInst->Montage_SetEndDelegate(EndDelegate, Montage);
+		UAnimMontage* DynMontage = AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, 0.1f, 0.0f);
+		if (DynMontage)
+		{
+			FOnMontageEnded EndDelegate;
+			EndDelegate.BindUObject(this, &USKAnimationController::OnLocoTransitionEnded);
+			AnimInst->Montage_SetEndDelegate(EndDelegate, DynMontage);
+		}
 	}
 }
 
@@ -630,7 +695,7 @@ void USKAnimationController::PlayMontageByID(int32 AnimID, float Crossfade)
 {
 	EnsureMontageLoaded(AnimID);
 
-	TObjectPtr<UAnimMontage>* Found = MontageCache.Find(AnimID);
+	TObjectPtr<UAnimSequence>* Found = MontageCache.Find(AnimID);
 	if (!Found || !*Found)
 	{
 		return;
@@ -647,8 +712,14 @@ void USKAnimationController::PlayMontageByID(int32 AnimID, float Crossfade)
 		return;
 	}
 
-	UAnimMontage* Montage = *Found;
-	AnimInst->Montage_Play(Montage, 1.0f, EMontagePlayReturnType::MontageLength, 0.f);
+	UAnimSequence* Seq = *Found;
+	// 使用 PlaySlotAnimationAsDynamicMontage 将 AnimSequence 包装为临时 Montage 播放
+	UAnimMontage* DynMontage = AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, Crossfade, 0.0f);
+	if (!DynMontage)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: PlaySlotAnimationAsDynamicMontage failed for %s"),
+			*GetNameSafe(OwnerCharacter.Get()), *Seq->GetName());
+	}
 }
 
 void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
@@ -666,14 +737,31 @@ void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
 	const FString* AnimName = AnimLogicData->AnimNameMap.Find(AnimID);
 	if (!AnimName)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: AnimNameMap中未找到ID %d"),
+			*GetOwner()->GetName(), AnimID);
 		return;
 	}
 
-	FString MontagePath = FString::Printf(TEXT("/Game/Characters/Sekiro/Animations/%s"), **AnimName);
-	UAnimMontage* Montage = LoadObject<UAnimMontage>(nullptr, *MontagePath);
-	if (Montage)
+	UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: 加载AnimID=%d, AnimName=%s"),
+		*GetOwner()->GetName(), AnimID, **AnimName);
+
+	// AnimNameMap 存储的是 Sekiro_Walk_Fwd 格式，需要加 Anim_ 前缀
+	// 也可能已经是完整名称（如 Anim_Sekiro_Walk_Fwd）
+	FString AssetPath;
+	if (AnimName->StartsWith(TEXT("Anim_")))
 	{
-		MontageCache.Add(AnimID, Montage);
+		AssetPath = FString::Printf(TEXT("/Game/Characters/Sekiro/Animations/%s.%s"), **AnimName, **AnimName);
+	}
+	else
+	{
+		FString FullName = FString::Printf(TEXT("Anim_%s"), **AnimName);
+		AssetPath = FString::Printf(TEXT("/Game/Characters/Sekiro/Animations/%s.%s"), *FullName, *FullName);
+	}
+
+	UAnimSequence* Seq = LoadObject<UAnimSequence>(nullptr, *AssetPath);
+	if (Seq)
+	{
+		MontageCache.Add(AnimID, Seq);
 	}
 }
 

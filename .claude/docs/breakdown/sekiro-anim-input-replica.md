@@ -111,6 +111,16 @@ Enhanced Input  │
 
 - ⬜ 12. 集成测试（依赖: 全部）
   - ⬜ 12.1 PIE 全按键功能 + 过渡流畅性 + 优先级打断验证
+  - ⬜ 12.2 AIBridge 输入模拟工具（依赖: 12.1）
+    - ⬜ 12.2.1 创建 USKInputSimulateTool（C++，SekiroAIBridge 插件侧）
+      - 工具名: `input.simulate`
+      - 参数: `action`（动作名，如 `attack`/`move`/`guard`/`dodge`/`jump`/`interact`...）
+      - 参数: `value`（可选，`bool` 或 `FVector2D`，如 `{"x":1,"y":0}` 表示右移）
+      - 参数: `hold_time`（可选，长按持续时间秒，0 表示一次触发）
+      - 参数: `delay`（可选，操作前延迟秒）
+      - 功能：在 PIE 世界中找到玩家角色的 USKInputHandler，直接调用其内部回调方法模拟输入
+    - ⬜ 12.2.2 在 bridge.py 中添加 `input_simulate` 命令
+    - ⬜ 12.2.3 编写测试用例脚本（攻击连段、移动+攻击组合、防御+反击）
 
 ## 变更记录
 
@@ -124,3 +134,4 @@ Enhanced Input  │
 | 2026-06-15 | Task 2 ✅ 完成：FSKFrameFlags(16位) + FSKAnimFrameData + FSKAttackHitboxList + FSekiroAnimDataBuilder + 15+ JumpTable ID + build_anim_data.py |
 | 2026-06-15 | Task 3 🔄 进行中，技术方案写入 tech-designs/sekiro-anim-input-replica-3.md |
 | 2026-06-15 | Task 3 ✅ 完成：USKAnimationController（优先级状态机 + CancelWindow判定 + Montage播放 + FrameFlags注入） |
+| 2026-06-17 | 插入 Task 12.2 AIBridge 输入模拟工具，用于 PIE 下自动化测试动画与输入联动 |

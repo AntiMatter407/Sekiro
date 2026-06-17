@@ -29,7 +29,7 @@ FString USKBlueprintTool::GetToolDescription() const
 
 FString USKBlueprintTool::GetInputSchemaJson() const
 {
-	return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_variable\",\"add_function\",\"add_component\",\"set_property\",\"get_info\",\"compile\",\"add_interface\",\"add_node\",\"layout\"]},\"path\":{\"type\":\"string\",\"description\":\"Blueprint asset path\"},\"parent_class\":{\"type\":\"string\",\"description\":\"Parent class name\"},\"name\":{\"type\":\"string\",\"description\":\"Variable/function/component name\"},\"type\":{\"type\":\"string\",\"description\":\"Variable type or component class\"},\"value\":{\"type\":\"string\",\"description\":\"Property value\"},\"interface_class\":{\"type\":\"string\",\"description\":\"Interface class path\"}},\"required\":[\"action\",\"path\"]}");
+	return TEXT("{\"type\":\"object\",\"properties\":{\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_variable\",\"add_function\",\"add_component\",\"set_property\",\"get_info\",\"compile\",\"add_interface\",\"add_node\",\"layout\"]},\"path\":{\"type\":\"string\",\"description\":\"Blueprint asset path\"},\"parent_class\":{\"type\":\"string\",\"description\":\"Parent class name\"},\"name\":{\"type\":\"string\",\"description\":\"Variable/function/component name\"},\"type\":{\"type\":\"string\",\"description\":\"Variable type or component class\"},\"value\":{\"type\":\"string\",\"description\":\"Property value\"},\"target\":{\"type\":\"string\",\"description\":\"Target component variable name (for sub-component properties)\"},\"interface_class\":{\"type\":\"string\",\"description\":\"Interface class path\"}},\"required\":[\"action\",\"path\"]}");
 }
 
 bool USKBlueprintTool::RequiresConfirmation() const
@@ -442,12 +442,14 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
     FString AssetPath = Args->GetStringField(TEXT("path"));
     FString PropName;
     FString Value;
+    FString Target;
     if (!Args->TryGetStringField(TEXT("name"), PropName))
     {
         OutError = TEXT("缺少 name 参数（属性名）");
         return FString();
     }
     Args->TryGetStringField(TEXT("value"), Value);
+    Args->TryGetStringField(TEXT("target"), Target);
 
     UBlueprint* BP = LoadBlueprint(AssetPath, OutError);
     if (!BP) return FString();
@@ -458,22 +460,69 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
         return FString();
     }
 
-    UObject* CDO = BP->GeneratedClass->GetDefaultObject();
-    if (!CDO)
+    // ── 查找目标对象（CDO 或子组件） ──
+    UObject* TargetObj = BP->GeneratedClass->GetDefaultObject();
+    if (!TargetObj)
     {
         OutError = TEXT("无法获取CDO");
         return FString();
     }
 
-    FProperty* Property = BP->GeneratedClass->FindPropertyByName(FName(*PropName));
+    if (!Target.IsEmpty())
+    {
+        // 尝试在 SCS 节点（子组件）上查找
+        UObject* Found = nullptr;
+        if (BP->SimpleConstructionScript)
+        {
+            for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
+            {
+                if (Node && Node->GetVariableName().ToString() == Target)
+                {
+                    // 优先使用 GetActualComponentTemplate，它在 UE5.2 中更稳定
+                    UActorComponent* CompTemplate = nullptr;
+                    if (UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(BP->GeneratedClass))
+                    {
+                        CompTemplate = Node->GetActualComponentTemplate(BPGC);
+                    }
+                    if (!CompTemplate)
+                    {
+                        CompTemplate = Node->ComponentTemplate;
+                    }
+                    if (CompTemplate)
+                    {
+                        Found = CompTemplate;
+                        break;
+                    }
+                }
+            }
+        }
+        if (Found)
+        {
+            TargetObj = Found;
+        }
+        else
+        {
+            // CDO 上查找子组件属性（通过对象属性路径）
+            if (FObjectProperty* CompProp = CastField<FObjectProperty>(BP->GeneratedClass->FindPropertyByName(FName(*Target))))
+            {
+                UObject* CompObj = CompProp->GetObjectPropertyValue_InContainer(TargetObj);
+                if (CompObj)
+                {
+                    TargetObj = CompObj;
+                }
+            }
+        }
+    }
+
+    FProperty* Property = TargetObj->GetClass()->FindPropertyByName(FName(*PropName));
     if (!Property)
     {
-        OutError = FString::Printf(TEXT("属性未找到: %s"), *PropName);
+        OutError = FString::Printf(TEXT("属性未找到: %s（在对象 %s 上）"), *PropName, *TargetObj->GetName());
         return FString();
     }
 
     // 尝试设置值（基本类型转换）
-    void* PropertyAddress = Property->ContainerPtrToValuePtr<void>(CDO);
+    void* PropertyAddress = Property->ContainerPtrToValuePtr<void>(TargetObj);
 
     if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
     {
@@ -534,7 +583,7 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
         }
         else
         {
-            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+            Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
         }
     }
     else if (FSoftObjectProperty* SoftObjProp = CastField<FSoftObjectProperty>(Property))
@@ -552,7 +601,7 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
         }
         else
         {
-            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+            Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
         }
     }
     else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
@@ -567,21 +616,21 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
             || StructProp->Struct == TBaseStructure<FIntPoint>::Get()
             || StructProp->Struct == TBaseStructure<FGuid>::Get())
         {
-            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+            Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
         }
         else
         {
             // 其他结构体：尝试 ImportText
-            Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+            Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
         }
     }
     else
     {
         // 通用回退
-        Property->ImportText_Direct(*Value, PropertyAddress, CDO, PPF_None);
+        Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
     }
 
-    CDO->MarkPackageDirty();
+    TargetObj->MarkPackageDirty();
     UEditorAssetLibrary::SaveAsset(AssetPath, false);
 
     TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());

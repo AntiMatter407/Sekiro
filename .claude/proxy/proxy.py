@@ -55,6 +55,7 @@ ROUTES = {
     "deepseek-reasoner": (DS, "deepseek-reasoner"),
 
     # Zhipu / BigModel aliases.
+    "glm-5.2": (GLM, "glm-5.2"),
     "glm-5.1": (GLM, "glm-5.1"),
     "glm-4-plus": (GLM, "glm-4-plus"),
     "glm-4-flash": (GLM, "glm-4-flash"),
@@ -317,6 +318,8 @@ def openai_response_to_anthropic(data, model):
     text = message.get("content")
     if isinstance(text, list):
         text = normalize_text_content(text)
+    if not text:
+        text = message.get("reasoning_content")  # 推理模型（如GLM-5.2）内容在此
     if text:
         content_blocks.append({"type": "text", "text": text})
 
@@ -592,6 +595,8 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
                         finish_reason = stop_reason_from_openai(choice.get("finish_reason"))
 
                     text = delta.get("content")
+                    if not text:
+                        text = delta.get("reasoning_content")  # 推理模型（如GLM-5.2）内容在此
                     if text:
                         start_text()
                         self.send_sse_event("content_block_delta", {

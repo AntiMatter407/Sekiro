@@ -11,22 +11,22 @@
 // ============================================================================
 namespace
 {
-    constexpr uint32 Bit_DisableTurning      = 1 << 0;              // JumpTableID 7
-    constexpr uint32 Bit_DisableMovement     = 1 << 1;              // JumpTableID 89
-    constexpr uint32 Bit_DisableMapHit       = 1 << 2;              // JumpTableID 19
-    constexpr uint32 Bit_EnableParry         = 1 << 3;              // JumpTableID 119
-    constexpr uint32 Bit_DisableParry        = 1 << 4;              // JumpTableID 137
-    constexpr uint32 Bit_DisableSpecial      = 1 << 5;              // JumpTableID 133
-    constexpr uint32 Bit_DisableItem         = 1 << 6;              // JumpTableID 134
-    constexpr uint32 Bit_Invincible          = 1 << 7;              // JumpTableID 51
-    constexpr uint32 Bit_SetNoGravity        = 1 << 8;              // JumpTableID 27
-    constexpr uint32 Bit_FlagAsDodging       = 1 << 9;              // JumpTableID 8
-    constexpr uint32 Bit_InvokeDeath         = 1 << 10;             // JumpTableID 12
-    constexpr uint32 Bit_LimitMoveSpeedWalk  = 1 << 11;             // JumpTableID 90
-    constexpr uint32 Bit_LimitMoveSpeedDash  = 1 << 12;             // JumpTableID 91
-    constexpr uint32 Bit_EnterMovement       = 1 << 13;             // JumpTableID 32
-    constexpr uint32 Bit_ExitMovement        = 1 << 14;             // JumpTableID 31
-    constexpr uint32 Bit_Staggered           = 1 << 15;             // JumpTableID 55
+    static constexpr uint32 Bit_DisableTurning      = 1 << 0;              // JumpTableID 7
+    static constexpr uint32 Bit_DisableMovement     = 1 << 1;              // JumpTableID 89
+    static constexpr uint32 Bit_DisableMapHit       = 1 << 2;              // JumpTableID 19
+    static constexpr uint32 Bit_EnableParry         = 1 << 3;              // JumpTableID 119
+    static constexpr uint32 Bit_DisableParry        = 1 << 4;              // JumpTableID 137
+    static constexpr uint32 Bit_DisableSpecial      = 1 << 5;              // JumpTableID 133
+    static constexpr uint32 Bit_DisableItem         = 1 << 6;              // JumpTableID 134
+    static constexpr uint32 Bit_Invincible          = 1 << 7;              // JumpTableID 51
+    static constexpr uint32 Bit_SetNoGravity        = 1 << 8;              // JumpTableID 27
+    static constexpr uint32 Bit_FlagAsDodging       = 1 << 9;              // JumpTableID 8
+    static constexpr uint32 Bit_InvokeDeath         = 1 << 10;             // JumpTableID 12
+    static constexpr uint32 Bit_LimitMoveSpeedWalk  = 1 << 11;             // JumpTableID 90
+    static constexpr uint32 Bit_LimitMoveSpeedDash  = 1 << 12;             // JumpTableID 91
+    static constexpr uint32 Bit_EnterMovement       = 1 << 13;             // JumpTableID 32
+    static constexpr uint32 Bit_ExitMovement        = 1 << 14;             // JumpTableID 31
+    static constexpr uint32 Bit_Staggered           = 1 << 15;             // JumpTableID 55
 }
 
 // ============================================================================

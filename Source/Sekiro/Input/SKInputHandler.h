@@ -127,45 +127,67 @@ protected:
 
 	// ── 移动/视角回调 ───────────────────────────────────────
 
+UFUNCTION()
 	void OnMove(const FInputActionValue& Value);     // 主移动输入
+UFUNCTION()
 	void OnLook(const FInputActionValue& Value);     // 视角输入
 
 	// ── 跳跃回调 ────────────────────────────────────────────
 
+UFUNCTION()
 	void OnJumpStarted(const FInputActionValue& Value);   // 跳跃按下 → ACharacter::Jump
+UFUNCTION()
 	void OnJumpCompleted(const FInputActionValue& Value); // 跳跃松开 → ACharacter::StopJumping
 
 	// ── 闪避/冲刺回调 ──────────────────────────────────────
 
+UFUNCTION()
 	void OnDodgeStarted(const FInputActionValue& Value);   // 闪避按下 → 垫步 + 冲刺
+UFUNCTION()
 	void OnDodgeCompleted(const FInputActionValue& Value); // 闪避松开
 
 	// ── 蹲下回调 ────────────────────────────────────────────
 
+UFUNCTION()
 	void OnCrouchStarted(const FInputActionValue& Value);  // 蹲下切换
 
 	// ── 战斗回调 ────────────────────────────────────────────
 
+UFUNCTION()
 	void OnAttackStarted(const FInputActionValue& Value);   // 攻击按下
+UFUNCTION()
 	void OnAttackCompleted(const FInputActionValue& Value); // 攻击松开
+UFUNCTION()
 	void OnGuardStarted(const FInputActionValue& Value);    // 防御按下
+UFUNCTION()
 	void OnGuardCompleted(const FInputActionValue& Value);  // 防御松开
+UFUNCTION()
 	void OnLockOnStarted(const FInputActionValue& Value);   // 锁定按下
+UFUNCTION()
 	void OnProstheticStarted(const FInputActionValue& Value);   // 义手按下
+UFUNCTION()
 	void OnProstheticCompleted(const FInputActionValue& Value); // 义手松开
+UFUNCTION()
 	void OnGrappleStarted(const FInputActionValue& Value);  // 钩索按下
 
 	// ── 交互/道具回调 ──────────────────────────────────────
 
+UFUNCTION()
 	void OnInteractStarted(const FInputActionValue& Value);      // 交互按下
+UFUNCTION()
 	void OnUseItemStarted(const FInputActionValue& Value);       // 道具使用
+UFUNCTION()
 	void OnHealingGourdStarted(const FInputActionValue& Value);  // 伤药葫芦
+UFUNCTION()
 	void OnCycleItemNextStarted(const FInputActionValue& Value); // 切换道具下一个
+UFUNCTION()
 	void OnCycleItemPrevStarted(const FInputActionValue& Value); // 切换道具上一个
 
 	// ── 系统回调 ────────────────────────────────────────────
 
+UFUNCTION()
 	void OnPauseStarted(const FInputActionValue& Value); // 暂停
+UFUNCTION()
 	void OnMenuStarted(const FInputActionValue& Value);  // 菜单
 
 private:

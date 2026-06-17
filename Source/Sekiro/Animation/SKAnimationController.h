@@ -11,7 +11,7 @@ class USKAnimationLogicData;
 class ASKCharacter;
 class USKInputHandler;
 class USKAnimInstance;
-class UAnimMontage;
+class UAnimSequence;
 
 // ============================================================================
 // USKAnimationController — 动画控制组件
@@ -98,11 +98,15 @@ protected:
 
 	// ── 帧级更新 ──────────────────────────────────────────
 
+	UFUNCTION()
 	void UpdateFrameState();                              // 更新当前帧/时间
+
+	UFUNCTION()
 	void ApplyFrameFlags();                               // 应用 DataAsset 行为标志到角色
 
 	// ── 意图处理 ──────────────────────────────────────────
 
+	UFUNCTION()
 	void ProcessIntents();                                // 按优先级处理输入意图
 	bool TryPlayAction(FName Action, int32 Priority);     // 尝试触发动作（含 CancelWindow 判定）
 
@@ -114,14 +118,14 @@ protected:
 	int32 GetTransitionAnimID(const FSKLocomotionState& From, const FSKLocomotionState& To) const;  // 过渡动画
 	int32 GetStopAnimID(const FSKLocomotionState& State) const;                   // 停止动画
 	int32 GetTurnAnimID(float AngleDelta) const;                                  // 转身动画（正=左转，负=右转）
-	void PlayLocomotionMontage(int32 AnimID, bool bLooping);                      // 播放移动 Montage
+	void PlayLocomotionMontage(int32 AnimID, bool bLooping);                      // 播放移动动画
 	void OnLocoTransitionEnded(UAnimMontage* Montage, bool bInterrupted);         // 过渡结束回调
 
 	// ── 动画播放 ──────────────────────────────────────────
 
 	int32 ResolveAnimID(FName Action);                    // 意图→AnimID
-	void PlayMontageByID(int32 AnimID, float Crossfade);  // 播放 Montage
-	void EnsureMontageLoaded(int32 AnimID);               // 按需加载 Montage
+	void PlayMontageByID(int32 AnimID, float Crossfade);  // 播放动画
+	void EnsureMontageLoaded(int32 AnimID);               // 按需加载动画
 
 private:
 	// ── 工具 ──────────────────────────────────────────────
@@ -143,7 +147,7 @@ private:
 
 	// ── 缓存 ──────────────────────────────────────────────
 
-	TMap<int32, TObjectPtr<UAnimMontage>> MontageCache;   // AnimID → Montage 缓存
+	TMap<int32, TObjectPtr<UAnimSequence>> MontageCache;   // AnimID → AnimSequence 缓存
 	TWeakObjectPtr<ASKCharacter> OwnerCharacter;          // 角色引用
 	TWeakObjectPtr<USKInputHandler> InputHandler;         // 输入组件引用
 	TWeakObjectPtr<USkeletalMeshComponent> Mesh;          // 骨骼网格引用
