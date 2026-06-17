@@ -51,3 +51,6 @@
 
 # Third-party marketplace content
 /Content/AdvancedLocomotionV4/
+/.claude/proxy/proxy-err.log
+/.claude/proxy/proxy-stdout.log
+/.claude/proxy/proxy.log
