@@ -15,8 +15,10 @@
 ## 编码规范
 
 @.claude/rules/code-style.md
+@.claude/rules/cpp-workflow.md
 
-**核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层负责编排具体工作流。详见 code-style.md 和 plugin-programmer 硬性约束。
+**核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层负责编排具体工作流。
+**需要修改 `.h` / `.cpp` 时，必须先读取 cpp-workflow.md 然后按规则执行。**
 
 ## 技能（/ 命令）
 
@@ -46,3 +48,7 @@
 ```
 
 所有对话、建议、文档使用**简体中文**。
+
+## 临时脚本规则
+
+`/aibridge` 技能生成的临时检查脚本（如 `_check_bp.py` 等），必须写入 `Script/temp/`，不得留在 `skills/aibridge/` 下。
