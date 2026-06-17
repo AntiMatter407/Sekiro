@@ -68,3 +68,19 @@ bool USKAnimationLogicData::GetFrameFlags(int32 AnimID, int32 Frame,
 	OutFlags = FrameData->Flags[Index];
 	return true;
 }
+
+void USKAnimationLogicData::GetActiveHitboxesAtFrame(int32 AnimID, int32 Frame,
+	TArray<FSKAttackHitboxConfig>& OutHitboxes) const
+{
+	OutHitboxes.Reset();
+	const FSKAttackHitboxList* List = AttackHitboxConfigs.Find(AnimID);
+	if (!List) return;
+
+	for (const FSKAttackHitboxConfig& Cfg : List->Hitboxes)
+	{
+		if (Frame >= Cfg.StartFrame && Frame <= Cfg.EndFrame)
+		{
+			OutHitboxes.Add(Cfg);
+		}
+	}
+}

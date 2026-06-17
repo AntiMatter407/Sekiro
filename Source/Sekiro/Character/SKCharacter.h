@@ -34,6 +34,7 @@ public:
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	FORCEINLINE USKInputHandler* GetInputHandler() const { return InputHandler; }
 	FORCEINLINE USKAnimationController* GetAnimController() const { return AnimController; }
+	FORCEINLINE USKWeaponComponent* GetWeaponComponent() const { return WeaponComponent; }
 
 	// ── 闪避状态接口（由 USKInputHandler 调用）────────────
 

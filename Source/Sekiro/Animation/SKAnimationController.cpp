@@ -5,6 +5,8 @@
 #include "Character/SKCharacter.h"
 #include "Input/SKInputHandler.h"
 #include "Animation/SKAnimInstance.h"
+#include "Weapon/SKWeapon.h"
+#include "Weapon/SKWeaponComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimMontage.h"
@@ -93,6 +95,12 @@ void USKAnimationController::TickComponent(float DeltaTime, ELevelTick TickType,
 
 	// 2. 应用当前帧行为标志（bCanDeflect / bDisableMovement 等）
 	ApplyFrameFlags();
+
+	// 2.0 更新攻击碰撞体
+	UpdateAttackHitbox();
+
+	// 2.1 更新蓄力状态
+	UpdateChargeState(DeltaTime);
 
 	// 3. 按优先级处理输入意图
 	ProcessIntents();
@@ -199,13 +207,8 @@ void USKAnimationController::ProcessIntents()
 		TryPlayAction(TEXT("Item"), ESKActionPriority::ItemUse);
 	}
 
-	// 优先级 2: 攻击
-	if (InputHandler->ConsumeAttackPressed())
-	{
-		FName AttackAction = InputHandler->GetAttackHoldTime() > 0.3f
-			? TEXT("Attack_Charged") : TEXT("Attack");
-		TryPlayAction(AttackAction, ESKActionPriority::Attack);
-	}
+	// 优先级 2: 攻击（连段+蓄力+移动变体）
+	HandleAttack();
 }
 
 bool USKAnimationController::TryPlayAction(FName Action, int32 Priority)
@@ -673,6 +676,236 @@ void USKAnimationController::OnLocoTransitionEnded(UAnimMontage* Montage, bool b
 	CurrentPriority = ESKActionPriority::Locomotion;
 }
 
+// ── 攻击处理（Priority 2）─────────────────────────────────
+
+void USKAnimationController::HandleAttack()
+{
+	if (!InputHandler.IsValid())
+	{
+		return;
+	}
+
+	// 检查蓄力释放（按键松开且已蓄力）
+	if (CheckChargeRelease())
+	{
+		return; // 蓄力攻击已触发，不需要再处理普通攻击
+	}
+
+	// 普通攻击按下
+	if (InputHandler->ConsumeAttackPressed())
+	{
+		FName AttackAction;
+
+		// 根据移动状态选择攻击变体
+		USKAnimInstance* AnimInst = GetAnimInstance();
+
+		// 空中攻击
+		if (AnimInst && AnimInst->bIsInAir)
+		{
+			FName Suffix = GetMoveDirectionSuffix();
+			if (Suffix == TEXT("Fwd"))
+			{
+				AttackAction = TEXT("Attack_Jump_Fwd");
+			}
+			else
+			{
+				AttackAction = TEXT("Attack_Jump");
+			}
+		}
+		// 蹲行攻击
+		else if (AnimInst && AnimInst->bIsCrouching)
+		{
+			AttackAction = TEXT("Attack_Crouch");
+		}
+		// 冲刺攻击
+		else if (AnimInst && AnimInst->Speed >= 525.f)
+		{
+			AttackAction = TEXT("Attack_Sprint_R1");
+		}
+		// Dodge/Quickstep 后攻击
+		else if (CurrentAction == TEXT("Dodge") || CurrentAction == TEXT("Quickstep"))
+		{
+			FName DirSuffix = GetMoveDirectionSuffix();
+			if (CurrentAction == TEXT("Dodge"))
+			{
+				AttackAction = FName(*FString::Printf(TEXT("Attack_Dodge_%s"), *DirSuffix.ToString()));
+			}
+			else
+			{
+				AttackAction = FName(*FString::Printf(TEXT("Attack_Quickstep_%s"), *DirSuffix.ToString()));
+			}
+		}
+		// 默认：R1 连段
+		else
+		{
+			AttackAction = GetComboAnimID(AttackState.ComboIndex) > 0
+				? FName(*FString::Printf(TEXT("Attack_R1_Combo%02d"), AttackState.ComboIndex))
+				: TEXT("Attack");
+		}
+
+		if (TryPlayAction(AttackAction, ESKActionPriority::Attack))
+		{
+			// 攻击成功触发 → 记录连段
+			if (AttackState.ComboIndex == 0 || AttackState.ComboTimeout > 0.5f)
+			{
+				AttackState.ComboIndex = 1;
+			}
+			else
+			{
+				AttackState.ComboIndex = (AttackState.ComboIndex % 4) + 1;
+			}
+			AttackState.ComboTimeout = 0.f;
+			AttackState.LastAttackAction = AttackAction;
+		}
+	}
+
+	// 连段超时计时
+	if (AttackState.ComboIndex > 0)
+	{
+		AttackState.ComboTimeout += GetWorld()->GetDeltaSeconds();
+		if (AttackState.ComboTimeout > 0.5f)
+		{
+			ResetAttackState();
+		}
+	}
+}
+
+int32 USKAnimationController::GetComboAnimID(int32 ComboIdx) const
+{
+	if (!AnimLogicData || ComboIdx < 1 || ComboIdx > 4)
+	{
+		return 0;
+	}
+
+	FString Category = FString::Printf(TEXT("Attack_R1_Combo%02d"), ComboIdx);
+	const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(Category);
+	if (List && List->IDs.Num() > 0)
+	{
+		return List->IDs[0];
+	}
+
+	return 0;
+}
+
+FName USKAnimationController::GetMoveDirectionSuffix() const
+{
+	if (!InputHandler.IsValid())
+	{
+		return TEXT("Fwd");
+	}
+
+	FVector2D MoveIntent = InputHandler->GetMoveIntent();
+	float Y = MoveIntent.Y;  // 前后（正=前）
+	float X = MoveIntent.X;  // 左右（正=右）
+
+	if (FMath::Abs(X) < 0.3f && FMath::Abs(Y) < 0.3f)
+	{
+		return TEXT("Fwd");
+	}
+
+	// 优先明显的前后方向
+	if (FMath::Abs(Y) > FMath::Abs(X))
+	{
+		return Y > 0.f ? TEXT("Fwd") : TEXT("Bwd");
+	}
+	else
+	{
+		return X > 0.f ? TEXT("R") : TEXT("L");
+	}
+}
+
+void USKAnimationController::ResetAttackState()
+{
+	AttackState.ComboIndex = 0;
+	AttackState.ComboTimeout = 0.f;
+	AttackState.bIsCharging = false;
+	AttackState.ChargeTime = 0.f;
+	AttackState.LastAttackAction = NAME_None;
+	AttackState.bAttackHeldPrev = false;
+}
+
+void USKAnimationController::UpdateChargeState(float DeltaTime)
+{
+	if (!InputHandler.IsValid())
+	{
+		return;
+	}
+
+	bool bCurrentlyHeld = InputHandler->IsAttackHeld();
+
+	// 检测下降沿：之前按住 → 现在松开
+	if (AttackState.bAttackHeldPrev && !bCurrentlyHeld)
+	{
+		// 下降沿由 CheckChargeRelease 处理
+	}
+
+	// 按住且当前正在攻击动作中 → 累计蓄力
+	if (bCurrentlyHeld && CurrentAction.ToString().StartsWith(TEXT("Attack")))
+	{
+		AttackState.ChargeTime += DeltaTime;
+		if (AttackState.ChargeTime > 0.3f && !AttackState.bIsCharging)
+		{
+			AttackState.bIsCharging = true;
+			UE_LOG(LogTemp, Verbose, TEXT("AnimController[%s]: 开始蓄力"),
+				*GetNameSafe(OwnerCharacter.Get()));
+		}
+	}
+
+	AttackState.bAttackHeldPrev = bCurrentlyHeld;
+}
+
+bool USKAnimationController::CheckChargeRelease()
+{
+	if (!InputHandler.IsValid())
+	{
+		return false;
+	}
+
+	bool bCurrentlyHeld = InputHandler->IsAttackHeld();
+
+	// 检测下降沿：之前按住 → 现在松开，且已进入蓄力状态
+	if (AttackState.bAttackHeldPrev && !bCurrentlyHeld && AttackState.bIsCharging)
+	{
+		AttackState.bIsCharging = false;
+		AttackState.ChargeTime = 0.f;
+
+		// 选择蓄力攻击变体
+		FName ChargeAction;
+		USKAnimInstance* AnimInst = GetAnimInstance();
+
+		if (AnimInst && AnimInst->Speed >= 525.f)
+		{
+			ChargeAction = TEXT("Attack_Charged_Dash");
+		}
+		else if (CurrentAction == TEXT("Dodge") || CurrentAction == TEXT("Quickstep"))
+		{
+			ChargeAction = TEXT("Attack_Charged_Step");
+		}
+		else
+		{
+			FName DirSuffix = GetMoveDirectionSuffix();
+			if (DirSuffix == TEXT("L"))
+			{
+				ChargeAction = TEXT("Attack_Charged_L");
+			}
+			else
+			{
+				ChargeAction = TEXT("Attack_Charged");
+			}
+		}
+
+		if (TryPlayAction(ChargeAction, ESKActionPriority::Attack))
+		{
+			UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: 蓄力攻击触发 %s"),
+				*GetNameSafe(OwnerCharacter.Get()), *ChargeAction.ToString());
+			ResetAttackState();
+			return true;
+		}
+	}
+
+	return false;
+}
+
 // ── 动画播放 ──────────────────────────────────────────────
 
 int32 USKAnimationController::ResolveAnimID(FName Action)
@@ -763,6 +996,54 @@ void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
 	{
 		MontageCache.Add(AnimID, Seq);
 	}
+}
+
+// ── 攻击碰撞体更新 ──────────────────────────────────────────
+
+void USKAnimationController::UpdateAttackHitbox()
+{
+    if (!AnimLogicData || CurrentAnimID <= 0)
+    {
+        ASKWeapon* Weapon = GetWeapon();
+        if (Weapon) Weapon->DeactivateHitbox();
+        return;
+    }
+
+    int32 Frame = FMath::RoundToInt(CurrentAnimTime * 30.0f);
+
+    ASKWeapon* Weapon = GetWeapon();
+    if (!Weapon) return;
+
+    bool bHasActiveHitbox = false;
+    const FSKAttackHitboxList* List = AnimLogicData->AttackHitboxConfigs.Find(CurrentAnimID);
+    if (List)
+    {
+        for (const FSKAttackHitboxConfig& Cfg : List->Hitboxes)
+        {
+            if (Frame >= Cfg.StartFrame && Frame <= Cfg.EndFrame)
+            {
+                bHasActiveHitbox = true;
+                break;
+            }
+        }
+    }
+
+    if (bHasActiveHitbox)
+    {
+        Weapon->ActivateHitbox();
+    }
+    else
+    {
+        Weapon->DeactivateHitbox();
+        Weapon->ClearHitActors();
+    }
+}
+
+ASKWeapon* USKAnimationController::GetWeapon() const
+{
+    if (!OwnerCharacter.IsValid()) return nullptr;
+    USKWeaponComponent* WComp = OwnerCharacter->GetWeaponComponent();
+    return WComp ? WComp->CurrentWeapon : nullptr;
 }
 
 // ── 工具 ──────────────────────────────────────────────────

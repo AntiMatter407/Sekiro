@@ -1,4 +1,5 @@
 #include "SekiroTAEImporter.h"
+#include "SekiroAnimDataBuilder.h"     // 共享 Bit_* 位掩码常量
 #include "SekiroAnimationNameMap.h"
 #include "SekiroImportLog.h"
 #include "Json.h"
@@ -7,27 +8,9 @@
 #include "Misc/FileHelper.h"
 
 // ============================================================================
-// 帧级行为标志位掩码（与 SekiroAnimDataBuilder 中保持一致）
+// 帧级行为标志位掩码（定义在 SekiroAnimDataBuilder.h 的 SekiroJTFlags 命名空间）
 // ============================================================================
-namespace
-{
-    static constexpr uint32 Bit_DisableTurning      = 1 << 0;              // JumpTableID 7
-    static constexpr uint32 Bit_DisableMovement     = 1 << 1;              // JumpTableID 89
-    static constexpr uint32 Bit_DisableMapHit       = 1 << 2;              // JumpTableID 19
-    static constexpr uint32 Bit_EnableParry         = 1 << 3;              // JumpTableID 119
-    static constexpr uint32 Bit_DisableParry        = 1 << 4;              // JumpTableID 137
-    static constexpr uint32 Bit_DisableSpecial      = 1 << 5;              // JumpTableID 133
-    static constexpr uint32 Bit_DisableItem         = 1 << 6;              // JumpTableID 134
-    static constexpr uint32 Bit_Invincible          = 1 << 7;              // JumpTableID 51
-    static constexpr uint32 Bit_SetNoGravity        = 1 << 8;              // JumpTableID 27
-    static constexpr uint32 Bit_FlagAsDodging       = 1 << 9;              // JumpTableID 8
-    static constexpr uint32 Bit_InvokeDeath         = 1 << 10;             // JumpTableID 12
-    static constexpr uint32 Bit_LimitMoveSpeedWalk  = 1 << 11;             // JumpTableID 90
-    static constexpr uint32 Bit_LimitMoveSpeedDash  = 1 << 12;             // JumpTableID 91
-    static constexpr uint32 Bit_EnterMovement       = 1 << 13;             // JumpTableID 32
-    static constexpr uint32 Bit_ExitMovement        = 1 << 14;             // JumpTableID 31
-    static constexpr uint32 Bit_Staggered           = 1 << 15;             // JumpTableID 55
-}
+using namespace SekiroJTFlags;
 
 // ============================================================================
 // 公共 API

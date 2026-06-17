@@ -11,6 +11,7 @@ class USKAnimationLogicData;
 class ASKCharacter;
 class USKInputHandler;
 class USKAnimInstance;
+class ASKWeapon;
 class UAnimSequence;
 
 // ============================================================================
@@ -104,11 +105,25 @@ protected:
 	UFUNCTION()
 	void ApplyFrameFlags();                               // 应用 DataAsset 行为标志到角色
 
+	// ── 攻击碰撞体更新 ────────────────────────────────────
+
+	UFUNCTION()
+	void UpdateAttackHitbox();                            // 根据当前帧查询数据驱动碰撞体激活/禁用
+
 	// ── 意图处理 ──────────────────────────────────────────
 
 	UFUNCTION()
 	void ProcessIntents();                                // 按优先级处理输入意图
 	bool TryPlayAction(FName Action, int32 Priority);     // 尝试触发动作（含 CancelWindow 判定）
+
+	// ── 攻击处理（Priority 2）─────────────────────────────
+
+	void HandleAttack();                                  // 攻击主入口
+	int32 GetComboAnimID(int32 ComboIdx) const;           // 连段序号 → AnimID
+	FName GetMoveDirectionSuffix() const;                 // 移动方向 → 方向后缀名
+	void ResetAttackState();                              // 重置攻击状态
+	void UpdateChargeState(float DeltaTime);              // 蓄力状态更新
+	bool CheckChargeRelease();                            // 检测蓄力按键释放
 
 	// ── 移动层（Locomotion，Priority 0）───────────────────
 
@@ -131,6 +146,7 @@ private:
 	// ── 工具 ──────────────────────────────────────────────
 
 	USKAnimInstance* GetAnimInstance() const;             // 获取 SKAnimInstance 引用
+	ASKWeapon* GetWeapon() const;                         // 获取当前装备的武器引用
 
 	// ── 运行时状态 ────────────────────────────────────────
 
@@ -138,6 +154,19 @@ private:
 	int32 CurrentAnimID = 0;                              // 当前动画ID
 	int32 CurrentPriority = 0;                            // 当前优先级
 	float CurrentAnimTime = 0.f;                          // 当前动画时间（秒）
+
+	// ── 攻击状态 ──────────────────────────────────────────
+
+	struct FAttackState
+	{
+		int32 ComboIndex = 0;                              // 当前连段序号（0=无连段, 1-4=R1连段）
+		float ComboTimeout = 0.f;                          // 连段超时计时（>0.5s 复位）
+		bool bIsCharging = false;                          // 是否正在蓄力
+		float ChargeTime = 0.f;                            // 蓄力累计时间
+		FName LastAttackAction;                            // 上次攻击动作（用于 Combo 推进判定）
+		bool bAttackHeldPrev = false;                      // 上一帧攻击按住状态（检测下降沿）
+	};
+	FAttackState AttackState;                             // 攻击运行时状态
 
 	// ── 移动状态 ──────────────────────────────────────────
 

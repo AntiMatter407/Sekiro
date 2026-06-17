@@ -2,7 +2,7 @@
 
 | 状态 | 创建 | 更新 |
 |------|------|------|
-| 🔄 进行中 | 2026-06-15 | 2026-06-15 |
+| 🔄 进行中 | 2026-06-15 | 2026-06-17 |
 
 ## 需求描述
 
@@ -78,11 +78,19 @@ Enhanced Input  │
   - ✅ 4.3 过渡动画衔接（Tier升降+Stop→Idle）
   - ✅ 4.4 Turn 转身（45°/90°/135°/180°）
 
-- ⬜ 5. 攻击系统（依赖: 3）
-  - ⬜ 5.1 R1 连段 Combo01-04
-  - ⬜ 5.2 蓄力攻击 + 突刺 + 突刺蓄力
-  - ⬜ 5.3 移动攻击变体（Dodge攻击 / Quickstep攻击 / Slide攻击 / Sprint攻击）
-  - ⬜ 5.4 空中攻击（Jump攻击 / Jump蓄力）+ 蹲行攻击
+- 🔄 5. 攻击系统（依赖: 3）
+  - ✅ 5.1 攻击基础组件（补充 USKAnimationController 攻击接口）
+    - ✅ 5.1.1 新增攻击状态追踪（Combo链/蓄力等级/攻击变体选择器）
+    - ✅ 5.1.2 实现 R1 连段 Combo01-04 的条件推进逻辑（含超时复位）
+    - ✅ 5.1.3 蓄力攻击判定（长按>0.3s → Charged / Charged_Step / Charged_Dash / Charged_L）
+    - ✅ 5.1.4 移动方向→攻击变体映射（Dodge攻击/Quickstep攻击/Slide攻击/Sprint攻击）
+    - ✅ 5.1.5 空中攻击 + 蹲行攻击
+  - ⬜ 5.2 攻击盒（Hitbox）激活系统（依赖: 5.1）
+    - ⬜ 5.2.1 实现 Hitbox 激活 Notify（从 DataAsset AttackHitboxConfigs 读取）
+    - ⬜ 5.2.2 攻击盒碰撞检测与伤害触发
+  - ⬜ 5.3 攻击动画资产绑定与验证（依赖: 5.1）
+    - ⬜ 5.3.1 验证 CategoryAnimMap 中攻击类别覆盖全部 80+ 攻击动画
+    - ⬜ 5.3.2 验证 CancelWindow 数据覆盖攻击连段
 
 - ⬜ 6. 防御系统（依赖: 3）
   - ⬜ 6.1 Guard（举起/放下/维持待机/受击）
@@ -135,3 +143,5 @@ Enhanced Input  │
 | 2026-06-15 | Task 3 🔄 进行中，技术方案写入 tech-designs/sekiro-anim-input-replica-3.md |
 | 2026-06-15 | Task 3 ✅ 完成：USKAnimationController（优先级状态机 + CancelWindow判定 + Montage播放 + FrameFlags注入） |
 | 2026-06-17 | 插入 Task 12.2 AIBridge 输入模拟工具，用于 PIE 下自动化测试动画与输入联动 |
+| 2026-06-17 | Task 5 递归拆分：三个子任务（基础组件 + Hitbox系统 + 资产验证），5.1 含五个叶子任务 |
+| 2026-06-17 | Task 5.1 ✅ 完成（HandleAttack/GetComboAnimID/GetMoveDirectionSuffix/ResetAttackState/CheckChargeRelease实现+编译通过）；修复 SekiroImport 插件 Bit_* 常量重复定义编译错误 |

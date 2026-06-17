@@ -161,4 +161,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
 	bool GetFrameFlags(int32 AnimID, int32 Frame, FSKFrameFlags& OutFlags) const;  // 查询帧级标志
+
+	// 获取当前帧所有激活的攻击盒（支持多盒）
+	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
+	void GetActiveHitboxesAtFrame(int32 AnimID, int32 Frame, TArray<FSKAttackHitboxConfig>& OutHitboxes) const;
 };

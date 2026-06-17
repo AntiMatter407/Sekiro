@@ -39,16 +39,15 @@
     "allow": [
       "Read",
       "Write",
-      "Write(./.claude/docs)",
       "Edit",
-      "Edit(./.claude/docs)",
       "Bash(*)",
       "WebFetch",
       "Bash(git status)",
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(python Script/temp/run_bridge.py *)"
     ],
     "ask": [
       "Bash(rm -rf *)",
@@ -62,11 +61,7 @@
     ],
     "deny": [
       "Read(./.env*)",
-      "Read(./**/secrets/**)",
-      "Write(./Source/**/*.{h,cpp})",
-      "Edit(./Source/**/*.{h,cpp})",
-      "Write(./Plugins/**/*.{h,cpp})",
-      "Edit(./Plugins/**/*.{h,cpp})"
+      "Read(./**/secrets/**)"
     ]
   }
 }

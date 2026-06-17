@@ -417,7 +417,7 @@ async def cmd_blueprint(args):
             "arguments": {
                 "action": "create",
                 "path": args[1],
-                "parentClass": args[2] if len(args) > 2 else "Actor"
+                "parent_class": args[2] if len(args) > 2 else "Actor"
             }
         })
     elif action == "addvar":
