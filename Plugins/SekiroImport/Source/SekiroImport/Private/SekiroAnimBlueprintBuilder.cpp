@@ -11,6 +11,7 @@
 #include "Animation/BlendSpace1D.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
+#include "Factories/AnimBlueprintFactory.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/GarbageCollection.h"
@@ -179,21 +180,6 @@ FSekiroAnimBlueprintBuilder::FBuildResult FSekiroAnimBlueprintBuilder::Build(
 
 static void PurgeAnimBlueprintGraphs(UAnimBlueprint* AnimBP);
 
-static void SetAnimInstanceClass(UAnimBlueprint* AnimBP)
-{
-	// 按类路径动态加载，避免插件硬引用项目模块
-	UClass* SKAnimClass = LoadClass<UAnimInstance>(nullptr, TEXT("/Script/Sekiro.SKAnimInstance"));
-	if (SKAnimClass)
-	{
-		AnimBP->ParentClass = SKAnimClass;
-		UE_LOG(LogSekiroImport, Log, TEXT("[AnimBPBuilder] ParentClass set to USKAnimInstance"));
-	}
-	else
-	{
-		UE_LOG(LogSekiroImport, Warning, TEXT("[AnimBPBuilder] USekiroAnimInstance not found, keeping default ParentClass"));
-	}
-}
-
 UAnimBlueprint* FSekiroAnimBlueprintBuilder::LoadOrCreateAnimBlueprint(const FString& PackagePath, USkeleton* Skeleton)
 {
 		// Always create fresh ABP to avoid UObject naming conflicts
@@ -271,23 +257,39 @@ UAnimBlueprint* FSekiroAnimBlueprintBuilder::CreateAnimBlueprint(const FString& 
         return nullptr;
     }
 
-    UAnimBlueprint* AnimBP = NewObject<UAnimBlueprint>(
-        Package, UAnimBlueprint::StaticClass(), *ObjectName,
-        RF_Public | RF_Standalone | RF_Transactional);
+    // 使用 UAnimBlueprintFactory 创建，确保 BlueprintGeneratedClass 正确初始化
+    UAnimBlueprintFactory* Factory = NewObject<UAnimBlueprintFactory>();
+    Factory->BlueprintType = BPTYPE_Normal;
+    Factory->TargetSkeleton = Skeleton;
+    Factory->ParentClass = LoadClass<UAnimInstance>(nullptr, TEXT("/Script/Sekiro.SKAnimInstance"));
+    if (!Factory->ParentClass)
+    {
+        UE_LOG(LogSekiroImport, Warning, TEXT("[AnimBPBuilder] USKAnimInstance not found, fallback to UAnimInstance"));
+        Factory->ParentClass = UAnimInstance::StaticClass();
+    }
+
+    UAnimBlueprint* AnimBP = CastChecked<UAnimBlueprint>(
+        Factory->FactoryCreateNew(
+            UAnimBlueprint::StaticClass(),
+            Package,
+            *ObjectName,
+            RF_Public | RF_Standalone | RF_Transactional,
+            nullptr,
+            GWarn
+        )
+    );
 
     if (!AnimBP)
     {
-        UE_LOG(LogSekiroImport, Error, TEXT("[AnimBPBuilder] NewObject<UAnimBlueprint> failed"));
+        UE_LOG(LogSekiroImport, Error, TEXT("[AnimBPBuilder] FactoryCreateNew failed"));
         return nullptr;
     }
 
-    AnimBP->TargetSkeleton = Skeleton;
     AnimBP->bIsNewlyCreated = true;
-    SetAnimInstanceClass(AnimBP);
     AnimBP->MarkPackageDirty();
     FAssetRegistryModule::AssetCreated(AnimBP);
 
-    UE_LOG(LogSekiroImport, Log, TEXT("[AnimBPBuilder] AnimBlueprint created (save deferred): %s"), *PackagePath);
+    UE_LOG(LogSekiroImport, Log, TEXT("[AnimBPBuilder] AnimBlueprint created via factory: %s"), *PackagePath);
 
     return AnimBP;
 }

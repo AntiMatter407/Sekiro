@@ -12,7 +12,7 @@ class ACharacter;
 // ============================================================================
 // USKWeaponComponent — 武器管理组件
 //     挂在角色上，负责生成武器Actor并挂载到指定骨骼
-//     蓝图子类设置 DefaultWeaponClass + AttachSocketName
+//     蓝图子类设置 DefaultWeaponClass + WeaponAttachSocket + WeaponAttachBoneFallback
 // ============================================================================
 
 UCLASS(ClassGroup=(Weapon), meta=(BlueprintSpawnableComponent))
@@ -29,9 +29,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
 	TSubclassOf<ASKWeapon> DefaultWeaponClass;
 
-	/** 挂载到的骨骼名称 */
+	/** 武器挂载 Socket */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
-	FName AttachSocketName = TEXT("R_Weapon");
+	FName WeaponAttachSocket = TEXT("R_Weapon");
+
+	/** Socket 不存在时的回退骨骼名称 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
+	FName WeaponAttachBoneFallback = TEXT("hand_r");
 
 	// ── 运行时 ────────────────────────────────────────────
 

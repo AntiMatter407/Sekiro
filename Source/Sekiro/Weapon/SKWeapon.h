@@ -10,8 +10,8 @@ class UCapsuleComponent;
 
 // ============================================================================
 // ASKWeapon — 所有武器的C++基类
-//     蓝图子类设置 SkeletalMesh + AttachSocketName
-//     角色 PossessedBy 时自动生成并挂载到指定骨骼
+//     蓝图子类设置 SkeletalMesh + Hitbox 参数
+//     由 USKWeaponComponent 生成并挂载到角色骨骼
 // ============================================================================
 
 UCLASS(Blueprintable, BlueprintType)
@@ -53,12 +53,8 @@ protected:
 
     // ── 配置 ──────────────────────────────────────────────
 
-    /** 挂载到的角色骨骼Socket名称 */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
-    FName AttachSocketName = TEXT("R_Weapon");
-
-    /** 碰撞体跟随的武器 Socket */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+    /** 碰撞体附着到的武器 Socket（由 WeaponComponent 指定挂载骨骼） */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
     FName HitboxSocketName = TEXT("R_Weapon");
 
     /** 碰撞胶囊体半径 */

@@ -26,6 +26,8 @@
 
 | 技能 | 用途 |
 |------|------|
+| `/aibridge` | 通过 TCP JSON-RPC 操控 UE5 编辑器（查询/编译/蓝图/资产/输入） |
+| `/sekiro-asset-import` | 只狼资产导入管线：解包→FLVER→JSON→UE 完整流程 |
 | `/breakdown` | 需求拆分 → `.claude/docs/breakdown/`，支持递归、追踪、修改 |
 | `/tech-design` | 技术方案 + Agent 派发 → `.claude/docs/tech-designs/`，逐子任务推进 |
 | `/review` | 代码审查，风格问题自动修复，违规派发对应 Agent |

@@ -884,19 +884,22 @@ static UMaterial* BuildSingleMaterial(
     // 纹理采样节点 → 材质属性
     // 对 hair/fur: _m/_r 贴图不连（hair2_m不是标准metallic，连了反致高光异常）
     // DSAnimStudio fur/hair hotfix: 丢弃第一套 提升第二套，Mask1Map → None
-    struct FParamDef { const TCHAR* Suffix; EMaterialProperty Property; EMaterialSamplerType SamplerType; int32 X; int32 Y; };
-    const FParamDef CoreParams[] = {
-        { TEXT("_a"),    MP_BaseColor,       SAMPLERTYPE_Color,             -600,  200 },
-        { TEXT("_n"),    MP_Normal,          SAMPLERTYPE_Normal,            -600, -100 },
+    struct FDispParamDef { const TCHAR* Suffix; EMaterialProperty Property; int32 X; int32 Y; TEnumAsByte<EMaterialSamplerType> Sampler; };
+    static const TEnumAsByte<EMaterialSamplerType> S_Color = SAMPLERTYPE_Color;
+    static const TEnumAsByte<EMaterialSamplerType> S_Normal = SAMPLERTYPE_Normal;
+    static const TEnumAsByte<EMaterialSamplerType> S_Gray = SAMPLERTYPE_LinearGrayscale;
+    const FDispParamDef CoreParams[] = {
+        { TEXT("_a"),    MP_BaseColor,       -600,  200, SAMPLERTYPE_Color },
+        { TEXT("_n"),    MP_Normal,          -600, -100, SAMPLERTYPE_Normal },
     };
-    const FParamDef PBRParams[] = {
-        { TEXT("_m"),    MP_Metallic,        SAMPLERTYPE_LinearGrayscale,   -600, -400 },
-        { TEXT("_r"),    MP_Roughness,       SAMPLERTYPE_LinearGrayscale,   -600, -700 },
+    const FDispParamDef PBRParams[] = {
+        { TEXT("_m"),    MP_Metallic,        -600, -400, SAMPLERTYPE_LinearGrayscale },
+        { TEXT("_r"),    MP_Roughness,       -600, -700, SAMPLERTYPE_LinearGrayscale },
     };
-    const FParamDef MaskParam   = { TEXT("_mask"), MP_OpacityMask,  SAMPLERTYPE_Color, -600,  500 };
-    const FParamDef EmisParam   = { TEXT("_em"),   MP_EmissiveColor,SAMPLERTYPE_Color, -600,  800 };
+    const FDispParamDef MaskParam   = { TEXT("_mask"), MP_OpacityMask,  -600,  500, SAMPLERTYPE_Color };
+    const FDispParamDef EmisParam   = { TEXT("_em"),   MP_EmissiveColor,-600,  800 };
 
-    TArray<FParamDef> Params;
+    TArray<FDispParamDef> Params;
     Params.Append(CoreParams, UE_ARRAY_COUNT(CoreParams));
     if (!bIsHairFur)
     {
@@ -918,7 +921,7 @@ static UMaterial* BuildSingleMaterial(
     UMaterialExpressionTextureSample* MaskNode = nullptr;
     FString TextureNames; // 诊断用
 
-    for (const FParamDef& P : Params)
+    for (const FDispParamDef& P : Params)
     {
         UTexture** Found = MergedTextures.Find(P.Suffix);
         if (!Found || !*Found) continue;
@@ -928,28 +931,14 @@ static UMaterial* BuildSingleMaterial(
         UMaterialExpressionTextureSample* TexNode = Cast<UMaterialExpressionTextureSample>(Expr);
         if (!TexNode) continue;
 
+        // 设置纹理 → 引擎自动调用 AutoSetSampleType() 匹配纹理压缩格式
         TexNode->Texture = *Found;
+        // 手动设采样器类型（引擎 AutoSetSampleType 依赖纹理压缩设置，Sekiro贴图可能不匹配）
+        TexNode->SamplerType = P.Sampler;
 
-        // _m/_r 采样器自动修正：Sekiro _m 贴图可能是 BC1/DXT1 颜色遮罩
-        // (如 eye_1m) 而非真正的单通道金属度贴图。
-        EMaterialSamplerType ActualSampler = P.SamplerType;
-        if ((FCString::Strcmp(P.Suffix, TEXT("_m")) == 0 ||
-             FCString::Strcmp(P.Suffix, TEXT("_r")) == 0))
-        {
-            if (UTexture2D* Tex2D = Cast<UTexture2D>(*Found))
-            {
-                if (Tex2D->GetPlatformData())
-                {
-                    EPixelFormat PF = Tex2D->GetPlatformData()->PixelFormat;
-                    if (PF == PF_DXT1 || PF == PF_DXT3 || PF == PF_DXT5 ||
-                        PF == PF_B8G8R8A8 || PF == PF_R8G8B8A8)
-                    {
-                        ActualSampler = SAMPLERTYPE_Color;
-                    }
-                }
-            }
-        }
-        TexNode->SamplerType = ActualSampler;
+
+
+
 
         UMaterialEditingLibrary::ConnectMaterialProperty(TexNode, TEXT(""), P.Property);
 

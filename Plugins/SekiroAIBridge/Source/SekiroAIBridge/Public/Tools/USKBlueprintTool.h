@@ -47,7 +47,12 @@ private:
     FString HandleAddInterface(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleSetupMaterial(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleAssignMaterialSlot(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 
     UBlueprint* LoadBlueprint(const FString& AssetPath, FString& OutError);
     FString BlueprintToJson(UBlueprint* BP) const;
+
+    // 按类名查找 UClass，支持裸类名（带/不带 A/U/I/F/E/T/S 前缀）和全路径
+    UClass* ResolveClassByName(const FString& InClassName);
 };

@@ -1,4 +1,5 @@
 #include "Tools/USKBlueprintTool.h"
+#include "SekiroAIBridgeLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Engine/Blueprint.h"
@@ -21,6 +22,14 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+
+// 材质操作
+#include "Materials/Material.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Materials/MaterialExpressionTextureSampleParameter2D.h"
+#include "MaterialEditingLibrary.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/Texture2D.h"
 
 FString USKBlueprintTool::GetToolDescription() const
 {
@@ -77,9 +86,48 @@ FString USKBlueprintTool::Execute(const FString& ArgsJson, FString& OutError)
     if (Action == TEXT("add_interface"))   return HandleAddInterface(ArgsObj, OutError);
     if (Action == TEXT("add_node"))        return HandleAddNode(ArgsObj, OutError);
     if (Action == TEXT("layout"))          return HandleLayout(ArgsObj, OutError);
+    if (Action == TEXT("setup_material"))  return HandleSetupMaterial(ArgsObj, OutError);
+    if (Action == TEXT("assign_material_slot")) return HandleAssignMaterialSlot(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
+}
+
+// ============================================================================
+// ResolveClassByName — 按类名查找 UClass
+//     约定：传入不带 UE 前缀的 object name（SKWeapon / Actor / Character），
+//           或 /Script/Module.Class / /Game/... 全路径。
+//     native class 的 object name 不带 A/U/I/F/E/T/S 前缀
+//     （C++ 类名 ASKWeapon 对应 object name SKWeapon）。
+// ============================================================================
+
+UClass* USKBlueprintTool::ResolveClassByName(const FString& InClassName)
+{
+    if (InClassName.IsEmpty()) return nullptr;
+
+    // 1) 全路径格式直接 LoadObject
+    if (InClassName.Contains(TEXT("/Script/")) || InClassName.Contains(TEXT("/Game/")))
+    {
+        return LoadObject<UClass>(nullptr, *InClassName);
+    }
+
+    // 2) 裸 object name：在候选模块下拼 /Script/Module.Name 尝试加载
+    //    LoadObject 会触发 package 加载，比 FindObject 可靠
+    const TArray<FString> Modules = {
+        TEXT("Sekiro"), TEXT("Engine"), TEXT("CoreUObject"),
+        TEXT("SekiroAIBridge"), TEXT("SekiroImport")
+    };
+    for (const FString& Module : Modules)
+    {
+        FString FullPath = FString::Printf(TEXT("/Script/%s.%s"), *Module, *InClassName);
+        if (UClass* C = LoadObject<UClass>(nullptr, *FullPath))
+        {
+            return C;
+        }
+    }
+
+    // 3) FindFirstObject 兜底（按 object name 短名查找）
+    return FindFirstObject<UClass>(*InClassName, EFindFirstObjectOptions::None);
 }
 
 // ============================================================================
@@ -101,19 +149,12 @@ FString USKBlueprintTool::HandleCreate(const TSharedPtr<FJsonObject>& Args, FStr
         ParentClassName = TEXT("Actor");
     }
 
-    // 查找父类
-    UClass* ParentClass = nullptr;
-    // 先尝试直接查找
-    ParentClass = FindObject<UClass>(nullptr, *ParentClassName);
-    if (!ParentClass)
-    {
-        FString FullPath = FString::Printf(TEXT("/Script/Engine.%s"), *ParentClassName);
-        ParentClass = FindObject<UClass>(nullptr, *FullPath);
-    }
-    if (!ParentClass)
-    {
-        ParentClass = LoadObject<UClass>(nullptr, *ParentClassName);
-    }
+    // 查找父类 — 全局搜索，不限定模块
+    // 注意: UE native class 的 object name 不带 A/U/I/F 前缀
+    //   例如 ASKWeapon 的路径是 /Script/Sekiro.SKWeapon（GetName() 才返回 ASKWeapon）
+    //   因此传入带前缀的类名时，需要同时尝试去掉前缀的路径
+    UClass* ParentClass = ResolveClassByName(ParentClassName);
+
     if (!ParentClass)
     {
         // 默认Actor
@@ -258,13 +299,8 @@ FString USKBlueprintTool::HandleAddVariable(const TSharedPtr<FJsonObject>& Args,
     }
     else
     {
-        // 尝试作为Object类型
-        UClass* ObjClass = FindObject<UClass>(nullptr, *VarType);
-        if (!ObjClass)
-        {
-            FString FullPath = FString::Printf(TEXT("/Script/Engine.%s"), *VarType);
-            ObjClass = FindObject<UClass>(nullptr, *FullPath);
-        }
+        // 尝试作为Object类型 — 用 ResolveClassByName 统一查找（支持前缀/全路径）
+        UClass* ObjClass = ResolveClassByName(VarType);
         if (ObjClass)
         {
             PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
@@ -377,13 +413,8 @@ FString USKBlueprintTool::HandleAddComponent(const TSharedPtr<FJsonObject>& Args
     UBlueprint* BP = LoadBlueprint(AssetPath, OutError);
     if (!BP) return FString();
 
-    // 查找组件类
-    UClass* ComponentClass = FindObject<UClass>(nullptr, *ComponentType);
-    if (!ComponentClass)
-    {
-        FString FullPath = FString::Printf(TEXT("/Script/Engine.%s"), *ComponentType);
-        ComponentClass = FindObject<UClass>(nullptr, *FullPath);
-    }
+    // 查找组件类 — 用 ResolveClassByName 统一查找（支持前缀/全路径）
+    UClass* ComponentClass = ResolveClassByName(ComponentType);
     if (!ComponentClass)
     {
         OutError = FString::Printf(TEXT("组件类未找到: %s"), *ComponentType);
@@ -470,13 +501,34 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
 
     if (!Target.IsEmpty())
     {
-        // 尝试在 SCS 节点（子组件）上查找
+        // 第1层：SCS 节点变量名精确匹配
         UObject* Found = nullptr;
         if (BP->SimpleConstructionScript)
         {
-            for (USCS_Node* Node : BP->SimpleConstructionScript->GetAllNodes())
+            TArray<USCS_Node*> AllNodes = BP->SimpleConstructionScript->GetAllNodes();
+            UE_LOG(LogSekiroAIBridge, Log, TEXT("[HandleSetProperty] Target='%s', SCS节点数=%d"), *Target, AllNodes.Num());
+
+            for (USCS_Node* Node : AllNodes)
             {
-                if (Node && Node->GetVariableName().ToString() == Target)
+                if (!Node) continue;
+                FString NodeVarName = Node->GetVariableName().ToString();
+                FString NodeCompClassName = Node->ComponentClass ? Node->ComponentClass->GetName() : TEXT("None");
+
+                UE_LOG(LogSekiroAIBridge, Verbose, TEXT("[HandleSetProperty] SCS节点: VarName='%s', ComponentClass='%s'"),
+                    *NodeVarName, *NodeCompClassName);
+
+                // 子条件1：变量名精确匹配
+                bool bNameMatch = (NodeVarName == Target);
+
+                // 子条件2：组件类名匹配（不区分大小写）
+                bool bClassMatch = false;
+                FString TargetLower = Target.ToLower();
+                if (!bNameMatch && !TargetLower.Contains(TEXT("/")))
+                {
+                    bClassMatch = (NodeCompClassName.ToLower() == TargetLower);
+                }
+
+                if (bNameMatch || bClassMatch)
                 {
                     // 优先使用 GetActualComponentTemplate，它在 UE5.2 中更稳定
                     UActorComponent* CompTemplate = nullptr;
@@ -491,24 +543,68 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
                     if (CompTemplate)
                     {
                         Found = CompTemplate;
+                        UE_LOG(LogSekiroAIBridge, Log, TEXT("[HandleSetProperty] SCS匹配成功: VarName='%s', Class='%s', 匹配方式=%s"),
+                            *NodeVarName, *NodeCompClassName, bNameMatch ? TEXT("变量名") : TEXT("组件类名"));
                         break;
+                    }
+                    else
+                    {
+                        UE_LOG(LogSekiroAIBridge, Warning, TEXT("[HandleSetProperty] SCS节点匹配但模板为null: VarName='%s', Class='%s'"),
+                            *NodeVarName, *NodeCompClassName);
                     }
                 }
             }
         }
+        else
+        {
+            UE_LOG(LogSekiroAIBridge, Verbose, TEXT("[HandleSetProperty] BP无SimpleConstructionScript"));
+        }
+
         if (Found)
         {
             TargetObj = Found;
         }
         else
         {
-            // CDO 上查找子组件属性（通过对象属性路径）
+            // 第2层：CDO 上查找直接对象属性（属性名 == Target）
+            bool bFoundOnCDO = false;
             if (FObjectProperty* CompProp = CastField<FObjectProperty>(BP->GeneratedClass->FindPropertyByName(FName(*Target))))
             {
                 UObject* CompObj = CompProp->GetObjectPropertyValue_InContainer(TargetObj);
                 if (CompObj)
                 {
                     TargetObj = CompObj;
+                    bFoundOnCDO = true;
+                    UE_LOG(LogSekiroAIBridge, Log, TEXT("[HandleSetProperty] CDO直接属性匹配: Property='%s', Obj=%s"),
+                        *Target, *CompObj->GetName());
+                }
+            }
+
+            // 第3层（回退）：递归查找 CDO 上所有 FObjectProperty，找其值的类名与 Target 匹配（不区分大小写）
+            if (!bFoundOnCDO)
+            {
+                FString TargetLower = Target.ToLower();
+                for (TFieldIterator<FObjectProperty> It(BP->GeneratedClass); It; ++It)
+                {
+                    FObjectProperty* ObjProp = *It;
+                    if (!ObjProp) continue;
+
+                    UObject* PropValue = ObjProp->GetObjectPropertyValue_InContainer(TargetObj);
+                    if (!PropValue) continue;
+
+                    FString PropValueClassName2 = PropValue->GetClass()->GetName().ToLower();
+                    FString ObjPropName = ObjProp->GetName();
+
+                    UE_LOG(LogSekiroAIBridge, Verbose, TEXT("[HandleSetProperty] CDO对象属性遍历: PropName='%s', ValueClass='%s'"),
+                        *ObjPropName, *PropValueClassName2);
+
+                    if (PropValueClassName2 == TargetLower)
+                    {
+                        TargetObj = PropValue;
+                        UE_LOG(LogSekiroAIBridge, Log, TEXT("[HandleSetProperty] CDO递归匹配成功: PropName='%s', ValueClass='%s'"),
+                            *ObjPropName, *PropValueClassName2);
+                        break;
+                    }
                 }
             }
         }
@@ -523,6 +619,11 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
 
     // 尝试设置值（基本类型转换）
     void* PropertyAddress = Property->ContainerPtrToValuePtr<void>(TargetObj);
+    if (!PropertyAddress)
+    {
+        OutError = FString::Printf(TEXT("属性地址无效: %s（ContainerPtrToValuePtr返回null）"), *PropName);
+        return FString();
+    }
 
     if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
     {
@@ -576,33 +677,88 @@ FString USKBlueprintTool::HandleSetProperty(const TSharedPtr<FJsonObject>& Args,
     }
     else if (FObjectProperty* ObjProp = CastField<FObjectProperty>(Property))
     {
-        UObject* Obj = LoadObject<UObject>(nullptr, *Value);
-        if (Obj || Value.IsEmpty())
+        UE_LOG(LogSekiroAIBridge, Log, TEXT("FObjectProperty: Setting '%s' with Value='%s', PropertyClass=%s"),
+            *PropName, *Value, *GetNameSafe(ObjProp->PropertyClass));
+
+        // TSubclassOf<T> 在 UE5.2 中被 UHT 编译为 FObjectProperty（PropertyClass=UClass::StaticClass()），
+        // 而非 FClassProperty。需要特殊处理：加载 Blueprint 后取 GeneratedClass。
+        if (ObjProp->PropertyClass && ObjProp->PropertyClass->IsChildOf<UClass>())
         {
-            ObjProp->SetObjectPropertyValue(PropertyAddress, Obj);
+            // ── TSubclassOf 分支 ──
+            UObject* LoadedObj = LoadObject<UObject>(nullptr, *Value);
+            UClass* ResolvedClass = Cast<UClass>(LoadedObj);
+            if (!ResolvedClass)
+            {
+                if (UBlueprint* LoadedBP = Cast<UBlueprint>(LoadedObj))
+                {
+                    ResolvedClass = LoadedBP->GeneratedClass;
+                }
+            }
+            if (ResolvedClass)
+            {
+                ObjProp->SetObjectPropertyValue(PropertyAddress, ResolvedClass);
+            }
+            else
+            {
+                Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
+            }
         }
         else
         {
-            Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
+            // ── 普通对象引用分支 ──
+            UObject* Obj = LoadObject<UObject>(nullptr, *Value);
+            if (Obj || Value.IsEmpty())
+            {
+                ObjProp->SetObjectPropertyValue(PropertyAddress, Obj);
+            }
+            else
+            {
+                Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
+            }
         }
     }
     else if (FSoftObjectProperty* SoftObjProp = CastField<FSoftObjectProperty>(Property))
     {
+        UE_LOG(LogSekiroAIBridge, Log, TEXT("FSoftObjectProperty: Setting '%s' with Value='%s'"), *PropName, *Value);
+
         FSoftObjectPath SoftPath(Value);
         FSoftObjectPtr SoftObj(SoftPath);
         SoftObjProp->SetPropertyValue(PropertyAddress, SoftObj);
     }
-    else if (FClassProperty* ClassProp = CastField<FClassProperty>(Property))
+    else if (FSoftClassProperty* SoftClassProp = CastField<FSoftClassProperty>(Property))
     {
-        UClass* Cls = LoadObject<UClass>(nullptr, *Value);
-        if (Cls)
+        UE_LOG(LogSekiroAIBridge, Log, TEXT("FSoftClassProperty: Setting '%s' with Value='%s'"), *PropName, *Value);
+
+        // FSoftClassProperty 也需要处理 Blueprint 资产路径 → GeneratedClass
+        UObject* LoadedObj = LoadObject<UObject>(nullptr, *Value);
+        UClass* ResolvedClass = Cast<UClass>(LoadedObj);
+        if (!ResolvedClass)
         {
-            ClassProp->SetObjectPropertyValue(PropertyAddress, Cls);
+            if (UBlueprint* LoadedBP = Cast<UBlueprint>(LoadedObj))
+            {
+                ResolvedClass = LoadedBP->GeneratedClass;
+            }
+        }
+        if (ResolvedClass)
+        {
+            SoftClassProp->SetObjectPropertyValue(PropertyAddress, ResolvedClass);
         }
         else
         {
-            Property->ImportText_Direct(*Value, PropertyAddress, TargetObj, PPF_None);
+            // 回退到 FSoftObjectPath 直接设
+            const FSoftObjectPath SoftPath(Value);
+            SoftClassProp->SetPropertyValue(PropertyAddress, FSoftObjectPtr(SoftPath));
         }
+    }
+    else if (FClassProperty* ClassProp = CastField<FClassProperty>(Property))
+    {
+        UE_LOG(LogSekiroAIBridge, Log, TEXT("FClassProperty: Setting '%s' with ClassRef='%s'"), *PropName, *Value);
+
+        // 使用 ImportText_Direct 设置 Blueprint 类引用，避免 SetObjectPropertyValue 的 IsA<UClass> 断言
+        // TSubclassOf 在 UE5.2 中可能编译为 FObjectProperty 而非 FClassProperty，
+        // 即使匹配到 FClassProperty，ContainerPtrToValuePtr 返回的地址可能不兼容
+        const FString ClassRef = FString::Printf(TEXT("Class'%s'"), *Value);
+        ClassProp->ImportText_Direct(*ClassRef, PropertyAddress, TargetObj, PPF_None);
     }
     else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
     {
@@ -1037,8 +1193,166 @@ FString USKBlueprintTool::HandleLayout(const TSharedPtr<FJsonObject>& Args, FStr
 }
 
 // ============================================================================
-// Helper
+// HandleSetupMaterial — 创建/获取材质并设置纹理参数
 // ============================================================================
+
+FString USKBlueprintTool::HandleSetupMaterial(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    UE_LOG(LogSekiroAIBridge, Log, TEXT("HandleSetupMaterial: path=%s"), *AssetPath);
+
+    // 加载或创建材质
+    UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, *AssetPath);
+    UE_LOG(LogSekiroAIBridge, Log, TEXT("  LoadObject -> %s"), Mat ? TEXT("found") : TEXT("null"));
+    if (!Mat)
+    {
+        // 尝试创建 MaterialInstanceConstant
+        FString ParentPath;
+        if (Args->TryGetStringField(TEXT("parent"), ParentPath) && !ParentPath.IsEmpty())
+        {
+            UE_LOG(LogSekiroAIBridge, Log, TEXT("  Loading parent: %s"), *ParentPath);
+            UMaterialInterface* ParentMat = LoadObject<UMaterialInterface>(nullptr, *ParentPath);
+            UE_LOG(LogSekiroAIBridge, Log, TEXT("  ParentMat -> %s"), ParentMat ? *ParentMat->GetName() : TEXT("null"));
+
+            if (ParentMat)
+            {
+                FString PkgName = FPackageName::GetLongPackagePath(AssetPath);
+                FString ObjName = FPackageName::GetShortName(AssetPath);
+                UE_LOG(LogSekiroAIBridge, Log, TEXT("  Creating MIC: Pkg=%s Obj=%s"), *PkgName, *ObjName);
+
+                UPackage* Pkg = CreatePackage(*PkgName);
+                if (Pkg) Pkg->SetFlags(RF_Public | RF_Standalone);
+                UE_LOG(LogSekiroAIBridge, Log, TEXT("  Package -> %s"), Pkg ? TEXT("ok") : TEXT("null"));
+
+                UMaterialInstanceConstant* MIC = NewObject<UMaterialInstanceConstant>(Pkg, FName(*ObjName), RF_Public | RF_Standalone);
+                UE_LOG(LogSekiroAIBridge, Log, TEXT("  NewObject MIC -> %s"), MIC ? TEXT("ok") : TEXT("null"));
+
+                if (MIC)
+                {
+                    MIC->SetParentEditorOnly(ParentMat);
+                    FTextureParameterValue TexParam;
+                    // 不再手动创建表达式节点，用 MIC 的纹理参数系统
+                    Mat = MIC;
+                    UE_LOG(LogSekiroAIBridge, Log, TEXT("  MIC created and parent set"));
+                }
+            }
+        }
+    }
+
+    if (!Mat)
+    {
+        OutError = FString::Printf(TEXT("无法创建或加载材质: %s"), *AssetPath);
+        return FString();
+    }
+
+    // 设置纹理参数
+    const TSharedPtr<FJsonObject>* TexturesObj = nullptr;
+    if (Args->TryGetObjectField(TEXT("textures"), TexturesObj))
+    {
+        for (const auto& Pair : (*TexturesObj)->Values)
+        {
+            FString ParamName = Pair.Key;
+            FString TexPath = Pair.Value->AsString();
+
+            UTexture* Tex = LoadObject<UTexture>(nullptr, *TexPath);
+            if (!Tex) continue;
+
+            // MaterialInstance 直接设参数
+            if (UMaterialInstanceConstant* MIC = Cast<UMaterialInstanceConstant>(Mat))
+            {
+                UE_LOG(LogSekiroAIBridge, Log, TEXT("  设置纹理: param=%s tex=%s"), *ParamName, *TexPath);
+                MIC->SetTextureParameterValueEditorOnly(FName(*ParamName), Tex);
+            }
+            // 独立 Material — 用材质编辑器 API
+            else if (UMaterial* SourceMat = Cast<UMaterial>(Mat))
+            {
+                UE_LOG(LogSekiroAIBridge, Log, TEXT("  独立Material纹理设置: 参数名=%s, 纹理=%s (暂不支持自动创建节点)"),
+                    *ParamName, *TexPath);
+            }
+        }
+    }
+
+    if (UMaterialInstanceConstant* MIC = Cast<UMaterialInstanceConstant>(Mat))
+    {
+        MIC->PostEditChange();
+    }
+
+    Mat->MarkPackageDirty();
+    // SaveAsset 保存 MaterialInstanceConstant
+    FString SavePath = AssetPath;
+    if (!SavePath.Contains(TEXT(".")))
+    {
+        SavePath += TEXT(".") + FPackageName::GetShortName(AssetPath);
+    }
+    UEditorAssetLibrary::SaveAsset(SavePath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("material"), AssetPath);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    if (Cast<UMaterialInstanceConstant>(Mat))
+        ResultObj->SetStringField(TEXT("type"), TEXT("MaterialInstance"));
+    else if (Cast<UMaterial>(Mat))
+        ResultObj->SetStringField(TEXT("type"), TEXT("Material"));
+    else
+        ResultObj->SetStringField(TEXT("type"), TEXT("Unknown"));
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleAssignMaterialSlot — 设置网格体材质槽
+// ============================================================================
+
+FString USKBlueprintTool::HandleAssignMaterialSlot(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString MeshPath = Args->GetStringField(TEXT("mesh_path"));
+    int32 SlotIndex = (int32)Args->GetNumberField(TEXT("slot_index"));
+    FString MaterialPath = Args->GetStringField(TEXT("material_path"));
+
+    USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
+    if (!Mesh)
+    {
+        OutError = FString::Printf(TEXT("SkeletalMesh未找到: %s"), *MeshPath);
+        return FString();
+    }
+
+    UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+    if (!Mat)
+    {
+        OutError = FString::Printf(TEXT("材质未找到: %s"), *MaterialPath);
+        return FString();
+    }
+
+    if (SlotIndex < 0 || SlotIndex >= Mesh->GetMaterials().Num())
+    {
+        OutError = FString::Printf(TEXT("材质槽索引 %d 无效 (共 %d 个槽)"),
+            SlotIndex, Mesh->GetMaterials().Num());
+        return FString();
+    }
+
+    // 设置材质槽 — 直接替换 FSkeletalMaterial 数组中的材质
+    Mesh->Modify();
+    Mesh->GetMaterials()[SlotIndex].MaterialInterface = Mat;
+    Mesh->PostEditChange();
+    Mesh->MarkPackageDirty();
+    UEditorAssetLibrary::SaveAsset(MeshPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("mesh"), MeshPath);
+    ResultObj->SetNumberField(TEXT("slot"), SlotIndex);
+    ResultObj->SetStringField(TEXT("material"), MaterialPath);
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
 
 UBlueprint* USKBlueprintTool::LoadBlueprint(const FString& AssetPath, FString& OutError)
 {

@@ -54,6 +54,9 @@ public class SekiroAIBridge : ModuleRules
             "PhysicsUtilities",
             "PhysicsCore",
 
+            // 材质编辑
+            "MaterialEditor",
+
             // 消息
             "ApplicationCore",
             "InputCore",

@@ -105,16 +105,36 @@ FString USKPythonTool::ExecuteScript(const FString& Script, FString& OutError)
         return FString();
     }
 
-    bool bSuccess = PythonPlugin->ExecPythonCommand(*Script);
+    FPythonCommandEx CmdEx;
+    CmdEx.Command = Script;
+    CmdEx.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
+
+    bool bSuccess = PythonPlugin->ExecPythonCommandEx(CmdEx);
     if (!bSuccess)
     {
-        OutError = TEXT("Python脚本执行失败");
+        OutError = CmdEx.CommandResult;
         return FString();
+    }
+
+    // 从 LogOutput 收集 print() 输出（CommandResult 在 ExecuteStatement 模式下始终为 None）
+    TArray<FString> OutputLines;
+    for (const FPythonLogOutputEntry& Entry : CmdEx.LogOutput)
+    {
+        if (!Entry.Output.IsEmpty())
+        {
+            OutputLines.Add(Entry.Output);
+        }
     }
 
     TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
     ResultObj->SetBoolField(TEXT("success"), true);
     ResultObj->SetStringField(TEXT("mode"), TEXT("script"));
+    ResultObj->SetStringField(TEXT("command_result"), CmdEx.CommandResult);
+
+    if (OutputLines.Num() > 0)
+    {
+        ResultObj->SetStringField(TEXT("output"), FString::Join(OutputLines, TEXT("\n")));
+    }
 
     FString Output;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
@@ -132,36 +152,46 @@ FString USKPythonTool::ExecuteFile(const FString& FilePath, const FString& Args,
         return FString();
     }
 
-    bool bSuccess;
+    FPythonCommandEx CmdEx;
     if (Args.IsEmpty())
     {
-        FString Command = FString::Printf(TEXT("exec(open(r'%s', encoding='utf-8').read())"), *FilePath);
-        bSuccess = PythonPlugin->ExecPythonCommand(*Command);
+        CmdEx.Command = FString::Printf(TEXT("exec(open(r'%s', encoding='utf-8').read())"), *FilePath);
+        CmdEx.ExecutionMode = EPythonCommandExecutionMode::ExecuteStatement;
     }
     else
     {
-        FPythonCommandEx CmdEx;
         CmdEx.Command = FString::Printf(TEXT("\"%s\" %s"), *FilePath, *Args);
         CmdEx.ExecutionMode = EPythonCommandExecutionMode::ExecuteFile;
         CmdEx.FileExecutionScope = EPythonFileExecutionScope::Private;
-        bSuccess = PythonPlugin->ExecPythonCommandEx(CmdEx);
-        if (!bSuccess)
-        {
-            OutError = CmdEx.CommandResult;
-            return FString();
-        }
     }
 
+    bool bSuccess = PythonPlugin->ExecPythonCommandEx(CmdEx);
     if (!bSuccess)
     {
-        OutError = FString::Printf(TEXT("Python文件执行失败: %s"), *FilePath);
+        OutError = CmdEx.CommandResult;
         return FString();
+    }
+
+    // 从 LogOutput 收集 print() 输出
+    TArray<FString> OutputLines;
+    for (const FPythonLogOutputEntry& Entry : CmdEx.LogOutput)
+    {
+        if (!Entry.Output.IsEmpty())
+        {
+            OutputLines.Add(Entry.Output);
+        }
     }
 
     TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
     ResultObj->SetBoolField(TEXT("success"), true);
     ResultObj->SetStringField(TEXT("mode"), TEXT("file"));
     ResultObj->SetStringField(TEXT("file"), FilePath);
+    ResultObj->SetStringField(TEXT("command_result"), CmdEx.CommandResult);
+
+    if (OutputLines.Num() > 0)
+    {
+        ResultObj->SetStringField(TEXT("output"), FString::Join(OutputLines, TEXT("\n")));
+    }
 
     FString Output;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =

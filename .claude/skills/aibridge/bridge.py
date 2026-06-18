@@ -495,8 +495,36 @@ async def cmd_blueprint(args):
             "name": "blueprint",
             "arguments": layout_args
         })
-    else:
-        return {"error": f"未知 Blueprint 操作: {action}，支持: create, addvar, addfunc, addnode, set_property, compile, layout"}
+    elif action == "setup_material":
+        if len(args) < 4:
+            return {"error": "用法: blueprint setup_material <材质路径> <父材质路径> <纹理键值对: BaseColor=纹理路径 Normal=ORM=...>"}
+        mat_args = {"action": "setup_material", "path": args[1], "parent": args[2]}
+        # 第三个参数: BaseColor=/path Normal=/path ORM=/path 格式
+        tex_dict = {}
+        if len(args) > 3:
+            for pair in args[3].split(" "):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    tex_dict[k] = v
+        if tex_dict:
+            import json as _json
+            mat_args["textures"] = tex_dict
+        return await send_request("tools/call", {
+            "name": "blueprint",
+            "arguments": mat_args
+        })
+    elif action == "assign_material_slot":
+        if len(args) < 4:
+            return {"error": "用法: blueprint assign_material_slot <网格体路径> <槽索引> <材质路径>"}
+        return await send_request("tools/call", {
+            "name": "blueprint",
+            "arguments": {
+                "action": "assign_material_slot",
+                "mesh_path": args[1],
+                "slot_index": int(args[2]),
+                "material_path": args[3]
+            }
+        })
 
 
 async def cmd_enhanced_input(args):
