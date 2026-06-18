@@ -17,10 +17,12 @@
 @.claude/rules/code-style.md
 @.claude/rules/cpp-workflow.md
 @.claude/rules/aibridge-workflow.md
+@.claude/rules/bug-fix-workflow.md
 
 **核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层负责编排具体工作流。
 **需要修改 `.h` / `.cpp` 时，必须先读取 cpp-workflow.md 然后按规则执行。**
 **操作 UE 编辑器时，必须先读取 aibridge-workflow.md 然后按规则执行。**
+**分析未知的 Bug/问题/错误时，必须先读取 bug-fix-workflow.md 然后按规则执行。**
 
 ## 技能（/ 命令）
 
