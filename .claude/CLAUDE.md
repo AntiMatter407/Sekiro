@@ -30,40 +30,25 @@
 |------|------|
 | `/aibridge` | 通过 TCP JSON-RPC 操控 UE5 编辑器（查询/编译/蓝图/资产/输入） |
 | `/sekiro-asset-import` | 只狼资产导入管线：解包→FLVER→JSON→UE 完整流程 |
-| `/plan` | 方案设计 + 任务拆分 → `Docs/plan/`，支持递归、追踪、修改 |
-| `/breakdown` | 需求拆分 → `Docs/breakdown/`，支持递归、追踪、修改 |
-| `/delegate` | 净化上下文，委托 subagent 处理复杂多步骤问题 |
-| `/reasoning` | 多专家并行分析复杂问题，产出方案文档 |
-| `/tech-design` | 技术方案 + Agent 派发 → `Docs/tech-designs/`，逐子任务推进 |
+| `/plan` | 方案设计 + 任务拆分 → `Docs/plan/`，追踪进度 |
+| `/delegate` | 将复杂问题委托给新 subagent，净化上下文专注处理 |
 | `/review` | 代码审查，风格问题自动修复，违规派发对应 Agent |
 
-## Agent
+## Agent 边界（强制）
 
-| Agent | 职责 | 代码位置 |
-|-------|------|---------|
-| plugin-programmer | C++ 插件接口（零硬编码，只引用引擎） | `Plugins/` |
-| gameplay-programmer | 游戏机制（战斗/移动/角色） | `Source/Sekiro/` |
-| script-agent | 管线脚本（编译/导入/编排） | `Script/` |
-| review-agent | 代码审查（被 `/review` 调用） | — |
-| function-validator | 功能验证（编译/AIBridge/脚本），不写代码 | — |
+| Agent | 职责 | 代码位置 | 禁止 |
+|-------|------|---------|------|
+| gameplay-programmer | 游戏机制（战斗/移动/角色） | `Source/Sekiro/` | 修改 Plugins/、构建文件 |
+| plugin-programmer | C++ 插件接口（零硬编码，只引用引擎） | `Plugins/` | 修改 Source/Sekiro/、硬编码路径 |
+| review-agent | 代码审查（被 /review 调用） | — | — |
+| expert-agent | 多角度分析（被 /reasoning 调用） | — | — |
 
 ## 工作流
 
 ```
-/plan <需求>               → Docs/plan/<需求>.md
-/breakdown <需求>          → Docs/breakdown/<需求>.md
-/tech-design <需求> <任务>  → Docs/tech-designs/<需求>-<任务>.md
-  → Agent 执行
-/review <范围>              → 审查报告 + 修复
+/plan <需求>        → 方案设计 + 任务拆分 → Docs/plan/<需求>.md
+/delegate <复杂问题>  → 开启 subagent 净化上下文 → 处理 → 返回结果
+/review <范围>           → 审查报告 + 修复
 ```
 
-所有对话、建议、文档使用**简体中文**。
-
-## 编码规则
-
-- **文件编码**：所有 Python 脚本（`.py`）必须使用 **UTF-8** 编码，禁止 GBK/BIG5 等。如发现文件被存为 GBK，需先转码后再修改。
-- **缩进**：统一使用 **4 空格**缩进，禁止混用 tab 和空格。
-
-## 临时脚本规则
-
-所有临时生成的脚本文件（如检查脚本、一次性验证脚本等），必须写入 `Script/temp/`，不得留在技能目录或其他位置。
+所有对话、建议、文档使用简体中文。

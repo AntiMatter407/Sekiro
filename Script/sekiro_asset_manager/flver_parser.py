@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 _PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
-_FLVER_TO_JSON_EXE = _PROJECT_DIR / "Tools" / "FlverToJson" / "publish2" / "FlverToJson.exe"
+_FLVER_TO_JSON_EXE = _PROJECT_DIR / "Script" / "sekiro_asset_manager" / "ext_tools" / "FlverToJson.exe"
 
 # ======================================================================
 # FLVER NodeFlags - match SoulsFormats.FLVER.Node.NodeFlags
@@ -194,7 +194,7 @@ class FlverParser:
         """Find FlverToJson.exe in various possible locations."""
         candidates = [
             _FLVER_TO_JSON_EXE,
-            _PROJECT_DIR / "Tools" / "FlverToJson" / "publish2" / "FlverToJson.exe",
+            _PROJECT_DIR / "Script" / "sekiro_asset_manager" / "ext_tools" / "FlverToJson.exe",
             _PROJECT_DIR / "Tools" / "FlverToJson" / "runner" / "FlverToJson.exe",
             _PROJECT_DIR / "Tools" / "FlverToJson" / "FlverToJson" / "bin" / "Release" / "net9.0-windows" / "FlverToJson.exe",
         ]

@@ -43,8 +43,8 @@ Review Agent 对比以下规则进行检查：
 | `.claude/rules/code-style.md` | 命名前缀、UPROPERTY 格式、注释规范等 |
 | `.claude/agents/plugin-programmer.md` | 插件零硬编码、依赖方向等硬性约束 |
 | `.claude/agents/gameplay-programmer.md` | 游戏代码编码规范 |
-| `Docs/tech-designs/<需求>.md` | 技术方案中的 API 设计、涉及文件等 |
-| `Docs/breakdown/<需求>.md` | 需求任务树的完成标准 |
+| `Docs/design/<需求>.md` | 技术方案中的 API 设计、涉及文件等 |
+| `Docs/plan/<需求>.md` | 需求任务树的完成标准 |
 
 ## 输出格式
 

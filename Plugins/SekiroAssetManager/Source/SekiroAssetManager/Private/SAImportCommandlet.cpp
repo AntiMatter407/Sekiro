@@ -119,6 +119,13 @@ int32 USAImportCommandlet::Main(const FString& Params)
         }
         }
 
+        // Fallback: derive AssetName from OutputBasePath last component
+        if (AnimAssetName.IsEmpty())
+        {
+            AnimAssetName = FPaths::GetCleanFilename(OutputBasePath);
+        }
+        UE_LOG(LogTemp, Display, TEXT("  AnimAssetName: %s"), *AnimAssetName);
+
         // Try loading skeleton (use -Skeleton override or derive from AssetName)
     USkeleton* Skeleton = nullptr;
     USkeletalMesh* PreviewMesh = nullptr;
@@ -127,6 +134,7 @@ int32 USAImportCommandlet::Main(const FString& Params)
     FString SkelName = SkeletonOverride;
     if (SkelName.IsEmpty())
         SkelName = AnimAssetName.IsEmpty() ? TEXT("Sekiro_Skeleton") : AnimAssetName + TEXT("_Skeleton");
+    FString ModelName = AnimAssetName.IsEmpty() ? TEXT("Sekiro_Model") : AnimAssetName + TEXT("_Model");
     UE_LOG(LogTemp, Display, TEXT("  Looking for skeleton: %s"), *SkelName);
 
     // First: load by UE object path
@@ -134,7 +142,7 @@ int32 USAImportCommandlet::Main(const FString& Params)
     Skeleton = LoadObject<USkeleton>(nullptr, *SkeletonPath);
     if (Skeleton)
         UE_LOG(LogTemp, Display, TEXT("  Found skeleton at: %s"), *SkeletonPath);
-        FString PreviewMeshPath = FString::Printf(TEXT("%s/%s.%s"), *OutputBasePath, TEXT("Sekiro_Model"), TEXT("Sekiro_Model"));
+        FString PreviewMeshPath = FString::Printf(TEXT("%s/%s.%s"), *OutputBasePath, *ModelName, *ModelName);
         PreviewMesh = LoadObject<USkeletalMesh>(nullptr, *PreviewMeshPath);
         if (PreviewMesh) UE_LOG(LogTemp, Display, TEXT("  Preview mesh: %s"), *PreviewMeshPath);
 
@@ -142,7 +150,7 @@ int32 USAImportCommandlet::Main(const FString& Params)
         {
             // Second: load from mesh
             FString MeshPath = FString::Printf(TEXT("%s/%s.%s"),
-                *OutputBasePath, TEXT("Sekiro_Model"), TEXT("Sekiro_Model"));
+                *OutputBasePath, *ModelName, *ModelName);
             USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *MeshPath);
             if (Mesh)
             {

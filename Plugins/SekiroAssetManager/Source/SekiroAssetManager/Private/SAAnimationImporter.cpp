@@ -415,15 +415,20 @@ Controller.SetNumberOfFrames(FFrameNumber(NumFrames - 1));
             continue;
 
         FString AnimPackagePath;
+        FSAAnimClip NormalizedClip = Clip;  // mutable copy for name fix
         if (!AssetName.IsEmpty())
         {
-            AnimPackagePath = FString::Printf(TEXT("%s/Anim_%s_%s"), *BasePath, *AssetName, *Clip.Name);
+            // Strip existing asset prefix to avoid double prefix like Anim_Sekiro_Sekiro_xxx
+            FString Prefix = AssetName + TEXT("_");
+            FString CleanName = NormalizedClip.Name.StartsWith(Prefix) ? NormalizedClip.Name.RightChop(Prefix.Len()) : NormalizedClip.Name;
+            NormalizedClip.Name = FString::Printf(TEXT("%s_%s"), *AssetName, *CleanName);
+            AnimPackagePath = FString::Printf(TEXT("%s/Anim_%s"), *BasePath, *NormalizedClip.Name);
         }
         else
         {
-            AnimPackagePath = FString::Printf(TEXT("%s/Anim_%s"), *BasePath, *Clip.Name);
+            AnimPackagePath = FString::Printf(TEXT("%s/Anim_%s"), *BasePath, *NormalizedClip.Name);
         }
-        UAnimSequence* AnimSeq = Build(Clip, Skeleton, PreviewMesh, AnimPackagePath);
+        UAnimSequence* AnimSeq = Build(NormalizedClip, Skeleton, PreviewMesh, AnimPackagePath);
         if (AnimSeq) Results.Add(AnimSeq);
     }
 

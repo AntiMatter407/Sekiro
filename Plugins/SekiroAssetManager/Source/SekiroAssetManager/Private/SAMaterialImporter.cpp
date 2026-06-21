@@ -1,4 +1,4 @@
-﻿#include "SAMaterialImporter.h"
+#include "SAMaterialImporter.h"
 #include "Misc/PackageName.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -293,10 +293,10 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
     const ESekiroShaderType ST = Mat.ShaderType;
     EBlendMode BlendMode = BLEND_Opaque;
     bool bUsePBR = true;       // metallic + roughness slots
-    bool bUseSSS = false;      // subsurface shading model
+
     bool bUseEye = false;      // eye-specific (no metallic, emissive driven)
     float DefaultMetallic = 0.0f;
-    float DefaultRoughness = 0.5f;
+    float DefaultRoughness = 0.65f;
 
     switch (ST)
     {
@@ -311,9 +311,17 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
     case ESekiroShaderType::Cloth:
     case ESekiroShaderType::DetailBlendCloth:
     case ESekiroShaderType::FresnelBlendCloth:
+        BlendMode = BLEND_Masked;
+        bUsePBR = true;
+        DefaultRoughness = 0.8f;
+        Material->TwoSided = true;
+        break;
+
     case ESekiroShaderType::SSSCloth:
         BlendMode = BLEND_Masked;
         bUsePBR = true;
+     // Subsurface for thin fabric/SSS
+        DefaultRoughness = 0.7f;
         Material->TwoSided = true;
         break;
 
@@ -321,12 +329,14 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
     case ESekiroShaderType::Skin:
         BlendMode = BLEND_Opaque;
         bUsePBR = true;
-        bUseSSS = true;
+        
+        DefaultRoughness = 0.7f;   // skin is rough, prevents specular washout
         break;
 
     case ESekiroShaderType::Eye:
         BlendMode = BLEND_Opaque;
         bUsePBR = false;       // Eye uses emissive, not metallic
+        DefaultRoughness = 0.4f;   // eyes are slightly glossy
         break;
 
     case ESekiroShaderType::DetailBlend:
@@ -335,6 +345,7 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
     default:
         BlendMode = BLEND_Opaque;
         bUsePBR = true;
+        DefaultRoughness = 0.65f;  // non-metallic materials should be rougher
         break;
     }
 
@@ -352,12 +363,9 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
     if (!Material->TwoSided)
         Material->TwoSided = Mat.bTwoSided || Mat.bIsCloth || Mat.bIsDecal;
 
-    // Subsurface shading model
-    if (bUseSSS)
-    {
-        Material->SetShadingModel(MSM_Subsurface);
-        UE_LOG(LogTemp, Log, TEXT("[SAMaterialImporter]  '%s': Subsurface shading model"), *AssetName);
-    }
+
+
+
 
     UE_LOG(LogTemp, Log, TEXT("[SAMaterialImporter]  '%s': ShaderType=%d BlendMode=%d TwoSided=%d"),
         *AssetName, (int32)ST, (int32)BlendMode, Material->TwoSided ? 1 : 0);
@@ -419,6 +427,8 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
 
     TSet<EMaterialProperty> ConnectedProperties;
     TMap<FString, UMaterialExpressionTextureSample*> SemanticSampleMap;
+    // Track current blend output per semantic for multi-entry chaining
+    TMap<FString, UMaterialExpression*> BlendedOutputMap;
 
     // Track albedo for Translucent alpha connection
     UMaterialExpressionTextureSample* AlbedoSample = nullptr;
@@ -445,6 +455,7 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
         // Set sampler type per semantic (uses centralized SamplerTypeForSemantic)
         TexSample->SamplerType = SamplerTypeForSemantic(Slot.SemanticKey);
         SemanticSampleMap.Add(Slot.SemanticKey, TexSample);
+        BlendedOutputMap.Add(Slot.SemanticKey, TexSample);
 
         if (UMaterialEditingLibrary::ConnectMaterialProperty(TexSample, TEXT(""), Slot.Property))
         {
@@ -458,279 +469,79 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
 
     // ========================================================================
     // Multi-entry texture blending
-    //   Blend strategy depends on ShaderType + Semantic:
-    //   - albedo (DetailBlend/Fur/Cloth): Overlay (Multiply+Screen)
-    //   - albedo (Standard/SSS/Skin):     Lerp(base, detail, 0.33)
-    //   - normal (all):                   BlendAngleCorrectedNormals
-    //   - roughness/metallic:             Lerp(base, detail, 0.33)
+    //   Simple Lerp chain: each detail blends with the accumulated result of previous details.
+    //   Always use default output pin ("") for both TextureSample and Lerp nodes.
     // ========================================================================
     {
-        TArray<TPair<FString, UTexture2D*>> MultiEntries;
+        TMap<FString, TArray<TPair<FString, UTexture2D*>>> MultiBySemantic;
         for (const auto& P : LoadedTextures)
         {
             if (P.Key.Contains(TEXT(":")))
-                MultiEntries.Add(TPair<FString, UTexture2D*>(P.Key, P.Value));
+            {
+                int32 ColonIdx = 0;
+                P.Key.FindChar(TCHAR(':'), ColonIdx);
+                FString BaseSem = P.Key.Left(ColonIdx);
+                int32 DetailIdx = FCString::Atoi(*P.Key.RightChop(ColonIdx + 1));
+                if (DetailIdx >= 1 && BlendedOutputMap.Contains(BaseSem))
+                    MultiBySemantic.FindOrAdd(BaseSem).Add(TPair<FString, UTexture2D*>(P.Key, P.Value));
+            }
         }
 
-        for (const auto& Entry : MultiEntries)
+        for (auto& SemPair : MultiBySemantic)
         {
-            const FString& Key = Entry.Key;
-            UTexture2D* DetailTex = Entry.Value;
-            if (!DetailTex) continue;
+            const FString& Sem = SemPair.Key;
+            EMaterialProperty Prop = PropertyForSemantic(*Sem);
+            if (Prop == MP_MAX) continue;
 
-            int32 ColonIdx = 0;
-            Key.FindChar(TCHAR(':'), ColonIdx);
-            FString BaseSemantic = Key.Left(ColonIdx);
-            int32 DetailIdx = FCString::Atoi(*Key.RightChop(ColonIdx + 1));
-            if (DetailIdx < 1) continue;
+            UMaterialExpression* Current = BlendedOutputMap.FindRef(Sem);
+            if (!Current) continue;
 
-            EMaterialProperty TargetProp = PropertyForSemantic(*BaseSemantic);
-            if (TargetProp == MP_MAX) continue;
-
-            UTexture2D* const* BaseTexPtr = LoadedTextures.Find(BaseSemantic);
-            if (!BaseTexPtr || !*BaseTexPtr) continue;
-
-            uint8 NodeY = 400 - (uint8)(DetailIdx * 250);
-
-            // (1) Detail texture sample
-            UMaterialExpressionTextureSample* DSample = Cast<UMaterialExpressionTextureSample>(
-                UMaterialEditingLibrary::CreateMaterialExpression(
-                    Material, UMaterialExpressionTextureSample::StaticClass(), -400, NodeY));
-            if (!DSample) continue;
-            DSample->Texture = DetailTex;
-            DSample->SamplerType = SamplerTypeForSemantic(*BaseSemantic);
-
-            UMaterialExpressionTextureSample* const* BaseSamplePtr = SemanticSampleMap.Find(BaseSemantic);
-            if (!BaseSamplePtr || !*BaseSamplePtr) continue;
-
-            const bool bIsAlbedo = (TargetProp == MP_BaseColor);
-            const bool bIsNormal = (TargetProp == MP_Normal);
-            const bool bIsOverlay = bIsAlbedo && (
-                Mat.ShaderType == ESekiroShaderType::Fur ||
-                Mat.ShaderType == ESekiroShaderType::DetailBlend ||
-                Mat.ShaderType == ESekiroShaderType::Cloth ||
-                Mat.ShaderType == ESekiroShaderType::DetailBlendCloth ||
-                Mat.ShaderType == ESekiroShaderType::FurCloth ||
-                Mat.ShaderType == ESekiroShaderType::FresnelBlendCloth ||
-                Mat.ShaderType == ESekiroShaderType::SSSCloth);
-
-            const bool bUseLerp = !bIsNormal && !bIsOverlay;
-
-            if (bUseLerp)
+            uint8 Idx = 1;
+            for (const auto& Entry : SemPair.Value)
             {
-                // ?? Lerp Blend: albedo(Standard/SSS/Skin) or roughness/metallic ??
-                FString ParamName = FString::Printf(TEXT("BlendWeight_%s_%d"), *BaseSemantic, DetailIdx);
+                UTexture2D* Tex = Entry.Value;
+                if (!Tex) continue;
+
+                int32 Y = 400 - (int32)(Idx * 200);
+
+                auto* Sample = Cast<UMaterialExpressionTextureSample>(
+                    UMaterialEditingLibrary::CreateMaterialExpression(
+                        Material, UMaterialExpressionTextureSample::StaticClass(), -400, Y));
+                if (!Sample) continue;
+                Sample->Texture = Tex;
+                Sample->SamplerType = SamplerTypeForSemantic(*Sem);
+
+                FString PName = FString::Printf(TEXT("Blend_%s_%d"), *Sem, Idx);
                 auto* Factor = Cast<UMaterialExpressionScalarParameter>(
                     UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionScalarParameter::StaticClass(), -200, NodeY + 40));
+                        Material, UMaterialExpressionScalarParameter::StaticClass(), -200, Y + 40));
                 if (!Factor) continue;
-                Factor->ParameterName = FName(*ParamName);
-                Factor->DefaultValue = 0.33f;
+                Factor->ParameterName = FName(*PName);
+                Factor->DefaultValue = 0.15f;
                 Factor->Group = TEXT("MultiEntry");
 
                 auto* Lerp = Cast<UMaterialExpressionLinearInterpolate>(
                     UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionLinearInterpolate::StaticClass(), 0, NodeY + 20));
+                        Material, UMaterialExpressionLinearInterpolate::StaticClass(), 0, Y + 20));
                 if (!Lerp) continue;
 
+                // Use default output ("") for both TextureSample and Lerp
                 UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(*BaseSamplePtr), TEXT("RGB"),
-                    Cast<UMaterialExpression>(Lerp), TEXT("A"));
+                    Current, TEXT(""), Lerp, TEXT("A"));
                 UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(DSample), TEXT("RGB"),
-                    Cast<UMaterialExpression>(Lerp), TEXT("B"));
+                    Cast<UMaterialExpression>(Sample), TEXT(""), Lerp, TEXT("B"));
                 UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Factor), TEXT(""),
-                    Cast<UMaterialExpression>(Lerp), TEXT("Alpha"));
-                UMaterialEditingLibrary::ConnectMaterialProperty(
-                    Cast<UMaterialExpression>(Lerp), TEXT(""), TargetProp);
+                    Cast<UMaterialExpression>(Factor), TEXT(""), Lerp, TEXT("Alpha"));
 
-                UE_LOG(LogTemp, Log, TEXT("[SAMaterialImporter] Multi-entry Lerp: %s:%d -> property %d  param='%s'"),
-                    *BaseSemantic, DetailIdx, (int32)TargetProp, *ParamName);
+                Current = Lerp;
+                Idx++;
             }
-            else if (bIsOverlay)
+
+            if (Current)
             {
-                // ?? Overlay Blend: albedo for Fur/DetailBlend/Cloth shaders ??
-                // Overlay = base < 0.5 ? 2*base*detail : 1-2*(1-base)*(1-detail)
-                // Step: Multiply(base, detail) -> Multiply(2) -> ... [complex]
-                // Simplified: just use Lerp with 0.5 blend for now
-                // TODO: implement full Overlay blend with ComponentMask, Multiply, Add, Subtract
-                FString ParamName = FString::Printf(TEXT("BlendWeight_%s_%d"), *BaseSemantic, DetailIdx);
-                auto* Factor = Cast<UMaterialExpressionScalarParameter>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionScalarParameter::StaticClass(), -200, NodeY + 40));
-                if (!Factor) continue;
-                Factor->ParameterName = FName(*ParamName);
-                Factor->DefaultValue = 0.5f;
-                Factor->Group = TEXT("MultiEntry");
-
-                auto* Lerp = Cast<UMaterialExpressionLinearInterpolate>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionLinearInterpolate::StaticClass(), 0, NodeY + 20));
-                if (!Lerp) continue;
-
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(*BaseSamplePtr), TEXT("RGB"),
-                    Cast<UMaterialExpression>(Lerp), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(DSample), TEXT("RGB"),
-                    Cast<UMaterialExpression>(Lerp), TEXT("B"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Factor), TEXT(""),
-                    Cast<UMaterialExpression>(Lerp), TEXT("Alpha"));
-                UMaterialEditingLibrary::ConnectMaterialProperty(
-                    Cast<UMaterialExpression>(Lerp), TEXT(""), TargetProp);
-
-                UE_LOG(LogTemp, Log, TEXT("[SAMaterialImporter] Multi-entry Overlay(apx): %s:%d -> property %d  param='%s'"),
-                    *BaseSemantic, DetailIdx, (int32)TargetProp, *ParamName);
-            }
-            else if (bIsNormal)
-            {
-                // ?? BlendAngleCorrectedNormals ??
-                // Formula: normalize(base*2-1 + detail*2-1) -> (result+1)/2
-                // Using individual expression nodes for full math
-
-                // Expand base normal from [0,1] to [-1,1]: Base*2 - 1
-                auto* MulBase = Cast<UMaterialExpressionMultiply>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionMultiply::StaticClass(), -200, NodeY));
-                auto* Const2a = Cast<UMaterialExpressionConstant3Vector>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionConstant3Vector::StaticClass(), -350, NodeY - 30));
-                if (!MulBase || !Const2a) continue;
-                Const2a->Constant = FLinearColor(2.0f, 2.0f, 2.0f);
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(*BaseSamplePtr), TEXT("RGB"),
-                    Cast<UMaterialExpression>(MulBase), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Const2a), TEXT(""),
-                    Cast<UMaterialExpression>(MulBase), TEXT("B"));
-
-                auto* SubBase = Cast<UMaterialExpressionSubtract>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionSubtract::StaticClass(), -50, NodeY));
-                auto* Const1a = Cast<UMaterialExpressionConstant3Vector>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionConstant3Vector::StaticClass(), -200, NodeY - 50));
-                if (!SubBase || !Const1a) continue;
-                Const1a->Constant = FLinearColor(1.0f, 1.0f, 1.0f);
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(MulBase), TEXT(""),
-                    Cast<UMaterialExpression>(SubBase), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Const1a), TEXT(""),
-                    Cast<UMaterialExpression>(SubBase), TEXT("B"));
-
-                // Expand detail normal from [0,1] to [-1,1]: Detail*2 - 1
-                auto* MulDet = Cast<UMaterialExpressionMultiply>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionMultiply::StaticClass(), -200, NodeY - 120));
-                auto* Const2b = Cast<UMaterialExpressionConstant3Vector>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionConstant3Vector::StaticClass(), -350, NodeY - 150));
-                if (!MulDet || !Const2b) continue;
-                Const2b->Constant = FLinearColor(2.0f, 2.0f, 2.0f);
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(DSample), TEXT("RGB"),
-                    Cast<UMaterialExpression>(MulDet), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Const2b), TEXT(""),
-                    Cast<UMaterialExpression>(MulDet), TEXT("B"));
-
-                auto* SubDet = Cast<UMaterialExpressionSubtract>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionSubtract::StaticClass(), -50, NodeY - 120));
-                auto* Const1b = Cast<UMaterialExpressionConstant3Vector>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionConstant3Vector::StaticClass(), -200, NodeY - 170));
-                if (!SubDet || !Const1b) continue;
-                Const1b->Constant = FLinearColor(1.0f, 1.0f, 1.0f);
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(MulDet), TEXT(""),
-                    Cast<UMaterialExpression>(SubDet), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Const1b), TEXT(""),
-                    Cast<UMaterialExpression>(SubDet), TEXT("B"));
-
-                // Add expanded normals: BaseExp + DetailExp
-                auto* AddN = Cast<UMaterialExpressionAdd>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionAdd::StaticClass(), 100, NodeY - 60));
-                if (!AddN) continue;
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(SubBase), TEXT(""),
-                    Cast<UMaterialExpression>(AddN), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(SubDet), TEXT(""),
-                    Cast<UMaterialExpression>(AddN), TEXT("B"));
-
-                // Normalize: AddN / sqrt(dot(AddN, AddN))
-                auto* Dot = Cast<UMaterialExpressionDotProduct>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionDotProduct::StaticClass(), 250, NodeY - 60));
-                if (!Dot) continue;
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(AddN), TEXT(""),
-                    Cast<UMaterialExpression>(Dot), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(AddN), TEXT(""),
-                    Cast<UMaterialExpression>(Dot), TEXT("B"));
-
-                auto* SqrtN = Cast<UMaterialExpressionSquareRoot>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionSquareRoot::StaticClass(), 400, NodeY - 60));
-                if (!SqrtN) continue;
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Dot), TEXT(""),
-                    Cast<UMaterialExpression>(SqrtN), TEXT(""));
-
-                auto* DivN = Cast<UMaterialExpressionDivide>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionDivide::StaticClass(), 550, NodeY - 60));
-                if (!DivN) continue;
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(AddN), TEXT(""),
-                    Cast<UMaterialExpression>(DivN), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(SqrtN), TEXT(""),
-                    Cast<UMaterialExpression>(DivN), TEXT("B"));
-
-                // Pack back to [0,1]: (Normalized + 1) / 2
-                auto* Add1 = Cast<UMaterialExpressionAdd>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionAdd::StaticClass(), 700, NodeY - 60));
-                auto* Const1c = Cast<UMaterialExpressionConstant3Vector>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionConstant3Vector::StaticClass(), 650, NodeY - 100));
-                if (!Add1 || !Const1c) continue;
-                Const1c->Constant = FLinearColor(1.0f, 1.0f, 1.0f);
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(DivN), TEXT(""),
-                    Cast<UMaterialExpression>(Add1), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Const1c), TEXT(""),
-                    Cast<UMaterialExpression>(Add1), TEXT("B"));
-
-                auto* Div2 = Cast<UMaterialExpressionDivide>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionDivide::StaticClass(), 850, NodeY - 60));
-                auto* Const2c = Cast<UMaterialExpressionConstant3Vector>(
-                    UMaterialEditingLibrary::CreateMaterialExpression(
-                        Material, UMaterialExpressionConstant3Vector::StaticClass(), 800, NodeY - 100));
-                if (!Div2 || !Const2c) continue;
-                Const2c->Constant = FLinearColor(2.0f, 2.0f, 2.0f);
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Add1), TEXT(""),
-                    Cast<UMaterialExpression>(Div2), TEXT("A"));
-                UMaterialEditingLibrary::ConnectMaterialExpressions(
-                    Cast<UMaterialExpression>(Const2c), TEXT(""),
-                    Cast<UMaterialExpression>(Div2), TEXT("B"));
-
-                UMaterialEditingLibrary::ConnectMaterialProperty(
-                    Cast<UMaterialExpression>(Div2), TEXT(""), TargetProp);
-
-                UE_LOG(LogTemp, Log, TEXT("[SAMaterialImporter] Multi-entry BlendAngleCorrectedNormals: %s:%d"),
-                    *BaseSemantic, DetailIdx);
+                UMaterialEditingLibrary::ConnectMaterialProperty(Current, TEXT(""), Prop);
+                UE_LOG(LogTemp, Log, TEXT("[SAMaterialImporter] Multi-entry chain '%s': %d detail(s)"),
+                    *Sem, SemPair.Value.Num());
             }
         }
     }
@@ -754,6 +565,19 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
         const bool bFur = (ST == ESekiroShaderType::Fur || ST == ESekiroShaderType::FurCloth);
         const bool bEye = (ST == ESekiroShaderType::Eye);
 
+        // Default AO for materials without ao texture (prevents flat/washed-out look)
+        if (!ConnectedProperties.Contains(MP_AmbientOcclusion))
+        {
+            UMaterialExpression* Expr = UMaterialEditingLibrary::CreateMaterialExpression(
+                Material, UMaterialExpressionConstant::StaticClass(), -200, -850);
+            if (UMaterialExpressionConstant* C = Cast<UMaterialExpressionConstant>(Expr))
+            {
+                C->R = 0.6f;  // moderate occlusion darkens crevices naturally
+                UMaterialEditingLibrary::ConnectMaterialProperty(C, TEXT(""), MP_AmbientOcclusion);
+                ConnectedProperties.Add(MP_AmbientOcclusion);
+            }
+        }
+
         if (bFur)
         {
             // Fur: Metallic=0, Roughness=0.6
@@ -773,7 +597,7 @@ UMaterial* SAMaterialImporter::BuildSingle(const FSAImportMaterial& Mat,
                     Material, UMaterialExpressionConstant::StaticClass(), -200, -700);
                 if (UMaterialExpressionConstant* C = Cast<UMaterialExpressionConstant>(Expr))
                 {
-                    C->R = 0.6f;
+                    C->R = DefaultRoughness;
                     UMaterialEditingLibrary::ConnectMaterialProperty(C, TEXT(""), MP_Roughness);
                 }
             }

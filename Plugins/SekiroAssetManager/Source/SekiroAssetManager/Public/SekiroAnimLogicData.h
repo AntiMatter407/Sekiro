@@ -147,11 +147,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FrameFlags")
 	TMap<int32, FSKAnimFrameData> AnimFrameFlags;                   // AnimID 鈫?甯х骇琛屼负鏍囧織
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
-	TMap<int32, FString> AnimNameMap;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
 	TMap<FString, FSKAnimIDList> CategoryAnimMap;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
+    TMap<int32, FString> AnimPrefixMap;  // AnimID → 动画前缀 (a000, a010, a200...)
 
 	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
 	bool CanCancelTo(int32 AnimID, float CurrentTime, FName TargetAction, float& OutCrossfade) const;

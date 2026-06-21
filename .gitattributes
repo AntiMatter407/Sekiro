@@ -1,24 +1,24 @@
-ï»¿# é”å®šæ‰€æœ‰æºç æ–‡ä»¶ä¸º LFï¼Œé˜²æ­¢ autocrlf å¯¼è‡´æ— ä¿®æ”¹é‡ç¼–è¯‘
-*.cpp    text eol=lf
-*.h      text eol=lf
-*.hpp    text eol=lf
-*.c      text eol=lf
-*.cs     text eol=lf
-*.py     text eol=lf
-*.lua    text eol=lf
-*.ini    text eol=lf
-*.toml   text eol=lf
-*.json   text eol=lf
-*.md     text eol=lf
-*.uproject text eol=lf
-*.uplugin  text eol=lf
-*.Build.cs  text eol=lf
-*.Target.cs text eol=lf
+# Windows Ä¬ÈÏ£º´ÅÅÌ CRLF£¬²Ö¿â LF£¨ÓÉ core.autocrlf=true ¿ØÖÆ£©
+*.cpp    text
+*.h      text
+*.hpp    text
+*.c      text
+*.cs     text
+*.py     text
+*.lua    text
+*.ini    text
+*.toml   text
+*.json   text
+*.md     text
+*.uproject text
+*.uplugin  text
+*.Build.cs  text
+*.Target.cs text
 
-# UE äºŒè¿›åˆ¶èµ„æº
+# UE ¶ş½øÖÆ×ÊÔ´
 *.uasset binary
 *.umap   binary
 
-# è„šæœ¬æ–‡ä»¶
-*.sh     text eol=lf
-*.ps1    text eol=lf
+# ½Å±¾ÎÄ¼ş
+*.sh     text
+*.ps1    text

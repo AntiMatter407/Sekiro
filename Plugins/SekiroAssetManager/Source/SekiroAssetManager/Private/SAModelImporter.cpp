@@ -1,4 +1,4 @@
-﻿#include "SAModelImporter.h"
+#include "SAModelImporter.h"
 #include "Misc/FileHelper.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -168,6 +168,28 @@ void SAModelImporter::ParseMaterials(
                     for (const auto& Pair : (*TexObj)->Values)
                         Mat->ResolvedTextures.Add(Pair.Key, Pair.Value->AsString());
             }
+
+            // ShaderType and ShaderPath from ResolvedMaterials (authoritative)
+            FString RmShaderType;
+            if ((*RmObj)->TryGetStringField(TEXT("ShaderType"), RmShaderType) && !RmShaderType.IsEmpty())
+            {
+                static TMap<FString, ESekiroShaderType> RmShaderTypeMap = {
+                    { TEXT("Standard"),         ESekiroShaderType::Standard },
+                    { TEXT("SSS"),              ESekiroShaderType::SSS },
+                    { TEXT("Fur"),              ESekiroShaderType::Fur },
+                    { TEXT("DetailBlend"),      ESekiroShaderType::DetailBlend },
+                    { TEXT("FurCloth"),         ESekiroShaderType::FurCloth },
+                    { TEXT("DetailBlendCloth"), ESekiroShaderType::DetailBlendCloth },
+                    { TEXT("FresnelBlend"),     ESekiroShaderType::FresnelBlend },
+                    { TEXT("FresnelBlendCloth"),ESekiroShaderType::FresnelBlendCloth },
+                    { TEXT("SSSCloth"),         ESekiroShaderType::SSSCloth },
+                    { TEXT("Skin"),             ESekiroShaderType::Skin },
+                    { TEXT("Eye"),              ESekiroShaderType::Eye },
+                    { TEXT("Cloth"),            ESekiroShaderType::Cloth },
+                };
+                Mat->ShaderType = RmShaderTypeMap.FindRef(RmShaderType);
+            }
+            (*RmObj)->TryGetStringField(TEXT("ShaderPath"), Mat->ShaderPath);
 
             FString RmBlend;
             if ((*RmObj)->TryGetStringField(TEXT("ResolvedBlendMode"), RmBlend) && !RmBlend.IsEmpty())
