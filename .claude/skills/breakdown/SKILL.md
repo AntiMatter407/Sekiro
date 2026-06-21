@@ -1,4 +1,4 @@
----
+﻿---
 name: breakdown
 description: "需求拆分与追踪工具。将需求智能拆分为可执行的子任务树，生成结构化文档并持续追踪进度。"
 ---
@@ -10,14 +10,14 @@ description: "需求拆分与追踪工具。将需求智能拆分为可执行的
 | 命令 | 作用 |
 |------|------|
 | `/breakdown <需求描述>` | 创建新需求文档，智能拆分并输出任务树 |
-| `/breakdown list` | 列出 `.claude/docs/breakdown/` 中所有需求及状态 |
+| `/breakdown list` | 列出 `Docs/breakdown/` 中所有需求及状态 |
 | `/breakdown <名称>` | 打开指定需求文档，恢复/继续/修改该需求 |
 
-`<名称>` 匹配 `.claude/docs/breakdown/` 中的文件名（不含 `.md`），支持模糊匹配。
+`<名称>` 匹配 `Docs/breakdown/` 中的文件名（不含 `.md`），支持模糊匹配。
 
 ## 文档模板
 
-新建需求时，在 `.claude/docs/breakdown/<slug>.md` 创建：
+新建需求时，在 `Docs/breakdown/<slug>.md` 创建：
 
 ```markdown
 # [需求名称]
@@ -57,7 +57,7 @@ description: "需求拆分与追踪工具。将需求智能拆分为可执行的
 
 1. AI 分析需求后，**先在对话中输出任务树草稿**
 2. 用户可以增删改任意任务、调整依赖、修改描述
-3. 用户确认（"OK / 写入 / 下一步"）后，AI 写入 `.claude/docs/breakdown/<slug>.md`
+3. 用户确认（"OK / 写入 / 下一步"）后，AI 写入 `Docs/breakdown/<slug>.md`
 4. 后续修改任务时，同样先展示变更 → 确认 → 再写入
 5. 递归拆分时，每层都需要确认
 
@@ -89,4 +89,4 @@ description: "需求拆分与追踪工具。将需求智能拆分为可执行的
 
 ### 写入路径
 
-所有 breakdown 文档统一写入 `.claude/docs/breakdown/`。
+所有 breakdown 文档统一写入 `Docs/breakdown/`。

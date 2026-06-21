@@ -1,4 +1,4 @@
----
+﻿---
 name: reasoning
 description: "推理分析技能。将复杂问题派发给多个专家 Agent 并行/串行分析，支持多方案对比、评审迭代。"
 ---
@@ -34,7 +34,7 @@ description: "推理分析技能。将复杂问题派发给多个专家 Agent �
              → 可多轮迭代
       │
   2. 展示推理过程/结果
-  3. 产出最终方案文档 → `.claude/docs/tech-designs/` 或对话中输出
+  3. 产出最终方案文档 → `Docs/tech-designs/` 或对话中输出
 ```
 
 ## 多方案模式
@@ -84,7 +84,7 @@ const final = await agent(`根据评审意见修改方案。\n原方案：${plan
 
 ## 规则
 
-- **方案文档产出**：最终方案写入 `.claude/docs/tech-designs/`（格式与 tech-design 一致）
+- **方案文档产出**：最终方案写入 `Docs/tech-designs/`（格式与 tech-design 一致）
 - **告知使用模型**：向用户展示每个 Agent 使用了什么模型
 - **迭代上限**：最多 3 轮评审迭代，防止无限循环
 - **成本透明**：告知用户本次调用使用了几个 Agent、各用什么模型

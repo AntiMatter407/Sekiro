@@ -31,7 +31,7 @@ def _convert_image_to_png(img, png_path):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Texture scoring / matching
+# Texture cache
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_texture_cache(texture_root):
@@ -57,261 +57,39 @@ def strip_texture_suffix(stem):
     return stem, ''
 
 
-# Map shader parameter-name keywords to texture semantic suffixes.
-# ParamName examples from Sekiro FLVER:
-#   "Character_AMSN__DetailBlend__snp_Texture2D_7_AlbedoMap"
-#   "Character_AMSN__DetailBlend__snp_Texture2D_0_NormalMap"
-#   "Fur_NTC_snp_Texture2D_0_MetallicMap_0"
-PARAM_NAME_SEMANTIC_MAP = [
-    ('AlbedoMap', '_a'),
-    ('DiffuseMap', '_a'),
-    ('BaseColorMap', '_a'),
-    ('NormalMap', '_n'),
-    ('BumpMap', '_n'),
-    ('DetailBumpmap', '_n'),
-    ('SpecularMap', '_m'),
-    ('MetallicMap', '_m'),
-    ('ReflectanceMap', '_m'),
-    ('RoughnessMap', '_r'),
-    ('ShininessMap', '_r'),
-    ('AmbientOcclusionMap', '_ao'),
-    ('DisplacementMap', '_d'),
-    ('EmissiveMap', '_em'),
-    ('BloodMask', '_1m'),
-    ('SnowMask', '_1m'),
-]
-
-
-def param_name_to_suffix(param_name):
-    """Extract texture semantic suffix from a shader parameter name.
-    Returns a suffix like '_a', '_n', '_m', '_r' or None."""
-    if not param_name:
-        return None
-    low = param_name.lower()
-    for keyword, suffix in PARAM_NAME_SEMANTIC_MAP:
-        if keyword.lower() in low:
-            return suffix
-    return None
-
-
-def score_texture_candidate(mat_data, stem):
-    """Score how well a texture stem matches a material. Returns (score, suffix)."""
-    part = mat_data.get('Part', '').lower()
-    mat_name = mat_data.get('Name', '').lower()
-    mtd_base = os.path.splitext(os.path.basename(mat_data.get('MTD', '').replace('\\', '/')))[0].lower()
-    core, suffix = strip_texture_suffix(stem)
-
-    if suffix not in ('_a', '_n', '_m', '_r'):
-        return 0, suffix
-
-    if part and not stem.startswith(part.lower()):
-        # Face decal materials (HD_*) can use face textures (FC_*)
-        mtd_lower = mtd_base.lower()
-        if not ('decal' in mtd_lower and stem.startswith('fc_')):
-            return 0, suffix
-
-    part_prefix = part.lower() + '_'
-    mat_core = mat_name[len(part_prefix):] if mat_name.startswith(part_prefix) else mat_name
-    mtd_core = mtd_base[len('p_' + part_prefix):] if mtd_base.startswith('p_' + part_prefix) else mtd_base
-    tex_core = core[len(part_prefix):] if core.startswith(part_prefix) else core
-    if tex_core.endswith('_new'):
-        tex_core = tex_core[:-4]
-
-    haystack = f"{mat_core} {mtd_core}"
-    score = 0
-
-    if tex_core and tex_core in haystack:
-        score += 100
-
-    ignored = {'p', 'fb', 'm', 'e', 'a', 'cloth', 'material', 'new', '9000', '9510', '00'}
-    tex_tokens = [t for t in tex_core.replace('-', '_').split('_') if len(t) >= 2 and t not in ignored]
-    hay_tokens = haystack.replace('-', '_').replace('[a]', '').split('_')
-    for token in tex_tokens:
-        if token in haystack:
-            score += 20
-        else:
-            for ht in hay_tokens:
-                if len(token) >= 3 and len(ht) >= 3:
-                    if token.startswith(ht) or ht.startswith(token):
-                        score += 10
-                        break
-
-    # Type-match bonus for FC face/hair parts.
-    # Texture types (hair/head/beard/eye) → material MTD types (fur/head/decal/eye).
-    # Always applied (not just when score==0) to break ties between FC textures.
-    if part and part.startswith('fc_'):
-        _synonyms = {
-            'hair': ['fur', 'hair'],
-            'hair2': ['fur', 'fur2', 'hair'],
-            'head': ['head', 'face', 'skin', 'ao'],
-            'beard': ['beard', 'decal'],
-            'eye': ['eye'],
-            'skin': ['skin', 'head', 'face'],
-        }
-        for syn_key, syn_vals in _synonyms.items():
-            if syn_key in tex_core:
-                if any(sv in mtd_core for sv in syn_vals):
-                    score += 60
-                    break
-
-    if score == 0:
-        return 0, suffix
-    return score, suffix
-
-
-def assign_textures_globally(materials_data, dds_cache):
+def build_assigned_map_from_resolved(materials_data, dds_cache):
     """
-    Assign textures to materials. Multiple materials can share the same texture.
-    Pass 0: ParamName-based matching from FLVER texture metadata (new C# output).
-    Pass 1: score-based greedy assignment (one texture per suffix per material).
-    Pass 2: fallback — for materials without textures, assign any available
-    textures from the same part, preferring _a (albedo).
-    Returns: list of dicts, index matches materials_data.
+    Build assigned_map from ResolvedMaterials Textures.
+    materials_data: 模型 JSON 的 Materials 数组，每个元素应包含 ResolvedMaterials 字段。
+    dds_cache: stem→path 纹理缓存。
+    Returns: list of {suffix: abs_path}, index matches materials_data.
     """
-    suffixes = ('_a', '_n', '_m', '_r')
-    result = [{} for _ in materials_data]
-    filled_slots = set()
+    suffix_map = {
+        'albedo': '_a', 'diffuse': '_a', 'basecolor': '_a',
+        'normal': '_n', 'bump': '_n',
+        'metallic': '_m', 'specular': '_m', 'reflectance': '_m',
+        'roughness': '_r', 'shininess': '_r',
+    }
+    known_suffixes = ('_a', '_n', '_m', '_r')
 
-    # ---- Pass 0: ParamName-based matching from FLVER texture metadata ----
-    # The new C# output includes "Textures" as a list of {ParamName, Path, ...}
-    # and "AvailableTextures" as a list of filenames from the TPF directory.
-    for mi, mat_data in enumerate(materials_data):
-        flver_tex_list = mat_data.get('Textures', [])
-        avail_tex = mat_data.get('AvailableTextures', [])
-        # Detect new format: list of dicts with ParamName
-        if not isinstance(flver_tex_list, list) or not flver_tex_list:
-            continue
-        if not isinstance(flver_tex_list[0], dict):
-            continue  # old format: {suffix: path} dict
-
-        mat_part = mat_data.get('Part', '').lower()
-
-        for tex_entry in flver_tex_list:
-            param = tex_entry.get('ParamName', '')
-            suffix = param_name_to_suffix(param)
+    result = []
+    for mat_data in materials_data:
+        resolved = mat_data.get('ResolvedMaterials', {}) or {}
+        tex_map = resolved.get('Textures', {}) or {}
+        mat_map = {}
+        for raw_key, tex_filename in tex_map.items():
+            suffix = suffix_map.get(raw_key.lower())
+            if not suffix:
+                if raw_key in known_suffixes:
+                    suffix = raw_key
             if not suffix:
                 continue
-            slot = (mi, suffix)
-            if slot in filled_slots:
-                continue
-
-            # Try to find matching texture: first from AvailableTextures,
-            # then fall back to dds_cache by part prefix + suffix.
-            best_path = None
-            # Build a normalized cache of available filenames (stem→full_path)
-            avail_stems = {}
-            if avail_tex:
-                for fn in avail_tex:
-                    stem = os.path.splitext(fn)[0].lower()
-                    # Map to full path in dds_cache
-                    for cache_stem, cache_path in dds_cache.items():
-                        if cache_stem == stem:
-                            avail_stems[stem] = cache_path
-                            break
-
-            # Prefer textures whose stem starts with the material's part prefix
-            part_prefix = mat_part + '_' if mat_part else ''
-            for stem, path in avail_stems.items():
-                if stem.startswith(part_prefix) and stem.endswith(suffix):
-                    best_path = path
-                    break
-
-            # Fallback: any texture with matching suffix from available list
-            if best_path is None:
-                for stem, path in avail_stems.items():
-                    if stem.endswith(suffix):
-                        best_path = path
-                        break
-
-            # Last resort: search entire dds_cache by part+suffix
-            if best_path is None:
-                for stem, path in dds_cache.items():
-                    if stem.startswith(part_prefix) and stem.endswith(suffix):
-                        best_path = path
-                        break
-
-            if best_path:
-                result[mi][suffix] = best_path
-                filled_slots.add(slot)
-
-    # ---- Pass 1: Score-based greedy assignment (existing heuristic) ----
-    candidates = []
-    for mi, mat_data in enumerate(materials_data):
-        for stem, path in dds_cache.items():
-            score, suffix = score_texture_candidate(mat_data, stem)
-            if score > 0 and suffix in suffixes:
-                candidates.append((score, mi, suffix, path))
-
-    candidates.sort(key=lambda x: -x[0])
-
-    for score, mi, suffix, path in candidates:
-        slot = (mi, suffix)
-        if slot in filled_slots:
-            continue
-        result[mi][suffix] = path
-        filled_slots.add(slot)
-
-    # Fallback pass
-    part_textures = {}
-    for stem, path in dds_cache.items():
-        core, suffix = strip_texture_suffix(stem)
-        if suffix not in suffixes:
-            continue
-        for mi, mat_data in enumerate(materials_data):
-            p = mat_data.get('Part', '').lower()
-            if p and stem.startswith(p.lower() + '_'):
-                part_textures.setdefault(p, []).append((suffix, path))
-                break
-
-    for mi, mat_data in enumerate(materials_data):
-        part = mat_data.get('Part', '').lower()
-        if not part or part not in part_textures:
-            continue
-        if result[mi]:
-            continue
-        available = part_textures[part]
-        for preferred in ('_a', '_n', '_m'):
-            if (mi, preferred) in filled_slots:
-                continue
-            for suffix, path in available:
-                if suffix == preferred:
-                    result[mi][suffix] = path
-                    filled_slots.add((mi, suffix))
-                    break
-
-    # Decal cross-part override: non-FC face decal materials → FC_* face textures.
-    # Overwrites dummy/placeholder textures that HD parts ship with.
-    # FC_M parts already have correct textures from scoring — skip them.
-    face_cache = [(suffix, path) for stem, path in dds_cache.items()
-                  if stem.startswith('fc_') and (suffix := strip_texture_suffix(stem)[1]) in suffixes]
-    # head > skin > hair=hair2 > eye > beard > other
-    _fc_priority = {'head': 0, 'skin': 1, 'hair': 2, 'hair2': 2, 'eye': 3, 'beard': 4}
-    def _fc_sort_key(item):
-        suffix, path = item
-        stem = os.path.splitext(os.path.basename(path))[0].lower()
-        for key, pri in _fc_priority.items():
-            if key in stem:
-                return pri
-        return 5
-    face_cache.sort(key=_fc_sort_key)
-    if face_cache:
-        # Clear only non-FC decal materials (e.g. HD_* parts needing FC_* textures)
-        decal_materials = []
-        for mi, mat_data in enumerate(materials_data):
-            mtd = os.path.basename(mat_data.get('MTD', '').replace('\\', '/')).lower()
-            part = mat_data.get('Part', '').lower()
-            if 'decal' in mtd and not part.startswith('fc_'):
-                decal_materials.append(mi)
-                for suffix in list(result[mi].keys()):
-                    filled_slots.discard((mi, suffix))
-                result[mi].clear()
-        # Assign FC textures — first (best) match per suffix wins
-        for mi in decal_materials:
-            for suffix, path in face_cache:
-                slot = (mi, suffix)
-                if slot not in filled_slots:
-                    result[mi][suffix] = path
-                    filled_slots.add(slot)
+            tex_stem = os.path.splitext(os.path.basename(tex_filename))[0].lower()
+            if tex_stem in dds_cache:
+                mat_map[suffix] = dds_cache[tex_stem]
+            else:
+                print(f"  [ResolvedMaterials] 未找到纹理: {tex_filename} (stem={tex_stem})")
+        result.append(mat_map)
 
     return result
 
@@ -435,8 +213,16 @@ def _create_hair_material(face_cache, image_cache, get_or_load_image):
     return bmat
 
 
-def create_materials(materials_data, texture_root):
-    """Create Blender materials, copy used textures to flat Textures/ folder."""
+def create_materials(materials_data, texture_root, resolved_materials=None):
+    """
+    Create Blender materials, copy used textures to flat Textures/ folder.
+
+    Args:
+        materials_data: 模型 JSON 的 Materials 数组。
+        texture_root: 纹理搜索根目录。
+        resolved_materials: 可选的 ResolvedMaterials 列表（来自模型 JSON 根层级），
+                            包含 MTD+TPF 确定性的纹理映射、混合模式、双面渲染设置。
+    """
     import shutil
 
     dds_cache = build_texture_cache(texture_root)
@@ -444,7 +230,16 @@ def create_materials(materials_data, texture_root):
     dds_count = sum(1 for v in dds_cache.values() if v.endswith('.dds'))
     print(f"Found {png_count} PNG + {dds_count} DDS in cache")
 
-    assigned_map = assign_textures_globally(materials_data, dds_cache)
+    # 按名称索引 ResolvedMaterials，供后续 Pass 0.5 使用
+    resolved_by_name = {}
+    if resolved_materials:
+        for rm in resolved_materials:
+            name = rm.get('Name', '') or rm.get('name', '')
+            if name:
+                resolved_by_name[name] = rm
+        print(f"ResolvedMaterials: {len(resolved_by_name)} entries loaded")
+
+    assigned_map = build_assigned_map_from_resolved(materials_data, dds_cache)
     assigned_albedo = sum(1 for m in assigned_map if '_a' in m)
     assigned_normal = sum(1 for m in assigned_map if '_n' in m)
     assigned_any = sum(1 for m in assigned_map if m)
@@ -578,18 +373,35 @@ def create_materials(materials_data, texture_root):
             except Exception as e:
                 print(f"Texture load warning: {tex_path}: {e}")
 
-        # Blend mode: Decal→BLEND, Hair/Cloth→CLIP, others→OPAQUE
-        is_cloth_mat = any(kw in mat_low for kw in CLOTH_KEYWORDS)
-        if is_decal and node_a is not None:
-            links.new(node_a.outputs['Alpha'], bsdf.inputs['Alpha'])
-            bmat.blend_method = 'BLEND'
-            bmat.use_backface_culling = False
-        elif is_cloth_mat:
-            bmat.blend_method = 'CLIP'
-            bmat.use_backface_culling = False
-            bmat.alpha_threshold = 0.5
+        # Blend mode: 优先使用 ResolvedMaterials（确定性），再回退到旧逻辑
+        resolved_mat = resolved_by_name.get(mat_data.get('Name', '')) if resolved_by_name else None
+        if resolved_mat:
+            # 从 ResolvedMaterials 中读取确定性设置
+            resolved_blend = resolved_mat.get('ResolvedBlendMode', '') or resolved_mat.get('resolved_blend_mode', '')
+            resolved_two_sided = resolved_mat.get('TwoSided', False) or resolved_mat.get('two_sided', False)
+            if resolved_blend == 'Masked':
+                bmat.blend_method = 'CLIP'
+                bmat.alpha_threshold = 0.5
+            elif resolved_blend == 'Translucent':
+                bmat.blend_method = 'BLEND'
+                if node_a is not None:
+                    links.new(node_a.outputs['Alpha'], bsdf.inputs['Alpha'])
+            else:
+                bmat.blend_method = 'OPAQUE'
+            bmat.use_backface_culling = not resolved_two_sided
         else:
-            bmat.blend_method = 'OPAQUE'
+            # 回退逻辑：Decal→BLEND, Hair/Cloth→CLIP, others→OPAQUE
+            is_cloth_mat = any(kw in mat_low for kw in CLOTH_KEYWORDS)
+            if is_decal and node_a is not None:
+                links.new(node_a.outputs['Alpha'], bsdf.inputs['Alpha'])
+                bmat.blend_method = 'BLEND'
+                bmat.use_backface_culling = False
+            elif is_cloth_mat:
+                bmat.blend_method = 'CLIP'
+                bmat.use_backface_culling = False
+                bmat.alpha_threshold = 0.5
+            else:
+                bmat.blend_method = 'OPAQUE'
 
         blender_materials.append(bmat)
 
@@ -615,47 +427,48 @@ def create_materials(materials_data, texture_root):
         mat_data = materials_data[mi] if mi < len(materials_data) else None
         mtd = os.path.basename(mat_data.get('MTD', '').replace('\\', '/')).lower() if mat_data else ''
         mat_low = bmat.name.lower()
-        is_decal = 'decal' in mtd
-        # Use same CLOTH_KEYWORDS logic as Blender material creation (line 481)
-        # to keep blend mode consistent between FBX and UE5 JSON config.
-        is_cloth_mat = any(kw in mat_low for kw in CLOTH_KEYWORDS) or ('cloth' in mtd)
 
-        # Prefer MTD-parsed blend mode if available (from C# MTD parsing)
-        mtd_info = mat_data.get('MTDInfo', None) if mat_data else None
-        if mtd_info:
-            mtd_blend = mtd_info.get('BlendMode', '')
-            # MTD.BlendMode enum values -> UE5 blend mode
-            MTD_BLEND_TO_UE5 = {
-                'Normal': 'Opaque',
-                'TexEdge': 'Masked',
-                'Blend': 'Translucent',
-                'Water': 'Translucent',
-                'Add': 'Translucent',
-                'Sub': 'Translucent',
-                'Mul': 'Translucent',
-                'LSBlend': 'Translucent',
-                'LSAdd': 'Translucent',
-            }
-            if mtd_blend in MTD_BLEND_TO_UE5:
-                blend = MTD_BLEND_TO_UE5[mtd_blend]
+        # 优先使用 ResolvedMaterials 的确定性 blend mode / two-sided
+        resolved_mat = resolved_by_name.get(mat_data.get('Name', '')) if resolved_by_name and mat_data else None
+        if resolved_mat:
+            r_blend = resolved_mat.get('ResolvedBlendMode', '') or resolved_mat.get('resolved_blend_mode', '')
+            r_two_sided = resolved_mat.get('TwoSided', False) or resolved_mat.get('two_sided', False)
+            blend = r_blend if r_blend in ('Opaque', 'Masked', 'Translucent') else 'Opaque'
+            two_sided = bool(r_two_sided)
+        else:
+            # 回退逻辑：使用 MTDInfo 或关键字推断
+            is_decal = 'decal' in mtd
+            is_cloth_mat = any(kw in mat_low for kw in CLOTH_KEYWORDS) or ('cloth' in mtd)
+            mtd_info = mat_data.get('MTDInfo', None) if mat_data else None
+            if mtd_info:
+                mtd_blend = mtd_info.get('BlendMode', '')
+                MTD_BLEND_TO_UE5 = {
+                    'Normal': 'Opaque',
+                    'TexEdge': 'Masked',
+                    'Blend': 'Translucent',
+                    'Water': 'Translucent',
+                    'Add': 'Translucent',
+                    'Sub': 'Translucent',
+                    'Mul': 'Translucent',
+                    'LSBlend': 'Translucent',
+                    'LSAdd': 'Translucent',
+                }
+                if mtd_blend in MTD_BLEND_TO_UE5:
+                    blend = MTD_BLEND_TO_UE5[mtd_blend]
+                elif is_cloth_mat:
+                    blend = 'Masked'
+                elif is_decal:
+                    blend = 'Translucent'
+                else:
+                    blend = 'Opaque'
             elif is_cloth_mat:
                 blend = 'Masked'
             elif is_decal:
                 blend = 'Translucent'
             else:
                 blend = 'Opaque'
-        elif is_cloth_mat:
-            blend = 'Masked'
-        elif is_decal:
-            blend = 'Translucent'
-        else:
-            blend = 'Opaque'
-        cfg = {
-            'name': bmat.name,
-            'blend_mode': blend,
-            'two_sided': is_decal or is_cloth_mat,
-            'notes': 'Decal overlay - requires alpha blending' if is_decal else '',
-        }
+            two_sided = 'decal' in mtd or any(kw in mat_low for kw in CLOTH_KEYWORDS)
+        cfg = {'name': bmat.name, 'blend_mode': blend, 'two_sided': two_sided}
         if mat_data:
             cfg['mtd'] = mat_data.get('MTD', '')
             tex_rel = {s: os.path.basename(p) for s, p in assigned_map[mi].items()} if mi < len(assigned_map) else {}

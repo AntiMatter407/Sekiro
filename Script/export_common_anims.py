@@ -14,8 +14,7 @@ import mathutils
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common_blender import (
     _simulate_hair_gravity, _build_mesh_from_verts, _convert_image_to_png,
-    build_texture_cache, strip_texture_suffix, score_texture_candidate,
-    assign_textures_globally,
+    build_texture_cache, strip_texture_suffix, build_assigned_map_from_resolved,
 )
 
 
@@ -114,7 +113,7 @@ def create_materials(materials_data, texture_root):
     print(f"Found {sum(1 for v in dds_cache.values() if v.endswith('.png'))} PNG + "
           f"{sum(1 for v in dds_cache.values() if v.endswith('.dds'))} DDS in cache")
 
-    assigned_map = assign_textures_globally(materials_data, dds_cache)
+    assigned_map = build_assigned_map_from_resolved(materials_data, dds_cache)
     assigned_albedo = sum(1 for m in assigned_map if '_a' in m)
     assigned_normal = sum(1 for m in assigned_map if '_n' in m)
     assigned_any = sum(1 for m in assigned_map if m)

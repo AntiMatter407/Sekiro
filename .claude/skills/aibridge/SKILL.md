@@ -21,10 +21,7 @@ allowed-tools: Bash, Read
 >    ```json
 >    { "env": { "UE_ENGINE_DIR": "F:/UnrealEngine-5.2" } }
 >    ```
-> 4. MSYS2 会自动把 `/Game/...` 转为 Windows 路径，需加 `MSYS2_ARG_CONV_EXCL='*'`：
->    ```bash
->    MSYS2_ARG_CONV_EXCL='*' "$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset list /Game/
->    ```
+> 4. **MSYS2_ARG_CONV_EXCL 规则**：所有命令执行时 **必须** 在 Python 解释器前加 `MSYS2_ARG_CONV_EXCL='*'`，防止 Git Bash (MSYS2) 自动将 `/Game/...` 等 Unix 路径转为 Windows 路径。这是硬性规则，每一条 bridge 命令都要遵守，不可省略。
 
 ---
 

@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("CLAUDE_GATEWAY_PORT", "4000"))
 HOST = os.environ.get("CLAUDE_GATEWAY_HOST", "127.0.0.1")
+CODEX_PORT = int(os.environ.get("CODEX_GATEWAY_PORT", "7860"))
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy.log")
 UPSTREAM_TIMEOUT = int(os.environ.get("CLAUDE_GATEWAY_TIMEOUT", "180"))
 
@@ -39,7 +40,7 @@ QW = _endpoint("QW_API_URL", "QW_API_KEY")
 # Hardcoded fallbacks when env vars are not set — keeps the proxy
 # launchable without manual env setup in local dev.
 if not DS[0]:
-    DS = ("https://api.deepseek.com/v1/chat/completions", "sk-256f9a1bae9e478d86fdfe19ab5f7e7c")
+    DS = ("https://api.deepseek.com/v1/chat/completions", "sk-baed7c11c7f64fecb832e6c5d8c73b78")
 if not GLM[0]:
     GLM = ("https://open.bigmodel.cn/api/paas/v4/chat/completions", "1b3fbd092816477791463e4a9486795c.LMugAePe9kjTdA2X")
 if not QW[0]:
@@ -411,14 +412,20 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
             self.handle_messages()
         elif path == "/v1/messages/count_tokens":
             self.handle_count_tokens()
+        elif path == "/v1/chat/completions":
+            self.handle_chat_completions()
         else:
             self.send_error_json(404, "not found", "not_found_error")
 
+    def is_codex_port(self):
+        return self.server.server_address[1] == CODEX_PORT
+
     def handle_models(self):
         models = []
+        prefix = "" if self.is_codex_port() else "claude-"
         for alias in ROUTES:
             models.append({
-                "id": "claude-%s" % alias,
+                "id": "%s%s" % (prefix, alias),
                 "type": "model",
                 "display_name": alias,
                 "created_at": "2026-01-01T00:00:00Z",
@@ -460,6 +467,76 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
             self.proxy_stream(upstream_url, api_key, payload, "claude-%s" % alias)
         else:
             self.proxy_json(upstream_url, api_key, payload, "claude-%s" % alias)
+
+    def handle_chat_completions(self):
+        """OpenAI Chat Completions API — transparent pass-through to upstream."""
+        try:
+            data = self.read_json_body()
+        except Exception as exc:
+            log("    bad request: %s" % exc)
+            self.send_error_json(400, exc)
+            return
+
+        # Strip provider prefix (e.g. "deepseek/deepseek-chat" -> "deepseek-chat")
+        raw_model = data.get("model", "")
+        short = raw_model.split("/", 1)[-1] if "/" in raw_model else raw_model
+        alias, upstream_url, api_key, upstream_model = resolve_route(short)
+        stream = bool(data.get("stream", False))
+        log("    model=%s upstream_model=%s stream=%s" % (alias, upstream_model, stream))
+
+        data["model"] = upstream_model
+        if stream:
+            self.proxy_chat_stream(upstream_url, api_key, data, alias)
+        else:
+            self.proxy_chat_json(upstream_url, api_key, data, alias)
+
+    def proxy_chat_json(self, upstream_url, api_key, payload, alias):
+        """Pass through an OpenAI Chat Completions request and return the response as-is."""
+        try:
+            req = self.build_upstream_request(upstream_url, api_key, payload)
+            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+                upstream = json.loads(resp.read().decode("utf-8"))
+            self.send_json(200, upstream)
+            log("    -> 200")
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            log("    upstream HTTP %s: %s" % (exc.code, body[:300].decode("utf-8", "replace")))
+            self.send_response(exc.code)
+            self.send_header("Content-Type", exc.headers.get("Content-Type", "application/json"))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as exc:
+            log("    upstream error: %s" % exc)
+            self.send_error_json(502, exc, "api_error")
+
+    def proxy_chat_stream(self, upstream_url, api_key, payload, alias):
+        """Pass through an OpenAI Chat Completions streaming request as-is."""
+        try:
+            req = self.build_upstream_request(upstream_url, api_key, payload)
+            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                for raw_line in resp:
+                    self.wfile.write(raw_line)
+                    self.wfile.flush()
+                self.close_connection = True
+                log("    -> 200 stream")
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", "replace")
+            log("    upstream HTTP %s: %s" % (exc.code, body[:300]))
+            self.send_error_json(exc.code, body, "api_error")
+        except (BrokenPipeError, ConnectionResetError):
+            log("    client disconnected")
+        except Exception as exc:
+            log("    stream error: %s" % exc)
+            try:
+                self.send_error_json(502, exc, "api_error")
+            except Exception:
+                pass
 
     def build_upstream_request(self, upstream_url, api_key, payload):
         headers = {
@@ -687,14 +764,24 @@ def main():
     if "--self-test" in sys.argv:
         self_test()
         return
-    log("Starting Claude Code gateway on http://%s:%d" % (HOST, PORT))
+
+    log("Starting Claude gateway on http://%s:%d (Anthropic Messages)" % (HOST, PORT))
+    log("Starting Codex gateway on http://%s:%d (OpenAI Chat Completions)" % (HOST, CODEX_PORT))
     log("Models: %s" % ", ".join("claude-%s" % name for name in ROUTES))
-    server = ClaudeGatewayServer((HOST, PORT), ClaudeGatewayHandler)
+
+    server_claude = ClaudeGatewayServer((HOST, PORT), ClaudeGatewayHandler)
+    server_codex = ClaudeGatewayServer((HOST, CODEX_PORT), ClaudeGatewayHandler)
+
+    import threading
+    t = threading.Thread(target=server_codex.serve_forever, daemon=True)
+    t.start()
+
     try:
-        server.serve_forever()
+        server_claude.serve_forever()
     except KeyboardInterrupt:
         log("Shutting down")
-        server.shutdown()
+        server_claude.shutdown()
+        server_codex.shutdown()
 
 
 if __name__ == "__main__":

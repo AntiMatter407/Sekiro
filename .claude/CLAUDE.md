@@ -1,4 +1,4 @@
-# Sekiro → UE5.2
+﻿# Sekiro → UE5.2
 
 只狼游戏系统迁移到 Unreal Engine 5.2。
 
@@ -30,8 +30,11 @@
 |------|------|
 | `/aibridge` | 通过 TCP JSON-RPC 操控 UE5 编辑器（查询/编译/蓝图/资产/输入） |
 | `/sekiro-asset-import` | 只狼资产导入管线：解包→FLVER→JSON→UE 完整流程 |
-| `/breakdown` | 需求拆分 → `.claude/docs/breakdown/`，支持递归、追踪、修改 |
-| `/tech-design` | 技术方案 + Agent 派发 → `.claude/docs/tech-designs/`，逐子任务推进 |
+| `/plan` | 方案设计 + 任务拆分 → `Docs/plan/`，支持递归、追踪、修改 |
+| `/breakdown` | 需求拆分 → `Docs/breakdown/`，支持递归、追踪、修改 |
+| `/delegate` | 净化上下文，委托 subagent 处理复杂多步骤问题 |
+| `/reasoning` | 多专家并行分析复杂问题，产出方案文档 |
+| `/tech-design` | 技术方案 + Agent 派发 → `Docs/tech-designs/`，逐子任务推进 |
 | `/review` | 代码审查，风格问题自动修复，违规派发对应 Agent |
 
 ## Agent
@@ -47,13 +50,19 @@
 ## 工作流
 
 ```
-/breakdown <需求>          → .claude/docs/breakdown/<需求>.md
-/tech-design <需求> <任务>  → .claude/docs/tech-designs/<需求>-<任务>.md
+/plan <需求>               → Docs/plan/<需求>.md
+/breakdown <需求>          → Docs/breakdown/<需求>.md
+/tech-design <需求> <任务>  → Docs/tech-designs/<需求>-<任务>.md
   → Agent 执行
 /review <范围>              → 审查报告 + 修复
 ```
 
 所有对话、建议、文档使用**简体中文**。
+
+## 编码规则
+
+- **文件编码**：所有 Python 脚本（`.py`）必须使用 **UTF-8** 编码，禁止 GBK/BIG5 等。如发现文件被存为 GBK，需先转码后再修改。
+- **缩进**：统一使用 **4 空格**缩进，禁止混用 tab 和空格。
 
 ## 临时脚本规则
 
