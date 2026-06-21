@@ -1,4 +1,4 @@
-#include "SAMaterialImporter.h"
+﻿#include "SAMaterialImporter.h"
 #include "Misc/PackageName.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -6,6 +6,7 @@
 #include "Misc/Paths.h"
 #include "Engine/Texture2D.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAssetCommon.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialExpressionConstant.h"

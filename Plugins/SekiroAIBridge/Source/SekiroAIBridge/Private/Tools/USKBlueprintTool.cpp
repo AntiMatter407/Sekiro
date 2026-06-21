@@ -1,4 +1,4 @@
-#include "Tools/USKBlueprintTool.h"
+﻿#include "Tools/USKBlueprintTool.h"
 #include "SekiroAIBridgeLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -6,6 +6,8 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAssetCommon.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraphSchema_K2.h"
@@ -29,6 +31,7 @@
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "MaterialEditingLibrary.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAssetCommon.h"
 #include "Engine/Texture2D.h"
 
 FString USKBlueprintTool::GetToolDescription() const
