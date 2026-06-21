@@ -1,0 +1,16 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "1.0",
+    "FriendlyName": "Sekiro Asset Manager",
+    "Description": "直接从 Sekiro_model.json 导入骨骼网格体、动画序列和材质资产",
+    "Category": "Editor",
+    "CreatedBy": "Sekiro Team",
+    "Modules": [
+        {
+            "Name": "SekiroAssetManager",
+            "Type": "Editor",
+            "LoadingPhase": "Default"
+        }
+    ]
+}

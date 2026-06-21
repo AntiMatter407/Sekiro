@@ -1,0 +1,24 @@
+﻿# 锁定所有源码文件为 LF，防止 autocrlf 导致无修改重编译
+*.cpp    text eol=lf
+*.h      text eol=lf
+*.hpp    text eol=lf
+*.c      text eol=lf
+*.cs     text eol=lf
+*.py     text eol=lf
+*.lua    text eol=lf
+*.ini    text eol=lf
+*.toml   text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.uproject text eol=lf
+*.uplugin  text eol=lf
+*.Build.cs  text eol=lf
+*.Target.cs text eol=lf
+
+# UE 二进制资源
+*.uasset binary
+*.umap   binary
+
+# 脚本文件
+*.sh     text eol=lf
+*.ps1    text eol=lf
