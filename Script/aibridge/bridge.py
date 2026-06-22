@@ -232,7 +232,7 @@ async def compile_cpp():
     import time
 
     ubt = _find_ubt()
-    project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
+    project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Sekiro.uproject"))
     log_file = os.path.expandvars(r"%LOCALAPPDATA%\UnrealBuildTool\Log.txt")
 
     editor_online = await _ping_editor()
@@ -603,7 +603,7 @@ async def cmd_enhanced_input(args):
 async def cmd_anim_blueprint(args):
     """anim_blueprint — 动画蓝图操作"""
     if not args:
-        return {"error": "用法: anim_blueprint <create|add_state|add_transition|delete_transition|add_node|info|compile|layout|set_anim_class> [参数...]"}
+        return {"error": "用法: anim_blueprint <create|add_state|add_transition|delete_transition|add_node|add_slot|info|compile|layout|set_anim_class> [参数...]"}
 
     action = args[0]
     if action == "create":
@@ -691,6 +691,31 @@ async def cmd_anim_blueprint(args):
         return await send_request("tools/call", {
             "name": "anim_blueprint",
             "arguments": {"action": "delete_transition", "path": args[1], "from_state": args[2], "to_state": args[3]}
+        })
+    elif action == "add_slot":
+        # bridge.py anim_blueprint add_slot <ABP路径> [--slot-name DefaultSlot] [--force]
+        if len(args) < 2:
+            return {"error": "用法: anim_blueprint add_slot <ABP路径> [--slot-name DefaultSlot] [--force]"}
+        slot_args = {
+            "action": "add_slot",
+            "path": args[1],
+        }
+        i = 2
+        while i < len(args):
+            if args[i] == "--slot-name":
+                if i + 1 < len(args):
+                    slot_args["slot_name"] = args[i + 1]
+                    i += 2
+                else:
+                    return {"error": "--slot-name 需要参数"}
+            elif args[i] == "--force":
+                slot_args["force"] = True
+                i += 1
+            else:
+                return {"error": f"未知参数: {args[i]}"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": slot_args
         })
     elif action == "add_node":
         # bridge.py anim_blueprint add_node <ABP路径> <状态名> <sequence_player|blend_space_player> <资产路径> [--loop true|false] [--play-rate 1.0] [--pin-x Angle] [--pin-y Speed]
@@ -810,7 +835,7 @@ async def cmd_anim_blueprint(args):
             "arguments": kwargs
         })
     else:
-        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, info, compile, layout, rename_node, set_anim_class"}
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, info, compile, layout, rename_node, set_anim_class"}
 
 
 def _find_ue_editor():
@@ -924,7 +949,7 @@ async def cmd_editor_start(args):
     if not ue_exe:
         return {"error": "未找到 UnrealEditor.exe，请确认已安装 UE 引擎"}
 
-    project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject"))
+    project = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Sekiro.uproject"))
 
     # 先检查是否已在运行
     if await _ping_editor():
@@ -958,7 +983,7 @@ async def cmd_editor_stop(args):
     import re
 
     project_uproject = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "Sekiro.uproject")
+        os.path.join(os.path.dirname(__file__), "..", "..", "Sekiro.uproject")
     )
     project_name = os.path.splitext(os.path.basename(project_uproject))[0]  # "Sekiro"
 

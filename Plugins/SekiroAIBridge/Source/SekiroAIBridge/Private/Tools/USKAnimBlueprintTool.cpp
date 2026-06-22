@@ -22,6 +22,7 @@
 #include "K2Node_VariableGet.h"
 #include "AnimationGraph.h"
 #include "AnimGraphNode_Base.h"
+#include "AnimGraphNode_Slot.h"
 #include "AnimGraphNode_TransitionResult.h"
 #include "AnimationTransitionGraph.h"
 #include "K2Node_CallFunction.h"
@@ -102,7 +103,7 @@ static T* LoadAssetHelper(const FString& AssetPath)
 
 FString USKAnimBlueprintTool::GetToolDescription() const
 {
-    return TEXT("动画蓝图操作（通用接口）：创建/编译AnimBP（支持自定义parent_class）、管理状态机（状态/转换）、添加动画节点（SequencePlayer/BlendSpacePlayer）、设置AnimGraph根节点、创建BlendSpace资产、查询结构。");
+    return TEXT("动画蓝图操作（通用接口）：创建/编译AnimBP（支持自定义parent_class）、管理状态机（状态/转换）、添加动画节点（SequencePlayer/BlendSpacePlayer/Slot）、设置AnimGraph根节点、创建BlendSpace资产、查询结构。");
 }
 
 FString USKAnimBlueprintTool::GetInputSchemaJson() const
@@ -110,7 +111,7 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
     return TEXT("{"
         "\"type\":\"object\","
         "\"properties\":{"
-            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
             "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
             "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
             "\"parent_class\":{\"type\":\"string\",\"description\":\"可选：AnimInstance父类脚本路径，如/Script/ModuleName.ClassName\"},"
@@ -179,6 +180,7 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("set_anim_class"))      return HandleSetAnimClass(ArgsObj, OutError);
     if (Action == TEXT("layout"))              return HandleLayout(ArgsObj, OutError);
     if (Action == TEXT("rename_node"))         return HandleRenameNode(ArgsObj, OutError);
+    if (Action == TEXT("add_slot"))            return HandleAddSlotNode(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -1944,6 +1946,160 @@ FString USKAnimBlueprintTool::HandleLayout(const TSharedPtr<FJsonObject>& Args, 
     TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
     ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
     ResultObj->SetNumberField(TEXT("states_arranged"), TotalStates);
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleAddSlotNode — 在 AnimGraph 顶层添加 Slot 节点（在 StateMachine 和 Root 之间）
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleAddSlotNode(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString SlotName = TEXT("DefaultSlot");
+    Args->TryGetStringField(TEXT("slot_name"), SlotName);
+    bool bForce = false;
+    Args->TryGetBoolField(TEXT("force"), bForce);
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    if (!AnimBP) return FString();
+
+    // 查找 AnimGraph 顶层（UAnimationGraph）
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : AnimBP->FunctionGraphs)
+    {
+        AnimGraph = Cast<UAnimationGraph>(Graph);
+        if (AnimGraph) break;
+    }
+    if (!AnimGraph)
+    {
+        for (UEdGraph* Graph : AnimBP->UbergraphPages)
+        {
+            AnimGraph = Cast<UAnimationGraph>(Graph);
+            if (AnimGraph) break;
+        }
+    }
+    if (!AnimGraph)
+    {
+        OutError = TEXT("未找到 AnimGraph");
+        return FString();
+    }
+
+    // 查找已有 Slot 节点
+    UAnimGraphNode_Slot* ExistingSlot = nullptr;
+    for (UEdGraphNode* Node : AnimGraph->Nodes)
+    {
+        ExistingSlot = Cast<UAnimGraphNode_Slot>(Node);
+        if (ExistingSlot) break;
+    }
+    if (ExistingSlot)
+    {
+        FString ExistingName = ExistingSlot->Node.SlotName.ToString();
+        if (!bForce && ExistingName == SlotName)
+        {
+            // 已存在同名 Slot 节点且非强制模式，直接返回成功
+            TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+            ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+            ResultObj->SetStringField(TEXT("slot_name"), SlotName);
+            ResultObj->SetStringField(TEXT("node_id"), ExistingSlot->GetFName().ToString());
+            ResultObj->SetStringField(TEXT("status"), TEXT("already_exists"));
+            ResultObj->SetBoolField(TEXT("success"), true);
+            FString Output;
+            TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+                TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+            FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+            return Output;
+        }
+        // 强制模式：删除旧节点
+        ExistingSlot->DestroyNode();
+    }
+
+    // 查找 StateMachine 和 Root 节点
+    UAnimGraphNode_StateMachine* SMNode = nullptr;
+    UAnimGraphNode_Root* RootNode = nullptr;
+    for (UEdGraphNode* Node : AnimGraph->Nodes)
+    {
+        if (!SMNode)    SMNode    = Cast<UAnimGraphNode_StateMachine>(Node);
+        if (!RootNode)  RootNode  = Cast<UAnimGraphNode_Root>(Node);
+        if (SMNode && RootNode) break;
+    }
+    if (!SMNode)
+    {
+        OutError = TEXT("未找到 StateMachine 节点（请先添加状态机）");
+        return FString();
+    }
+    if (!RootNode)
+    {
+        OutError = TEXT("未找到 Root 节点");
+        return FString();
+    }
+
+    // 断开 StateMachine → Root 的旧连线
+    UEdGraphPin* SMPoseOut = SMNode->FindPin(TEXT("Pose"), EGPD_Output);
+    UEdGraphPin* RootResultIn = RootNode->FindPin(TEXT("Result"), EGPD_Input);
+    if (SMPoseOut && RootResultIn)
+    {
+        RootResultIn->BreakAllPinLinks();
+    }
+    else
+    {
+        OutError = TEXT("StateMachine 缺少 Pose 输出引脚 或 Root 缺少 Result 输入引脚");
+        return FString();
+    }
+
+    // 创建 Slot 节点
+    FGraphNodeCreator<UAnimGraphNode_Slot> NodeCreator(*AnimGraph);
+    UAnimGraphNode_Slot* SlotGraphNode = NodeCreator.CreateNode();
+    NodeCreator.Finalize();
+
+    // 设置 SlotName
+    SlotGraphNode->Node.SlotName = FName(*SlotName);
+
+    // 位置放在 StateMachine 和 Root 之间
+    SlotGraphNode->NodePosX = (SMNode->NodePosX + RootNode->NodePosX) / 2;
+    SlotGraphNode->NodePosY = SMNode->NodePosY;
+
+    // 查找 Slot 的输入/输出引脚（遍历所有引脚，按方向分类）
+    UEdGraphPin* SlotInputPin = nullptr;
+    UEdGraphPin* SlotOutputPin = nullptr;
+    for (UEdGraphPin* Pin : SlotGraphNode->Pins)
+    {
+        if (Pin->Direction == EGPD_Input && !SlotInputPin)
+            SlotInputPin = Pin;
+        if (Pin->Direction == EGPD_Output && !SlotOutputPin)
+            SlotOutputPin = Pin;
+    }
+
+    // 连线：StateMachine.Pose → Slot.Input → Slot.Output → Root.Result
+    if (SlotInputPin && SMPoseOut)
+    {
+        SMPoseOut->MakeLinkTo(SlotInputPin);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[AddSlot] SlotInputPin=%s SMPoseOut=%s"), SlotInputPin ? TEXT("ok") : TEXT("null"), SMPoseOut ? TEXT("ok") : TEXT("null"));
+    }
+    if (SlotOutputPin && RootResultIn)
+    {
+        SlotOutputPin->MakeLinkTo(RootResultIn);
+    }
+
+    AnimBP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(AnimBP);
+    UEditorAssetLibrary::SaveAsset(AssetPath, false);
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObj->SetStringField(TEXT("slot_name"), SlotName);
+    ResultObj->SetStringField(TEXT("node_id"), SlotGraphNode->GetFName().ToString());
+    ResultObj->SetStringField(TEXT("node_pos_x"), FString::FromInt(SlotGraphNode->NodePosX));
+    ResultObj->SetStringField(TEXT("node_pos_y"), FString::FromInt(SlotGraphNode->NodePosY));
     ResultObj->SetBoolField(TEXT("success"), true);
 
     FString Output;

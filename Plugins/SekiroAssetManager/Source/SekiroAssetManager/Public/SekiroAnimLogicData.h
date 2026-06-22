@@ -154,6 +154,16 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
     TMap<int32, FString> AnimPrefixMap;  // AnimID → 动画前缀 (a000, a010, a200...)
 
+    // 运行时动画资产路径配置
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
+    FString AnimAssetBasePath = TEXT("/Game/Characters/Sekiro/Animations");  // Package 基础路径
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
+    FString AnimAssetNamePrefix = TEXT("Anim_Sekiro");                       // 动画资产名前缀
+
+    UFUNCTION(BlueprintCallable, Category = "Animation Logic")
+    FString BuildAnimAssetPath(int32 AnimID) const;                          // 拼接完整资产路径
+
 	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
 	bool CanCancelTo(int32 AnimID, float CurrentTime, FName TargetAction, float& OutCrossfade) const;
 

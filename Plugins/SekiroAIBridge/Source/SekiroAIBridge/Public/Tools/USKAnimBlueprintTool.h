@@ -50,6 +50,7 @@ private:
     FString HandleSetAnimClass(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleRenameNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleAddSlotNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 
     UAnimBlueprint* LoadAnimBlueprint(const FString& AssetPath, FString& OutError);
     UAnimGraphNode_StateMachine* FindOrCreateStateMachineNode(UAnimBlueprint* AnimBP, FString& OutError);

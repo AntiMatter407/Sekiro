@@ -392,7 +392,9 @@ Controller.SetNumberOfFrames(FFrameNumber(NumFrames - 1));
     UE_LOG(LogTemp, Display, TEXT("SAAnimationImporter: Built %s (%d frames, %.2fs)"),
         *Clip.Name, NumFrames, Clip.Duration);
     return AnimSeq;
-}TArray<UAnimSequence*> SAAnimationImporter::BuildBatch(const FSAAnimData& AnimData, USkeleton* Skeleton,
+}
+
+TArray<UAnimSequence*> SAAnimationImporter::BuildBatch(const FSAAnimData& AnimData, USkeleton* Skeleton,
                                                         USkeletalMesh* PreviewMesh, const FString& BasePath,
                                                         const FString& AssetName,
                                                         const TArray<FString>& AnimNames)

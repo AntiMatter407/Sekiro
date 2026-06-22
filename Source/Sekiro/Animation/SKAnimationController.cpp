@@ -840,12 +840,7 @@ void USKAnimationController::PlayMontageByID(int32 AnimID, float Crossfade)
     if (!AnimInst) return;
 
     UAnimSequence* Seq = *Found;
-    UAnimMontage* DynMontage = AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, Crossfade, 0.0f);
-    if (!DynMontage)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: PlaySlotAnimationAsDynamicMontage failed"),
-            *GetNameSafe(OwnerCharacter.Get()));
-    }
+    AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, Crossfade, 0.0f);
 }
 
 void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
@@ -853,12 +848,7 @@ void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
     if (!AnimLogicData) return;
     if (MontageCache.Contains(AnimID)) return;
 
-    FString Prefix = AnimLogicData->AnimPrefixMap.FindRef(AnimID);
-    if (Prefix.IsEmpty()) Prefix = TEXT("a000");
-
-    FString PackageName = FString::Printf(TEXT("/Game/Characters/Sekiro/Animations/Anim_Sekiro_%s_%06d"), *Prefix, AnimID);
-    FString ObjectName  = FString::Printf(TEXT("Anim_%s_%06d"), *Prefix, AnimID);
-    FString AssetPath   = FString::Printf(TEXT("%s.%s"), *PackageName, *ObjectName);
+    FString AssetPath = AnimLogicData->BuildAnimAssetPath(AnimID);
 
     UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: Load AnimID=%d (%s)"),
         *GetOwner()->GetName(), AnimID, *AssetPath);

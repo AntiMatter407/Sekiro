@@ -25,7 +25,11 @@ PORT = int(os.environ.get("CLAUDE_GATEWAY_PORT", "4000"))
 HOST = os.environ.get("CLAUDE_GATEWAY_HOST", "127.0.0.1")
 CODEX_PORT = int(os.environ.get("CODEX_GATEWAY_PORT", "7860"))
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy.log")
-UPSTREAM_TIMEOUT = int(os.environ.get("CLAUDE_GATEWAY_TIMEOUT", "180"))
+LOG_MAX_SIZE = 500 * 1024  # 500 KB，超过后轮转备份
+LOG_BACKUP_COUNT = 2
+UPSTREAM_TIMEOUT = int(os.environ.get("CLAUDE_GATEWAY_TIMEOUT", "60"))
+UPSTREAM_MAX_RETRIES = 3
+UPSTREAM_RETRY_BACKOFF = 2.0  # 指数退避基数（秒）: 2s, 4s, 8s
 
 def _endpoint(key_url, key_key):
     return (
@@ -80,8 +84,23 @@ def log(message):
         except Exception:
             pass
     try:
+        _rotate_log_if_needed()
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
+    except Exception:
+        pass
+
+
+def _rotate_log_if_needed():
+    try:
+        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > LOG_MAX_SIZE:
+            for i in range(LOG_BACKUP_COUNT - 1, -1, -1):
+                src = LOG_FILE if i == 0 else "%s.%d" % (LOG_FILE, i)
+                dst = "%s.%d" % (LOG_FILE, i + 1)
+                if os.path.exists(src):
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    os.rename(src, dst)
     except Exception:
         pass
 
@@ -363,6 +382,33 @@ def estimate_tokens(value):
     return estimate_tokens(str(value))
 
 
+def _should_retry(exc):
+    """判断是否应对上游错误进行重试"""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in (429, 502, 503)
+    if isinstance(exc, (TimeoutError, OSError)):
+        return True
+    return False
+
+
+def _retry_urlopen(url, data_bytes, headers, timeout, max_retries=UPSTREAM_MAX_RETRIES):
+    """带指数退避的上游请求重试"""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+            return urllib.request.urlopen(req, timeout=timeout)
+        except (urllib.error.HTTPError, OSError) as e:
+            last_exc = e
+            if attempt < max_retries and _should_retry(e):
+                wait = UPSTREAM_RETRY_BACKOFF ** (attempt + 1)
+                log("    retry attempt=%d/%d wait=%.0fs error=%s" % (attempt + 1, max_retries, wait, str(e)[:60]))
+                time.sleep(wait)
+            else:
+                raise
+    raise last_exc
+
+
 class ClaudeGatewayHandler(BaseHTTPRequestHandler):
     server_version = "ClaudeCodeGateway/1.0"
 
@@ -414,6 +460,9 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
             self.handle_count_tokens()
         elif path == "/v1/chat/completions":
             self.handle_chat_completions()
+        elif path == "/v1/responses":
+            # 新版 Claude Code API，代理暂不支持，返回 501 避免客户端反复重试
+            self.send_error_json(501, "not implemented by proxy", "not_implemented_error")
         else:
             self.send_error_json(404, "not found", "not_found_error")
 
@@ -493,8 +542,13 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
     def proxy_chat_json(self, upstream_url, api_key, payload, alias):
         """Pass through an OpenAI Chat Completions request and return the response as-is."""
         try:
-            req = self.build_upstream_request(upstream_url, api_key, payload)
-            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": "Bearer %s" % api_key,
+            } if api_key else {"Content-Type": "application/json", "Accept": "application/json"}
+            data_bytes = json_dumps(payload).encode("utf-8")
+            with _retry_urlopen(upstream_url, data_bytes, headers, UPSTREAM_TIMEOUT) as resp:
                 upstream = json.loads(resp.read().decode("utf-8"))
             self.send_json(200, upstream)
             log("    -> 200")
@@ -513,8 +567,14 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
     def proxy_chat_stream(self, upstream_url, api_key, payload, alias):
         """Pass through an OpenAI Chat Completions streaming request as-is."""
         try:
-            req = self.build_upstream_request(upstream_url, api_key, payload)
-            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "Authorization": "Bearer %s" % api_key,
+            } if api_key else {"Content-Type": "application/json", "Accept": "text/event-stream"}
+            data_bytes = json_dumps(payload).encode("utf-8")
+            # 流式也使用重试连接（在发送响应头之前），处理 429/超时
+            with _retry_urlopen(upstream_url, data_bytes, headers, UPSTREAM_TIMEOUT) as resp:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
@@ -554,8 +614,13 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
 
     def proxy_json(self, upstream_url, api_key, payload, model):
         try:
-            req = self.build_upstream_request(upstream_url, api_key, payload)
-            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": "Bearer %s" % api_key,
+            } if api_key else {"Content-Type": "application/json", "Accept": "application/json"}
+            data_bytes = json_dumps(payload).encode("utf-8")
+            with _retry_urlopen(upstream_url, data_bytes, headers, UPSTREAM_TIMEOUT) as resp:
                 upstream = json.loads(resp.read().decode("utf-8"))
             self.send_json(200, openai_response_to_anthropic(upstream, model))
             log("    -> 200")
@@ -631,8 +696,13 @@ class ClaudeGatewayHandler(BaseHTTPRequestHandler):
                     state["open"] = False
 
         try:
-            req = self.build_upstream_request(upstream_url, api_key, payload)
-            with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "Authorization": "Bearer %s" % api_key,
+            } if api_key else {"Content-Type": "application/json", "Accept": "text/event-stream"}
+            data_bytes = json_dumps(payload).encode("utf-8")
+            with _retry_urlopen(upstream_url, data_bytes, headers, UPSTREAM_TIMEOUT) as resp:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
