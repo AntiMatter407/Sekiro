@@ -19,6 +19,25 @@ class UEnhancedInputComponent;
 class ACharacter;
 class APlayerController;
 
+// ── 输入缓冲条目 ────────────────────────────────────────────
+USTRUCT(BlueprintType)
+struct SEKIRO_API FSKBufferedInput
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    FName Action;                               // 动作名称（"Attack", "Guard", "Dodge" 等）
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 Priority = 0;                         // 对应 ESKActionPriority
+
+    UPROPERTY(BlueprintReadOnly)
+    float Timestamp = 0.f;                      // 世界时间戳（入队时间）
+
+    UPROPERTY(BlueprintReadOnly)
+    float Lifetime = 0.1f;                      // 最大缓冲寿命（秒，默认 0.1s ≈ 6帧@60fps）
+};
+
 UCLASS(ClassGroup=(Input), meta=(BlueprintSpawnableComponent))
 class SEKIRO_API USKInputHandler : public UActorComponent
 {
@@ -79,6 +98,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	bool ConsumeMenuPressed();                       // 菜单
 
+	// ── 输入缓冲 ────────────────────────────────────────────
+
+	/** 获取缓冲队列供消费方读取 */
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	const TArray<FSKBufferedInput>& GetInputBuffer() const { return InputBuffer; }
+
+	/** 消费缓冲中指定 Action 的最高优先级条目（移除并返回是否存在） */
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	bool ConsumeBufferedInput(FName Action);
+
+	/** 清空整个缓冲队列 */
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void ClearInputBuffer();
+
 	// ── 持续型意图 ──────────────────────────────────────────
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
@@ -127,67 +160,67 @@ protected:
 
 	// ── 移动/视角回调 ───────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnMove(const FInputActionValue& Value);     // 主移动输入
-UFUNCTION()
+	UFUNCTION()
 	void OnLook(const FInputActionValue& Value);     // 视角输入
 
 	// ── 跳跃回调 ────────────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnJumpStarted(const FInputActionValue& Value);   // 跳跃按下 → ACharacter::Jump
-UFUNCTION()
+	UFUNCTION()
 	void OnJumpCompleted(const FInputActionValue& Value); // 跳跃松开 → ACharacter::StopJumping
 
 	// ── 闪避/冲刺回调 ──────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnDodgeStarted(const FInputActionValue& Value);   // 闪避按下 → 垫步 + 冲刺
-UFUNCTION()
+	UFUNCTION()
 	void OnDodgeCompleted(const FInputActionValue& Value); // 闪避松开
 
 	// ── 蹲下回调 ────────────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnCrouchStarted(const FInputActionValue& Value);  // 蹲下切换
 
 	// ── 战斗回调 ────────────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnAttackStarted(const FInputActionValue& Value);   // 攻击按下
-UFUNCTION()
+	UFUNCTION()
 	void OnAttackCompleted(const FInputActionValue& Value); // 攻击松开
-UFUNCTION()
+	UFUNCTION()
 	void OnGuardStarted(const FInputActionValue& Value);    // 防御按下
-UFUNCTION()
+	UFUNCTION()
 	void OnGuardCompleted(const FInputActionValue& Value);  // 防御松开
-UFUNCTION()
+	UFUNCTION()
 	void OnLockOnStarted(const FInputActionValue& Value);   // 锁定按下
-UFUNCTION()
+	UFUNCTION()
 	void OnProstheticStarted(const FInputActionValue& Value);   // 义手按下
-UFUNCTION()
+	UFUNCTION()
 	void OnProstheticCompleted(const FInputActionValue& Value); // 义手松开
-UFUNCTION()
+	UFUNCTION()
 	void OnGrappleStarted(const FInputActionValue& Value);  // 钩索按下
 
 	// ── 交互/道具回调 ──────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnInteractStarted(const FInputActionValue& Value);      // 交互按下
-UFUNCTION()
+	UFUNCTION()
 	void OnUseItemStarted(const FInputActionValue& Value);       // 道具使用
-UFUNCTION()
+	UFUNCTION()
 	void OnHealingGourdStarted(const FInputActionValue& Value);  // 伤药葫芦
-UFUNCTION()
+	UFUNCTION()
 	void OnCycleItemNextStarted(const FInputActionValue& Value); // 切换道具下一个
-UFUNCTION()
+	UFUNCTION()
 	void OnCycleItemPrevStarted(const FInputActionValue& Value); // 切换道具上一个
 
 	// ── 系统回调 ────────────────────────────────────────────
 
-UFUNCTION()
+	UFUNCTION()
 	void OnPauseStarted(const FInputActionValue& Value); // 暂停
-UFUNCTION()
+	UFUNCTION()
 	void OnMenuStarted(const FInputActionValue& Value);  // 菜单
 
 private:
@@ -273,6 +306,7 @@ private:
 	bool bAttackHeld = false;                        // 攻击键按住
 	bool bGuardHeld = false;                         // 防御键按住
 	bool bDodgeHeld = false;                         // 闪避键按住（冲刺用）
+	bool bProstheticHeld = false;                    // 义手键按住
 
 	// ── 长按计时 ────────────────────────────────────────────
 
@@ -283,6 +317,10 @@ private:
 
 	int32 ComboIndex = 0;                            // 当前连段序号
 	float TimeSinceLastAttack = 0.f;                 // 距上次攻击时间（秒，> 0.5s 超时复位）
+
+	// ── 输入缓冲队列 ────────────────────────────────────────
+
+	TArray<FSKBufferedInput> InputBuffer;            // 输入缓冲队列（最大 6 条，超时移除）
 
 	// ── 角色引用 ────────────────────────────────────────────
 

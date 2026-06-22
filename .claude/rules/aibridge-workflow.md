@@ -2,10 +2,10 @@
 
 ## 1. Python 路径
 
-所有 bridge 命令必须使用 UE5 自带的 Python 解释器：
+所有 bridge 命令必须使用 UE5 自带的 Python 解释器，bridge.py 位于 `Script/aibridge/bridge.py`：
 
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py <命令>
+MSYS2_ARG_CONV_EXCL='*' "$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" Script/aibridge/bridge.py <命令>
 ```
 
 系统 `python`/`python3` 在不同机器上可能不存在。`$UE_ENGINE_DIR` 在各机器的 `.claude/settings.local.json` 中配置。

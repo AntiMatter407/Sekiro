@@ -19,7 +19,11 @@
 │   ├── SekiroAIBridge/          # AI TCP 通信桥接
 │   ├── UnLua/                   # Lua 脚本集成
 │   └── UnLuaExtensions/         # UnLua 扩展
-├── Script/                      # Python 脚本（Blender 导出、UE5 导入、管线编排）
+├── Script/                      # Python 脚本（Blender 导出、UE5 导入、管线编排、AIBridge）
+│   ├── aibridge/bridge.py       # AIBridge 核心（与 .codex 共享同一份）
+│   ├── parse_behavior_param.py  # BehaviorParam 管线脚本
+│   ├── pie_test.py              # PIE 测试脚本
+│   ├── list_assets.py           # 资产列表工具
 │   └── temp/                    # 临时脚本（不提交）
 ├── Docs/                        # 项目文档
 │   ├── breakdown/               # 需求拆分文档（/breakdown 产出）

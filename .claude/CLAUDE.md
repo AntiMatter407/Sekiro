@@ -30,7 +30,7 @@
 |------|------|
 | `/aibridge` | 通过 TCP JSON-RPC 操控 UE5 编辑器（查询/编译/蓝图/资产/输入） |
 | `/sekiro-asset-import` | 只狼资产导入管线：解包→FLVER→JSON→UE 完整流程 |
-| `/plan` | 方案设计 + 任务拆分 → `Docs/plan/`，追踪进度 |
+| `/plan` | 方案设计 + 详细设计。分析需求，输出 `Docs/plan/<slug>.md`（进度+任务树）和 `Docs/design/<slug>.md`（单文档方案，子任务作为章节），追踪进度 |
 | `/delegate` | 将复杂问题委托给新 subagent，净化上下文专注处理 |
 | `/review` | 代码审查，风格问题自动修复，违规派发对应 Agent |
 

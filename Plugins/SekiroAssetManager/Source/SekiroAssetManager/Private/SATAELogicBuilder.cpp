@@ -223,11 +223,10 @@ void FSATAELogicBuilder::BuildNameMaps(const FSAAnimLogicImportResult& IR,
         AddToCategory(Category, AnimID);
         // 方向子类同时加入基础类别（如 Dodge_Fwd → 也加入 Dodge）
         int32 UnderscoreIdx;
-        if (Category.FindLastChar(TEXT("_"), UnderscoreIdx))
+        if (Category.FindLastChar('_', UnderscoreIdx))
         {
             FString BaseCategory = Category.Left(UnderscoreIdx);
             AddToCategory(BaseCategory, AnimID);
-        }
         }
     }
 }

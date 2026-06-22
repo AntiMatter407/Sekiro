@@ -8,6 +8,7 @@
 #include "SKAnimationController.generated.h"
 
 class USKAnimationLogicData;
+class USKCombatData;
 class ASKCharacter;
 class USKInputHandler;
 class USKAnimInstance;
@@ -71,13 +72,27 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Data")
     TObjectPtr<USKAnimationLogicData> AnimLogicData;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Data")
+    TObjectPtr<USKCombatData> CombatData;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Data")
     FString AnimAssetName = TEXT("Sekiro");
 
     UFUNCTION(BlueprintCallable) FName GetCurrentAction() const;
     UFUNCTION(BlueprintCallable) int32 GetCurrentAnimID() const;
     UFUNCTION(BlueprintCallable) int32 GetCurrentPriority() const;
+    UFUNCTION(BlueprintCallable) float GetCurrentAnimTime() const { return CurrentAnimTime; }
     UFUNCTION(BlueprintCallable) bool IsGuarding() const { return GuardState.Phase != ESKGuardPhase::NotGuarding; }
+    UFUNCTION(BlueprintCallable)
+    int32 GetComboNextAnim(int32 CurrentAnimID, FName Action) const;
+
+    /** 查询敌人是否正在攻击（当前帧有活跃攻击框） */
+    UFUNCTION(BlueprintCallable)
+    bool IsEnemyAttacking(int32& OutBehaviorJudgeID, int32& OutStartFrame) const;
+
+    /** 获取锁定目标（暂未实现，返回 nullptr） */
+    UFUNCTION(BlueprintCallable)
+    ASKCharacter* GetLockOnTarget() const;
 
     void OnGuardHit(int32 AnimID);
     void OnGuardBreak();
@@ -92,6 +107,8 @@ protected:
     void UpdateFrameState();
     void ApplyFrameFlags();
     void UpdateAttackHitbox();
+    void UpdateChargeState(float DeltaTime);
+    void UpdateContextFlags();
     void ProcessIntents();
     bool TryPlayAction(FName Action, int32 Priority);
 
@@ -99,7 +116,6 @@ protected:
     int32 GetComboAnimID(int32 ComboIdx) const;
     FName GetMoveDirectionSuffix() const;
     void ResetAttackState();
-    void UpdateChargeState(float DeltaTime);
     bool CheckChargeRelease();
 
     void HandleGuard();
@@ -109,7 +125,7 @@ protected:
     void HandleItemUse();
     void HandleGrapple();
     void HandleCombatArt();
-    void HandleDeathblow();
+    bool HandleDeathblow();
 
     void ProcessLocomotion();
     FSKLocomotionState EvaluateLocomotionState(float Speed, float Angle) const;
@@ -120,7 +136,8 @@ protected:
     void PlayLocomotionMontage(int32 AnimID, bool bLooping);
     void OnLocoTransitionEnded(UAnimMontage* Montage, bool bInterrupted);
 
-    int32 ResolveAnimID(FName Action);
+    int32 ResolveAnimID(FName Action);                         // 原有：从当前 AnimID 派生
+    int32 ResolveAnimID(FName Action, int32 FromAnimID);       // 新增：从指定 AnimID 派生
     void PlayMontageByID(int32 AnimID, float Crossfade);
     void EnsureMontageLoaded(int32 AnimID);
 
@@ -147,7 +164,12 @@ private:
     FSKGuardState GuardState;
     bool bWasInAir = false;
 
-    FSKLocomotionState CurrentLocoState;
+    // ── 上下文标志（用于上下文输入分支）──
+    bool bCounterWindow = false;             // 完美格挡后反斩窗口
+    bool bDeathBlowActive = false;           // 忍杀标识激活
+    bool bIsInAir = false;                   // 是否在空中（从AnimInstance同步）
+
+    FSKLocomotionState CurrentLocoState = FSKLocomotionState();
     float LastAngle = 0.f;
     float TurnCooldown = 0.f;
 

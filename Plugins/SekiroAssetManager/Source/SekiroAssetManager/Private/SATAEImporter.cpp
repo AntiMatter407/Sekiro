@@ -240,16 +240,28 @@ FSAAnimationLogicIR FSATAEImporter::ParseAnimationEntry(const TSharedPtr<FJsonOb
 void FSATAEImporter::ExtractCancelWindows(const TArray<FSATAEEventIR>& Events,
     TArray<FSACancelWindowIR>& OutWindows)
 {
-    // 收集所�?JumpTable 事件及其类型
-    struct FCancelEvent
-    {
-        ESKJumpTableAction Action;
-        int32 StartFrame;
-        int32 EndFrame;
+    // 映射表：JT ID → (TargetAction, Crossfade)
+    struct FCancelMapEntry {
+        FName TargetAction;
+        float Crossfade;
     };
-    TArray<FCancelEvent> CancelStarts;
-    TArray<FCancelEvent> CancelEnds;
-    TMap<ESKJumpTableAction, int32> ActiveWindows; // Action �?StartFrame
+    static const TMap<int32, FCancelMapEntry> CancelMap = {
+        // R1/Attack 取消窗口
+        {115, {TEXT("Attack"), 0.1f}},     // AnimCancelEnd_R1
+        {26,  {TEXT("Attack"), 0.1f}},     // GenericCancelStart（通用取消→攻击连段）
+
+        // L1/Guard 取消窗口
+        {117, {TEXT("Guard"), 0.1f}},      // AnimCancelEnd_L1
+
+        // L2/Prosthetic 取消窗口
+        {118, {TEXT("Prosthetic"), 0.1f}}, // AnimCancelEnd_L2
+
+        // □/Dodge 取消窗口
+        {25,  {TEXT("Dodge"), 0.15f}},     // AnimCancelStart_Dodge
+
+        // ○/Item 取消窗口
+        {154, {TEXT("Item"), 0.1f}},       // ItemUseWindow
+    };
 
     for (const FSATAEEventIR& Evt : Events)
     {
@@ -260,53 +272,17 @@ void FSATAEImporter::ExtractCancelWindows(const TArray<FSATAEEventIR>& Events,
         if (Evt.Params.Contains(TEXT("JumpTableID")))
             JumpTableID = FCString::Atoi(*Evt.Params[TEXT("JumpTableID")]);
 
-        ESKJumpTableAction Action = MapJumpTableToAction(JumpTableID);
-
-        if (Action == ESKJumpTableAction::None)
+        const FCancelMapEntry* Entry = CancelMap.Find(JumpTableID);
+        if (!Entry)
             continue;
 
-        // 判断�?CancelStart 还是 CancelEnd
-        FString TypeNameLower = Evt.TypeName.ToLower();
-        bool bIsCancelStart = TypeNameLower.Contains(TEXT("cancelstart")) ||
-            (JumpTableID == 1 || JumpTableID == 9 || JumpTableID == 21 ||
-             JumpTableID == 25 || JumpTableID == 26 || JumpTableID == 30 ||
-             JumpTableID == 105 || JumpTableID == 111 || JumpTableID == 120);
-        bool bIsCancelEnd = TypeNameLower.Contains(TEXT("cancelend")) ||
-            TypeNameLower.Contains(TEXT("invokeanimcancelend")) ||
-            (JumpTableID == 34 || JumpTableID == 115 || JumpTableID == 116 ||
-             JumpTableID == 117 || JumpTableID == 118 || JumpTableID == 107 ||
-             JumpTableID == 112 || JumpTableID == 121);
-
-        if (bIsCancelStart)
-        {
-            FSACancelWindowIR Window;
-            Window.StartFrame = Evt.StartFrame;
-            Window.EndFrame = Evt.EndFrame;
-            Window.JumpAction = Action;
-            Window.TargetAction = NAME_None;
-
-            switch (Action)
-            {
-            case ESKJumpTableAction::AnimCancelStart_R1:
-            case ESKJumpTableAction::GenericCancelStart:
-                Window.TargetAction = TEXT("Attack"); break;
-            case ESKJumpTableAction::AnimCancelStart_L1:
-            case ESKJumpTableAction::AnimCancelStart_Guard:
-                Window.TargetAction = TEXT("Guard"); break;
-            case ESKJumpTableAction::AnimCancelStart_Dodge:
-            case ESKJumpTableAction::AnimCancelStart_Emergency:
-                Window.TargetAction = TEXT("Dodge"); break;
-            case ESKJumpTableAction::AnimCancelStart_Item:
-                Window.TargetAction = TEXT("Item"); break;
-            case ESKJumpTableAction::AnimCancelStart_L2:
-                Window.TargetAction = TEXT("Prosthetic"); break;
-            default:
-                Window.TargetAction = FName(*FString::Printf(TEXT("Action_%d"), JumpTableID));
-                break;
-            }
-
-            OutWindows.Add(Window);
-        }
+        FSACancelWindowIR Window;
+        Window.StartFrame = Evt.StartFrame;
+        Window.EndFrame = Evt.EndFrame;
+        Window.TargetAction = Entry->TargetAction;
+        Window.JumpAction = MapJumpTableToAction(JumpTableID);
+        Window.CrossfadeDuration = Entry->Crossfade;
+        OutWindows.Add(Window);
     }
 }
 
@@ -430,7 +406,7 @@ void FSATAEImporter::BuildTransitions(const TMap<int32, FSAAnimationLogicIR>& An
         }
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[TAEImporter] 构建 %d 条过渡规�?), OutSM.Transitions.Num());
+    UE_LOG(LogTemp, Log, TEXT("[TAEImporter] 构建 %d 条过渡规则"), OutSM.Transitions.Num());
 }
 
 // ============================================================================
@@ -532,6 +508,34 @@ ESKJumpTableAction FSATAEImporter::MapJumpTableToAction(int32 JumpTableID)
     case 134: return ESKJumpTableAction::DisableItem;
     case 137: return ESKJumpTableAction::DisableParry;
     case 154: return ESKJumpTableAction::ItemUseWindow;
+    case 16:  return ESKJumpTableAction::JTID_16;
+    case 24:  return ESKJumpTableAction::JTID_24;
+    case 39:  return ESKJumpTableAction::JTID_39;
+    case 54:  return ESKJumpTableAction::JTID_54;
+    case 56:  return ESKJumpTableAction::JTID_56;
+    case 69:  return ESKJumpTableAction::JTID_69;
+    case 72:  return ESKJumpTableAction::JTID_72;
+    case 95:  return ESKJumpTableAction::JTID_95;
+    case 110: return ESKJumpTableAction::JTID_110;
+    case 125: return ESKJumpTableAction::JTID_125;
+    case 126: return ESKJumpTableAction::JTID_126;
+    case 127: return ESKJumpTableAction::JTID_127;
+    case 128: return ESKJumpTableAction::JTID_128;
+    case 132: return ESKJumpTableAction::JTID_132;
+    case 136: return ESKJumpTableAction::JTID_136;
+    case 140: return ESKJumpTableAction::JTID_140;
+    case 141: return ESKJumpTableAction::JTID_141;
+    case 143: return ESKJumpTableAction::JTID_143;
+    case 145: return ESKJumpTableAction::JTID_145;
+    case 146: return ESKJumpTableAction::JTID_146;
+    case 148: return ESKJumpTableAction::JTID_148;
+    case 149: return ESKJumpTableAction::JTID_149;
+    case 150: return ESKJumpTableAction::JTID_150;
+    case 151: return ESKJumpTableAction::JTID_151;
+    case 155: return ESKJumpTableAction::JTID_155;
+    case 156: return ESKJumpTableAction::JTID_156;
+    case 157: return ESKJumpTableAction::JTID_157;
+    case 158: return ESKJumpTableAction::JTID_158;
     default:  return ESKJumpTableAction::None;
     }
 }
@@ -605,5 +609,4 @@ FString FSATAEImporter::InferCategoryFromAnimID(int32 AnimID)
     }
 
     return TEXT("Other");
-}
 }

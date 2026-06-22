@@ -1,6 +1,6 @@
 ---
 name: aibridge
-description: "通过 TCP JSON-RPC 操控 UE5 编辑器：查询状态、执行控制台命令、操作资产、运行 Python、编译 Blueprint、创建/修改 Blueprint/EnhancedInput/AnimBlueprint。"
+description: "通过 TCP JSON-RPC 操控 UE5 编辑器：查询状态、执行控制台命令、操作资产、运行 Python、编译 C++/Blueprint、创建/修改 Blueprint/EnhancedInput/AnimBlueprint、PIE 控制与输入模拟、启动/停止编辑器、崩溃分析。"
 argument-hint: "<命令> [参数...]"
 user-invocable: true
 allowed-tools: Bash, Read
@@ -8,311 +8,119 @@ allowed-tools: Bash, Read
 
 # SekiroAIBridge — UE5 编辑器 AI 操控
 
-通过 TCP JSON-RPC 连接运行中的 UE 编辑器，执行 9 类操作：
-查询、控制台、资产、Python、编译、Blueprint、EnhancedInput、AnimBlueprint、PIE控制。
+通过 TCP JSON-RPC 连接运行中的 UE 编辑器，执行 12 类操作。
+bridge.py 位于 `Script/aibridge/bridge.py`（与 Codex 共享同一份）。
+
+> **完整参考命令速查和参数说明**：`Docs/aibridge-reference.md`
+> 所有命令详情、安全规则、工作流示例、错误处理均可查阅此文档。
 
 > **前提**：UE 编辑器运行中，SekiroAIBridge 插件已加载（监听 127.0.0.1:9877）。
-> 用户可手动管理编辑器，也可请求 AI 通过 `editor start/stop/restart` 命令启停编辑器。
+> 启动方式：用户手动启动，或 `editor start` 由 AI 自动启动。
 
 > **跨平台注意事项**：
-> 1. 所有 bridge 命令必须使用 **UE5 自带的 Python 解释器**，而非系统 `python`/`python3`（不同机器上 `python3` 可能不存在或版本不同）。
-> 2. UE5 自带 Python 路径固定为 `$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe`。
-> 3. `$UE_ENGINE_DIR` 在各机器的 `.claude/settings.local.json` 中配置（不同步，每台机器首次使用时设置）：
->    ```json
->    { "env": { "UE_ENGINE_DIR": "F:/UnrealEngine-5.2" } }
->    ```
-> 4. **MSYS2_ARG_CONV_EXCL 规则**：所有命令执行时 **必须** 在 Python 解释器前加 `MSYS2_ARG_CONV_EXCL='*'`，防止 Git Bash (MSYS2) 自动将 `/Game/...` 等 Unix 路径转为 Windows 路径。这是硬性规则，每一条 bridge 命令都要遵守，不可省略。
+> 1. 所有 bridge 命令必须使用 **UE5 自带的 Python 解释器**：
+>    `$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe`
+> 2. `$UE_ENGINE_DIR` 在各机器的 `.claude/settings.local.json` 中配置
+> 3. **MSYS2_ARG_CONV_EXCL 规则**：执行时 **必须** 在 Python 解释器前加
+>    `MSYS2_ARG_CONV_EXCL='*'`，防止 Git Bash 将 `/Game/...` 转为 Windows 路径
+>    这是硬性规则，每一条 bridge 命令都要遵守，不可省略
 
 ---
 
 ## 1. 连接检测
 
-执行任何操作前，先检查桥接是否可达：
-
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py ping
+MSYS2_ARG_CONV_EXCL='*' "$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" Script/aibridge/bridge.py ping
 ```
 
-如果返回 `连接被拒绝`：
-1. **先检查崩溃**：`crash check` — 如果有崩溃，执行 `crash analyze` 分析原因
-2. **如果没有崩溃**：提示用户启动编辑器，或通过 `editor start` 启动
-3. 等待编辑器就绪后重试
+返回 `pong` 表示就绪。返回 `连接被拒绝`：
+1. 先 `crash check` 检查崩溃
+2. 有崩溃 → `crash analyze` 分析
+3. 无崩溃 → `editor start` 启动编辑器
 
 ---
 
-## 2. 命令参考
+## 2. 命令速查
 
-所有命令通过 `bridge.py` 执行：
+完整参数说明见 `Docs/aibridge-reference.md`。
 
-### 编辑器状态查询
-
+### 查询
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py query project     # 项目名称、引擎版本
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py query level       # 当前关卡
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py query selection   # 选中的 Actor 列表
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py query all         # 全部信息
+bridge.py query project|level|selection|all
 ```
 
-### 控制台命令
-
+### 控制台
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py console "stat fps"
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py console "obj list"
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py console "memreport"
+bridge.py console "stat fps"|"obj list"|"memreport"
 ```
 
 ### 资产操作
-
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset list /Game/
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset info /Game/BP_Player
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset create /Game/Data/DT_Config DataTable
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset import_file /Game/Textures/T_MyTex "F:/path/to/texture.png"
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset delete /Game/Temp/ToDelete
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py asset rename /Game/Old /Game/New
+bridge.py asset list|info|create|delete|rename|import_file <参数>
 ```
-
-`import_file` imports a single file (PNG/TGA/BMP/DDS) as a Texture2D asset. The source path must be an absolute filesystem path. This is the recommended way to import textures — Python's `AssetImportTask` hangs when called via bridge (GameThread deadlock).
 
 ### Python 执行
-
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py python "import unreal; print(unreal.get_editor_subsystem(...))"
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py python --file "F:/path/to/script.py"
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py python --file "F:/path/to/script.py" --args "/Game/config.json"
+bridge.py python "单行代码"
+bridge.py python --file "路径/script.py" [--args "参数"]
 ```
-
-`--file` executes a Python file. `--args` passes arguments visible to the script via `sys.argv[1:]`.
 
 ### 编译
-
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py compile cpp          # C++ 编译（直接调UBT，返回结构化错误）
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py compile all          # 编译所有 BP（通过编辑器）
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py compile changed      # 仅编译已修改的 BP
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py compile selected     # 仅编译选中的 BP
+bridge.py compile cpp|all|changed|selected
 ```
+`compile cpp` 返回结构化 JSON（errors/warnings/exitCode），AI 可自动修复后重新编译，最多 3 轮。
 
-**compile cpp 返回格式**：
-```json
-{
-  "success": false,
-  "exitCode": 6,
-  "errors": [
-    {"file": "D:\\Sekiro\\...\\Foo.cpp", "line": 42, "code": "C2679", "message": "binary '=': no operator...", "fatal": false}
-  ],
-  "warnings": [...],
-  "errorCount": 1,
-  "warningCount": 0,
-  "summary": "最后5行UBT输出"
-}
-```
-
-### Blueprint 操作
-
+### Blueprint
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py blueprint create /Game/BP_MyActor Actor
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py blueprint addvar /Game/BP_MyActor Health float
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py blueprint addfunc /Game/BP_MyActor OnDamage
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py blueprint addnode /Game/BP_MyActor OnDamage PrintString
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py blueprint compile /Game/BP_MyActor
+bridge.py blueprint create|addvar|addfunc|addnode|compile|layout <参数>
 ```
 
-### Enhanced Input 操作
-
-创建和配置 Enhanced Input 系统的资产：InputAction、InputMappingContext、按键映射。
-
+### Enhanced Input
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py enhanced_input create_action /Game/Input/IA_Jump axis1d
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py enhanced_input create_context /Game/Input/IMC_Default
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py enhanced_input map_key /Game/Input/IMC_Default /Game/Input/IA_Jump SpaceBar
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py enhanced_input unmap_key /Game/Input/IMC_Default /Game/Input/IA_Jump SpaceBar
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py enhanced_input info /Game/Input/IA_Jump
+bridge.py enhanced_input create_action|create_context|info|map_key|unmap_key|configure_triggers <参数>
 ```
 
-**create_action 参数**: value_type 可选 `bool`(默认) / `axis1d` / `axis2d` / `axis3d`
-**map_key 参数**: `<IMC路径> <IA路径> <按键名>`，按键名如 `SpaceBar` / `LeftMouseButton` / `W` 等
-
-### Animation Blueprint 操作
-
-创建动画蓝图、管理状态机（状态/转换）、添加动画节点。
-
+### Animation Blueprint
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint create /Game/Anim/ABP_Character /Game/Anim/SK_Character
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint add_state /Game/Anim/ABP_Character Idle
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint add_state /Game/Anim/ABP_Character Run
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint add_transition /Game/Anim/ABP_Character Idle Run 0.15 cubic
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint add_node /Game/Anim/ABP_Character Idle sequence_player /Game/Anim/A_Idle
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint info /Game/Anim/ABP_Character
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py anim_blueprint compile /Game/Anim/ABP_Character
+bridge.py anim_blueprint create|add_state|add_transition|delete_transition|add_node|rename_node
+bridge.py anim_blueprint info|compile|layout|set_anim_class <参数>
 ```
 
-**create 参数**: `<ABP路径> <骨架路径>` — 骨架必须是已存在的 USkeleton 资产
-**add_node 参数**: `<ABP路径> <状态名> <节点类型> <动画资产路径>`
-  - 节点类型: `sequence_player` (需 AnimSequence) / `blend_space_player` (需 BlendSpace)
-**add_transition 参数**: `<ABP路径> <源状态> <目标状态> [crossfade_duration] [blend_mode]`
-  - blend_mode 可选: linear / cubic / sinusoidal / cubic_in_out 等
-
-### PIE 控制
-
-控制 Play In Editor 会话的启动、停止、暂停、恢复，支持多种运行模式和网络配置。
-
+### PIE
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie status                # 查询 PIE 状态
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start                 # 启动 PIE（默认：视口内）
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start standalone      # 独立进程
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start mobile          # 移动端预览
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start vulkan          # Vulkan 预览
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start vr              # VR 预览
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start simulate        # 模拟模式（无玩家）
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start --clients 2 --listen  # 2 客户端 ListenServer
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie start --clients 4 --dedicated  # 4 客户端 DedicatedServer
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie stop                  # 停止 PIE
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie pause                 # 暂停 PIE
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie resume                # 恢复 PIE
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py pie late_join             # 添加一个客户端
+bridge.py pie status|start|stop|pause|resume|late_join [--clients N] [--listen] [--dedicated]
 ```
 
-**start 参数说明**:
-- 位置参数 `mode`: selected（默认）/ standalone / mobile / vulkan / vr / simulate
-- `--clients N`: 客户端数量（默认 1）
-- `--net_mode standalone|dedicated|listen`: 网络模式
-- `--dedicated`: DedicatedServer 快捷方式
-- `--listen`: ListenServer 快捷方式
-- `--server`: 等效 --listen
-- `--viewport`: 视口内运行（默认 true）
-
-### 工具列表
-
+### 输入模拟（PIE 运行时）
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py tools
+bridge.py input_simulate <action> [--x <值>] [--y <值>] [--hold <秒>] [--delay <秒>]
 ```
+action: attack/guard/dodge/jump/interact/use_item/healing_gourd/grapple/prosthetic/lock_on/crouch/move/look/cycle_item_next|prev/pause/menu
 
 ### 编辑器生命周期
-
-用户可请求 AI 管理编辑器启停。这些操作无需通过 TCP（直接操作系统进程）。
-
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py editor start     # 启动编辑器（自动清理 cmd 窗口）
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py editor stop      # 关闭编辑器 + LiveCoding/Trace 子进程
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py editor restart   # 重启编辑器
+bridge.py editor start|stop|restart
 ```
-
-**启动流程**：`DETACHED_PROCESS` 无 cmd 窗口 → 等待 TCP 9877 就绪（最多 90 秒）。
-**关闭流程**：杀 UnrealEditor + LiveCodingConsole + TraceServer + CEFSubProcess → 确认进程已退出。
-**重启流程**：stop → 等 2 秒 → start。
-
-> 这些操作有副作用，执行前需用户确认。
 
 ### 崩溃追踪
-
-编辑器运行时崩溃后，检查并分析崩溃原因，定位源码，自动修复。
-
 ```bash
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py crash check      # 检测最近是否崩溃
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py crash analyze    # 分析崩溃：错误信息、调用栈、源码定位
-"$UE_ENGINE_DIR/Engine/Binaries/ThirdParty/Python3/Win64/python.exe" .claude/skills/aibridge/bridge.py crash list       # 列出历史崩溃
+bridge.py crash check|analyze|list
 ```
-
-**分析来源**：
-- `Saved/Crashes/UECC-*/CrashContext.runtime-xml` — 错误类型、调用栈模块
-- `Saved/Crashes/UECC-*/*.log` / `Saved/Logs/Sekiro.log` — Fatal/Assert 日志行
-- 自动提取项目源码文件路径和行号（`sourceHints`）
 
 ---
 
 ## 3. 安全规则
 
-以下操作具有副作用，执行前必须向用户确认：
-
-| 操作 | 风险 |
+| 操作 | 确认 |
 |------|------|
-| `asset delete` | 不可逆删除资产 |
-| `asset create` | 创建新资产 |
-| `compile all` | 可能触发大量编译 |
-| `blueprint create` | 创建新 Blueprint |
-| `blueprint addvar/addfunc/addnode` | 修改 Blueprint 结构 |
-| `enhanced_input map_key/unmap_key` | 修改输入映射配置 |
-| `anim_blueprint add_state/add_transition/add_node` | 修改动画蓝图图结构 |
-| `pie start` | 启动 PIE 会话 |
-| `console` 带写入命令 | 可能修改编辑器状态 |
-
-**确认格式**：
-> "即将执行 `[命令]`。这可能 [影响说明]。是否继续？"
-
-只读操作（`query`、`asset list`、`asset info`、`ping`、`tools`、`console "stat*"`、`pie status`）无需确认。
-
----
-
-## 4. 错误处理
-
-| 错误 | 处理 |
-|------|------|
-| 连接被拒绝 | 提示用户确认编辑器是否已启动并加载插件 |
-| 连接超时 | 重试 1 次后报告失败 |
-| 工具未注册 | 检查插件是否正确加载 |
-| 缺少参数 | 展示该命令的正确用法 |
-| 只读模式 | 提示在项目设置中关闭只读模式 |
-| 用户拒绝 | 终止操作并报告 |
-
----
-
-## 5. 工作流示例
-
-### 示例：C++ 编译 + 自动修复
-
-```
-用户: /aibridge compile cpp
-  → 编辑器在线 → Live Coding 模式，编辑器离线 → 直接 UBT
-  → 触发编译 → 轮询 UBT 日志 → 解析错误
-  → 返回错误列表（file/line/code/message）
-
-  → AI 自动：
-    1. 读取错误文件 → 分析 → 修复（Edit）
-    2. 重新 compile cpp → 再次编译
-    3. 成功 → 报告"编译通过，0 errors"
-    4. 仍失败 → 重复修复（最多3轮）→ 超过则请求用户介入
-```
-
-**规则**：
-- 最多自动修复 3 轮，超过则停止并请求用户介入
-- 每轮修复后必须重新编译验证
-- 修复范围仅限于本次修改涉及的文件
-
-### 示例：运行时崩溃追踪 + 修复
-
-```
-用户: /aibridge crash check
-  → 检测到 3分钟前有一次崩溃（UECC-Windows-xxx）
-
-用户: /aibridge crash analyze
-  → 读取 CrashContext.runtime-xml + 日志文件
-  → 返回：
-    errorMessage: "Access violation - code c0000005"
-    sourceHints: [{raw: "SekiroImport/SekiroModelParser.cpp", line: 412}]
-    logErrors: ["Fatal error: [File:.../SekiroModelParser.cpp] [Line: 412] ..."]
-
-  → AI 自动：
-    1. Read SekiroModelParser.cpp 第412行
-    2. 分析原因：空指针解引用
-    3. 修复（加空指针检查）
-    4. compile cpp → 通过
-    5. 提示用户重启编辑器验证
-```
-
-### 示例：创建 DataTable 资产
-
-```
-用户: /aibridge asset create /Game/Data/DT_Enemies DataTable
-→ AI 检查连接 → 请求确认 → 执行 → 报告结果
-```
-
-### 示例：查询编辑器状态后编译
-
-```
-用户: /aibridge query project
-→ 输出项目名、引擎版本
-
-用户: /aibridge compile changed
-→ AI 请求确认 → 执行 → 输出编译结果
-```
+| `asset delete/create` | ✅ |
+| `compile all` | ✅ |
+| `blueprint create/addvar/addfunc/addnode/layout` | ✅ |
+| `enhanced_input map_key/unmap_key/configure_triggers` | ✅ |
+| `anim_blueprint add/delete/set/rename` 系列 | ✅ |
+| `pie start` | ✅ |
+| `editor start/stop/restart` | ✅ |
+| 带写入的 `console` | ✅ |
+| `input_simulate` | ✅ |
+| 只读（query/asset list&info/ping/tools/pie status/crash check） | ❌ 无需确认 |

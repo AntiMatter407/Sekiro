@@ -217,6 +217,28 @@ bool USKInputHandler::ConsumeMenuPressed()
 }
 
 //////////////////////////////////////////////////////////////////////////
+// 输入缓冲
+
+bool USKInputHandler::ConsumeBufferedInput(FName Action)
+{
+	// 升序遍历：移除匹配的第一个条目（FIFO 消费，先入先出）
+	for (int32 i = 0; i < InputBuffer.Num(); ++i)
+	{
+		if (InputBuffer[i].Action == Action)
+		{
+			InputBuffer.RemoveAt(i);
+			return true;
+		}
+	}
+	return false;
+}
+
+void USKInputHandler::ClearInputBuffer()
+{
+	InputBuffer.Reset();
+}
+
+//////////////////////////////////////////////////////////////////////////
 // 持续型意图
 
 FVector2D USKInputHandler::GetMoveIntent() const
@@ -274,6 +296,10 @@ void USKInputHandler::BeginPlay()
 {
 	Super::BeginPlay();
 	OwnerCharacter = Cast<ACharacter>(GetOwner());
+	UE_LOG(LogTemp, Log, TEXT("InputHandler[%s]: BeginPlay Owner=%s Class=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(OwnerCharacter.Get()),
+		*GetNameSafe(OwnerCharacter.IsValid() ? OwnerCharacter->GetClass() : nullptr));
 }
 
 void USKInputHandler::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -285,7 +311,7 @@ void USKInputHandler::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 	{
 		AttackHoldTime += DeltaTime;
 	}
-	if (bProstheticPressed)
+	if (bProstheticHeld)
 	{
 		ProstheticHoldTime += DeltaTime;
 	}
@@ -295,6 +321,18 @@ void USKInputHandler::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 	if (TimeSinceLastAttack > 0.5f)
 	{
 		ComboIndex = 0;
+	}
+
+	// ── 输入缓冲管理 ──
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	// 移除超时条目
+	InputBuffer.RemoveAll([Now](const FSKBufferedInput& E) {
+		return (Now - E.Timestamp) > E.Lifetime;
+	});
+	// 限制队列最大长度 6（移除最旧的条目）
+	while (InputBuffer.Num() > 6)
+	{
+		InputBuffer.RemoveAt(0);
 	}
 
 	// ── 冲刺状态检查（无输入或离地时退出冲刺）──
@@ -403,6 +441,14 @@ void USKInputHandler::OnJumpStarted(const FInputActionValue& Value)
 {
 	bJumpPressed = true;
 
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Jump");
+	Entry.Priority = 5;                          // ESKActionPriority::Jump
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (Owner)
 	{
@@ -430,6 +476,14 @@ void USKInputHandler::OnDodgeStarted(const FInputActionValue& Value)
 	// ── 闪避 ──
 	bDodgePressed = true;
 	bDodgeHeld = true;
+
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Dodge");
+	Entry.Priority = 7;                          // ESKActionPriority::Dodge
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 
 	ASKCharacter* SekiroOwner = Cast<ASKCharacter>(Owner);
 	if (SekiroOwner)
@@ -511,6 +565,14 @@ void USKInputHandler::OnAttackStarted(const FInputActionValue& Value)
 	bAttackHeld = true;
 	AttackHoldTime = 0.f;
 
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Attack");
+	Entry.Priority = 2;                          // ESKActionPriority::Attack
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
+
 	// 连段计数：0.5s 窗口内连续触发 → ComboIndex++
 	const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 	if (TimeSinceLastAttack <= 0.5f && ComboIndex > 0)
@@ -533,6 +595,14 @@ void USKInputHandler::OnAttackCompleted(const FInputActionValue& Value)
 void USKInputHandler::OnGuardStarted(const FInputActionValue& Value)
 {
 	bGuardHeld = true;
+
+	// Guard 也入缓冲，但消费方优先使用 IsGuardHeld 持续状态
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Guard");
+	Entry.Priority = 5;                          // ESKActionPriority::Guard
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 }
 
 void USKInputHandler::OnGuardCompleted(const FInputActionValue& Value)
@@ -548,17 +618,35 @@ void USKInputHandler::OnLockOnStarted(const FInputActionValue& Value)
 void USKInputHandler::OnProstheticStarted(const FInputActionValue& Value)
 {
 	bProstheticPressed = true;
+	bProstheticHeld = true;
 	ProstheticHoldTime = 0.f;
+
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Prosthetic");
+	Entry.Priority = 4;                          // ESKActionPriority::Prosthetic
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 }
 
 void USKInputHandler::OnProstheticCompleted(const FInputActionValue& Value)
 {
+	bProstheticHeld = false;
 	ProstheticHoldTime = 0.f;
 }
 
 void USKInputHandler::OnGrappleStarted(const FInputActionValue& Value)
 {
 	bGrapplePressed = true;
+
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Grapple");
+	Entry.Priority = 2;                          // ESKActionPriority::Attack（与Attack同级）
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -567,16 +655,40 @@ void USKInputHandler::OnGrappleStarted(const FInputActionValue& Value)
 void USKInputHandler::OnInteractStarted(const FInputActionValue& Value)
 {
 	bInteractPressed = true;
+
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Interact");
+	Entry.Priority = 10;                         // ESKActionPriority::Deathblow
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 }
 
 void USKInputHandler::OnUseItemStarted(const FInputActionValue& Value)
 {
 	bUseItemPressed = true;
+
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Item");
+	Entry.Priority = 3;                          // ESKActionPriority::ItemUse
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 }
 
 void USKInputHandler::OnHealingGourdStarted(const FInputActionValue& Value)
 {
 	bHealingGourdPressed = true;
+
+	// 入队到输入缓冲
+	FSKBufferedInput Entry;
+	Entry.Action = TEXT("Item");
+	Entry.Priority = 3;                          // ESKActionPriority::ItemUse
+	Entry.Timestamp = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	Entry.Lifetime = 0.1f;
+	InputBuffer.Add(Entry);
 }
 
 void USKInputHandler::OnCycleItemNextStarted(const FInputActionValue& Value)
