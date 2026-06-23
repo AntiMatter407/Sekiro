@@ -54,3 +54,7 @@
 /.claude/proxy/proxy-err.log
 /.claude/proxy/proxy-stdout.log
 /.claude/proxy/proxy.log
+
+# 本地保留，不入远程仓库
+/Output/
+/Content/Characters/Sekiro/Animations/
