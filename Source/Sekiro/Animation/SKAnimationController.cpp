@@ -1,8 +1,7 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Animation/SKAnimationController.h"   // ensure recompile for CurrentLocoState init fix
+#include "Animation/SKAnimationController.h"
 #include "SekiroAnimLogicData.h"
-#include "SekiroCombatData.h"
 #include "Character/SKCharacter.h"
 #include "Input/SKInputHandler.h"
 #include "Animation/SKAnimInstance.h"
@@ -25,7 +24,6 @@ USKAnimationController::USKAnimationController(const FObjectInitializer& ObjectI
 
 FName USKAnimationController::GetCurrentAction() const { return CurrentAction; }
 int32 USKAnimationController::GetCurrentAnimID() const { return CurrentAnimID; }
-int32 USKAnimationController::GetCurrentPriority() const { return CurrentPriority; }
 
 // ── 生命周期 ──────────────────────────────────────────────
 
@@ -36,51 +34,21 @@ void USKAnimationController::BeginPlay()
     OwnerCharacter = Cast<ASKCharacter>(GetOwner());
     if (!OwnerCharacter.IsValid())
     {
-        UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: Owner is not ASKCharacter! Owner=%s Class=%s"),
-            *GetNameSafe(GetOwner()),
-            *GetNameSafe(GetOwner()),
-            *GetNameSafe(GetOwner() ? GetOwner()->GetClass() : nullptr));
+        UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: Owner is not ASKCharacter!"),
+            *GetNameSafe(GetOwner()));
         return;
     }
 
     InputHandler = OwnerCharacter->GetInputHandler();
     Mesh = OwnerCharacter->GetMesh();
 
-    UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: Owner=%s Class=%s InputHandler=%s"),
-        *GetNameSafe(OwnerCharacter.Get()),
-        *GetNameSafe(OwnerCharacter.Get()),
-        *GetNameSafe(OwnerCharacter->GetClass()),
-        *GetNameSafe(InputHandler.Get()));
-
     if (!AnimLogicData)
     {
         AnimLogicData = LoadObject<USKAnimationLogicData>(nullptr,
             TEXT("/Game/Characters/Sekiro/DA_Sekiro_AnimLogic.DA_Sekiro_AnimLogic"));
-        if (AnimLogicData)
-        {
-            UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: AnimLogicData auto-loaded"),
-                *GetNameSafe(OwnerCharacter.Get()));
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("AnimController[%s]: AnimLogicData failed to load"),
-                *GetNameSafe(OwnerCharacter.Get()));
-        }
     }
 
-    if (!CombatData)
-    {
-        CombatData = LoadObject<USKCombatData>(nullptr,
-            TEXT("/Game/Characters/Sekiro/DA_Sekiro_Combat.DA_Sekiro_Combat"));
-        if (CombatData)
-        {
-            UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: CombatData auto-loaded"),
-                *GetNameSafe(OwnerCharacter.Get()));
-        }
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: Initialized"),
-        *GetNameSafe(OwnerCharacter.Get()));
+    UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: Initialized"), *GetNameSafe(OwnerCharacter.Get()));
 }
 
 void USKAnimationController::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -88,20 +56,15 @@ void USKAnimationController::TickComponent(float DeltaTime, ELevelTick TickType,
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
     UpdateFrameState();
 
-    // Tick 诊断：每 60 帧输出一次当前状态
     static int32 TickCounter = 0;
     if (++TickCounter % 60 == 0)
     {
-        UE_LOG(LogTemp, Log, TEXT("AnimTick[%s]: Action=%s AnimID=%d Priority=%d Mesh=%s ActiveMontage=%s"),
+        UE_LOG(LogTemp, Log, TEXT("AnimTick[%s]: State=%d Action=%s AnimID=%d Priority=%d"),
             *GetNameSafe(OwnerCharacter.Get()),
-            *CurrentAction.ToString(),
-            CurrentAnimID,
-            CurrentPriority,
-            *GetNameSafe(Mesh.Get()),
-            *GetNameSafe(Mesh.IsValid() && Mesh->GetAnimInstance() ? Mesh->GetAnimInstance()->GetCurrentActiveMontage() : nullptr));
+            (int32)CurrentState, *CurrentAction.ToString(),
+            CurrentAnimID, CurrentPriority);
     }
 
-    ApplyFrameFlags();
     UpdateAttackHitbox();
     UpdateChargeState(DeltaTime);
     UpdateContextFlags();
@@ -123,210 +86,307 @@ void USKAnimationController::UpdateFrameState()
     }
 }
 
-void USKAnimationController::ApplyFrameFlags()
-{
-    if (!AnimLogicData || CurrentAnimID <= 0) return;
-    if (!Mesh.IsValid()) return;
-
-    int32 Frame = FMath::RoundToInt(CurrentAnimTime * 30.0f);
-    FSKFrameFlags Flags;
-    if (!AnimLogicData->GetFrameFlags(CurrentAnimID, Frame, Flags)) return;
-
-    USKAnimInstance* AnimInst = Cast<USKAnimInstance>(Mesh->GetAnimInstance());
-    if (!AnimInst) return;
-
-    AnimInst->bCanDeflect = Flags.bEnableParry && !Flags.bDisableParry;
-    AnimInst->bDisableTurning = Flags.bDisableTurning;
-    AnimInst->bDisableMovement = Flags.bDisableMovement || Flags.bLimitMoveSpeedWalk || Flags.bLimitMoveSpeedDash;
-}
-
-// ── 意图处理 ──────────────────────────────────────────────
-
-void USKAnimationController::ProcessIntents()
-{
-    if (!InputHandler.IsValid())
-    {
-        static bool bWarned = false;
-        if (!bWarned) { UE_LOG(LogTemp, Warning, TEXT("ProcessIntents: InputHandler invalid, Owner=%s"), *GetNameSafe(OwnerCharacter.Get())); bWarned = true; }
-        return;
-    }
-    if (!AnimLogicData)
-    {
-        static bool bWarned = false;
-        if (!bWarned) { UE_LOG(LogTemp, Warning, TEXT("ProcessIntents: AnimLogicData null, Owner=%s"), *GetNameSafe(OwnerCharacter.Get())); bWarned = true; }
-        return;
-    }
-
-    // ── 构建意图列表，按 Priority 降序 ──
-    struct FIntentEntry
-    {
-        FName DebugName;
-        int32 Priority;
-        TFunction<bool()> Handler;
-    };
-
-    TArray<FIntentEntry> Intents;
-    Intents.Reserve(10);
-
-    Intents.Add({TEXT("Deathblow"),  ESKActionPriority::Deathblow,  [this]() -> bool { return HandleDeathblow(); }});
-    Intents.Add({TEXT("Dodge"),      ESKActionPriority::Dodge,      [this]() -> bool { if (InputHandler->ConsumeBufferedInput(TEXT("Dodge"))) { HandleDodge(); return true; } return false; }});
-    Intents.Add({TEXT("Jump"),       ESKActionPriority::Jump,       [this]() -> bool { if (InputHandler->ConsumeBufferedInput(TEXT("Jump"))) { HandleJump(); return true; } return false; }});
-    Intents.Add({TEXT("Guard"),      ESKActionPriority::Guard,      [this]() -> bool { if (InputHandler->IsGuardHeld()) { HandleGuard(); return true; } return false; }});
-    Intents.Add({TEXT("Prosthetic"), ESKActionPriority::Prosthetic, [this]() -> bool { if (InputHandler->ConsumeBufferedInput(TEXT("Prosthetic"))) { HandleProsthetic(); return true; } return false; }});
-    Intents.Add({TEXT("ItemUse"),    ESKActionPriority::ItemUse,    [this]() -> bool { if (InputHandler->ConsumeBufferedInput(TEXT("Item"))) { HandleItemUse(); return true; } return false; }});
-    Intents.Add({TEXT("Grapple"),    ESKActionPriority::Attack,     [this]() -> bool { if (InputHandler->ConsumeBufferedInput(TEXT("Grapple"))) { HandleGrapple(); return true; } return false; }});
-    Intents.Add({TEXT("Attack"),     ESKActionPriority::Attack,     [this]() -> bool { HandleAttack(); return true; }});
-
-    // Priority 降序排序（已按声明顺序保证，此处显式排序确保）
-    Intents.Sort([](const FIntentEntry& A, const FIntentEntry& B) { return A.Priority > B.Priority; });
-
-    // ── 降序遍历：高优先级意图优先被消费 ──
-    for (const FIntentEntry& Intent : Intents)
-    {
-        // 低优先级不能打断当前动作
-        if (Intent.Priority <= CurrentPriority && CurrentAnimID > 0)
-            continue;
-
-        if (Intent.Handler())
-            return;  // 一次 Tick 只消费一个最高优先级意图
-    }
-}
-
 // ── 上下文标志更新 ──────────────────────────────────────────
 
 void USKAnimationController::UpdateContextFlags()
 {
     USKAnimInstance* AnimInst = GetAnimInstance();
-    if (!AnimInst)
-    {
-        bIsInAir = false;
-        return;
-    }
+    if (!AnimInst) { bIsInAir = false; return; }
 
-    // 从 AnimInstance 同步空中状态
+    bool bPrevInAir = bIsInAir;
     bIsInAir = AnimInst->bIsInAir;
 
-    // bCounterWindow 超时清除：如果当前动画不是 Deflect/Attack_Counter，清除标志
+    // 落地检测
+    if (bPrevInAir && !bIsInAir)
+    {
+        if (CurrentState == ESKCharacterState::Airborne)
+        {
+            UE_LOG(LogTemp, Log, TEXT("State: Airborne -> Idle (landed)"));
+            TransitionTo(ESKCharacterState::Idle, TEXT("Locomotion"), ESKActionPriority::Locomotion);
+        }
+        bWasInAir = false;
+    }
+
+    // bCounterWindow 超时清除
     if (bCounterWindow && CurrentAction != TEXT("Deflect") && CurrentAction != TEXT("Attack_Counter"))
     {
         bCounterWindow = false;
     }
-
-    // bDeathBlowActive 由外部（架势槽满事件）设置，此处不自动清除
 }
 
-bool USKAnimationController::TryPlayAction(FName Action, int32 Priority)
-{
-    if (!AnimLogicData) return false;
-    if (CurrentPriority > Priority && CurrentAnimID > 0) return false;
+// ── 状态迁移 ──────────────────────────────────────────────
 
-    if (CurrentAnimID > 0)
+void USKAnimationController::TransitionTo(ESKCharacterState NewState, FName Action, int32 Priority)
+{
+    if (CurrentAnimID > 0 && Action != CurrentAction && Action != NAME_None)
     {
         float Crossfade;
-        if (!AnimLogicData->CanCancelTo(CurrentAnimID, CurrentAnimTime, Action, Crossfade)) return false;
+        USKAnimInstance* AnimInst = GetAnimInstance();
+        if (!AnimInst || !AnimInst->CanCancelTo(Action, Crossfade))
+            return;
     }
 
     int32 AnimID = ResolveAnimID(Action);
-    if (AnimID <= 0) return false;
+    if (AnimID <= 0) return;
+
+    UE_LOG(LogTemp, Log, TEXT("State: %d -> %d (Action=%s AnimID=%d)"),
+        (int32)CurrentState, (int32)NewState, *Action.ToString(), AnimID);
 
     PlayMontageByID(AnimID, 0.1f);
+    CurrentState = NewState;
     CurrentAction = Action;
     CurrentPriority = Priority;
     CurrentAnimID = AnimID;
+}
+
+bool USKAnimationController::CanTransition(FName Action, int32& OutPriority)
+{
+    // 从 Action 映射优先级
+    static const TMap<FName, int32> PriorityMap = {
+        {TEXT("Deathblow"),     10},
+        {TEXT("Hit"),            8},
+        {TEXT("Dodge"),          7},
+        {TEXT("Deflect"),        6},
+        {TEXT("Guard"),          5},
+        {TEXT("Jump"),           5},
+        {TEXT("Prosthetic"),     4},
+        {TEXT("Item"),           3},
+        {TEXT("Attack"),         2},
+        {TEXT("Grapple"),        2},
+        {TEXT("CombatArt"),      2},
+        {TEXT("Locomotion"),     0},
+    };
+
+    const int32* P = PriorityMap.Find(Action);
+    OutPriority = P ? *P : 0;
+
+    // 状态机优先级规则：
+    //   Deathblow(10) > Hit(8) > Dodge/Deflect(7-6) > Guard/Jump(5)
+    //   > Prosthetic(4) > Item(3) > Attack/Grapple(2) > Locomotion(0)
+    if (CurrentPriority > OutPriority && CurrentAnimID > 0)
+        return false;
+
+    // 相同动作连段不需要 CancelWindow 检查（由 TryPlayAction 内部处理）
+    if (CurrentAnimID > 0 && Action != CurrentAction)
+    {
+        float Crossfade;
+        USKAnimInstance* AnimInst = GetAnimInstance();
+        if (!AnimInst || !AnimInst->CanCancelTo(Action, Crossfade))
+            return false;
+    }
+
     return true;
+}
+
+// ── 意图处理（状态机核心）─────────────────────────────────
+
+void USKAnimationController::ProcessIntents()
+{
+    if (!InputHandler.IsValid() || !AnimLogicData) return;
+
+    // ── Idle 状态：接受所有输入 ──
+    if (CurrentState == ESKCharacterState::Idle)
+    {
+        if (HandleDeathblow()) return;
+
+        // 防御（按住持续）
+        if (InputHandler->IsGuardHeld())
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Guard"), Prio)) { HandleGuard(); return; }
+        }
+
+        // Dodge / Jump / Attack / Prosthetic / Item（消费缓冲）
+        if (InputHandler->ConsumeBufferedInput(TEXT("Dodge")))  { HandleDodge(); return; }
+        if (InputHandler->ConsumeBufferedInput(TEXT("Jump")))   { HandleJump(); return; }
+        if (InputHandler->ConsumeBufferedInput(TEXT("Prosthetic"))) { HandleProsthetic(); return; }
+        if (InputHandler->ConsumeBufferedInput(TEXT("Item")))   { HandleItemUse(); return; }
+        if (InputHandler->ConsumeBufferedInput(TEXT("Grapple"))) { HandleGrapple(); return; }
+
+        // 攻击
+        HandleAttack();  // 内部消费缓冲
+        return;
+    }
+
+    // ── Attack 状态：接受 CancelWindow 内的打断 ──
+    if (CurrentState == ESKCharacterState::Attack)
+    {
+        // 忍杀（最高优先级）
+        if (HandleDeathblow()) return;
+
+        // 防御/闪避/跳跃 打断（需要 CancelWindow）
+        if (InputHandler->IsGuardHeld())
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Guard"), Prio)) { HandleGuard(); return; }
+        }
+        if (InputHandler->ConsumeBufferedInput(TEXT("Dodge")))
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Dodge"), Prio)) { HandleDodge(); return; }
+        }
+        if (InputHandler->ConsumeBufferedInput(TEXT("Jump")))
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Jump"), Prio)) { HandleJump(); return; }
+        }
+
+        // R1 连段
+        HandleAttack();
+        return;
+    }
+
+    // ── Guard 状态 ──
+    if (CurrentState == ESKCharacterState::Guard)
+    {
+        if (!InputHandler->IsGuardHeld())
+        {
+            TransitionTo(ESKCharacterState::Idle, TEXT("Locomotion"), ESKActionPriority::Locomotion);
+            return;
+        }
+
+        // Guard 中闪避
+        if (InputHandler->ConsumeBufferedInput(TEXT("Dodge")))
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Dodge"), Prio)) { HandleDodge(); return; }
+        }
+
+        // 持续防御
+        HandleGuard();
+        return;
+    }
+
+    // ── Dodge 状态：闪避中不可打断 ──
+    if (CurrentState == ESKCharacterState::Dodge)
+    {
+        // 闪避结束由 OnActionMontageEnded 自动切回 Idle
+        return;
+    }
+
+    // ── Jump / Airborne 状态 ──
+    if (CurrentState == ESKCharacterState::Jump || CurrentState == ESKCharacterState::Airborne)
+    {
+        // 空中攻击
+        if (InputHandler->ConsumeBufferedInput(TEXT("Attack")))
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Attack"), Prio)) { HandleAttack(); return; }
+        }
+
+        // 空中闪避
+        if (InputHandler->ConsumeBufferedInput(TEXT("Dodge")))
+        {
+            int32 Prio;
+            if (CanTransition(TEXT("Dodge"), Prio)) { HandleAirDodge(); return; }
+        }
+
+        if (CurrentState == ESKCharacterState::Jump)
+        {
+            // Jump 动画播完后自动进入 Airborne（物理控制）
+            // 由 OnActionMontageEnded 处理
+        }
+        return;
+    }
+
+    // ── Hit / Death 状态：不处理输入 ──
+    if (CurrentState == ESKCharacterState::Hit || CurrentState == ESKCharacterState::Death)
+    {
+        return;
+    }
 }
 
 // ── 攻击 ──────────────────────────────────────────────────
 
 void USKAnimationController::HandleAttack()
 {
-    if (!InputHandler.IsValid()) return;
+    if (!InputHandler.IsValid() || !AnimLogicData) return;
 
-    // ── 从缓冲队列消费 Attack 输入 ──
-    // 蓄力状态不需要消费缓冲（蓄力由持续按住触发，不依赖按下事件）
     bool bHasAttackInput = InputHandler->ConsumeBufferedInput(TEXT("Attack"));
     bool bIsCharging = InputHandler->GetAttackHoldTime() > 0.3f;
 
     if (!bHasAttackInput && !bIsCharging)
         return;
 
-    // 上下文优先级: 忍杀 > 反斩 > 空中攻击 > 蓄力 > 方向变体 > 普通连段
-
-    // 1. 忍杀判定（架势槽满+R1）
+    // 忍杀判定
     if (bDeathBlowActive)
     {
         if (TryPlayAction(TEXT("Deathblow"), ESKActionPriority::Deathblow))
         {
             bDeathBlowActive = false;
+            CurrentState = ESKCharacterState::Idle;  // 忍杀由单独动画控制
             return;
         }
     }
 
-    // 2. 反斩判定（完美格挡后窗口内R1）
+    // 反斩判定（完美格挡后窗口内R1）
     if (bCounterWindow)
     {
         if (TryPlayAction(TEXT("Attack_Counter"), ESKActionPriority::Attack))
         {
             bCounterWindow = false;
+            CurrentState = ESKCharacterState::Attack;
             return;
         }
     }
 
-    // 3. 空中攻击
+    // 空中攻击
     if (bIsInAir)
     {
         if (TryPlayAction(TEXT("Attack_Jump"), ESKActionPriority::Attack))
+        {
+            CurrentState = ESKCharacterState::Attack;
             return;
+        }
     }
 
-    // 4. 蓄力判定 — 蓄力由 CheckChargeRelease 触发，此处不处理
+    // 蓄力
     if (bIsCharging)
-    {
-        return;  // 蓄力由 CheckChargeRelease 触发
-    }
+        return;
 
-    // 5. 方向变体
-    int32 ComboIdx = AttackState.ComboIndex;
+    // 方向变体
     FName DirSuffix = GetMoveDirectionSuffix();
     if (DirSuffix != NAME_None)
     {
         FName DirAction = FName(*(TEXT("Attack_") + DirSuffix.ToString()));
         if (TryPlayAction(DirAction, ESKActionPriority::Attack))
         {
-            AttackState.ComboIndex = FMath::Min(ComboIdx + 1, 4);
-            AttackState.ComboTimeout = 1.0f;
+            CurrentState = ESKCharacterState::Attack;
             return;
         }
     }
 
-    // 6. 普通攻击连段
+    // 普通攻击连段
+    int32 ComboIdx = AttackState.ComboIndex;
+    if (!TryPlayAction(TEXT("Attack"), ESKActionPriority::Attack))
     {
-        int32 AnimID = GetComboAnimID(ComboIdx);
-        if (AnimID <= 0) { ComboIdx = 0; AnimID = GetComboAnimID(0); }
-        if (AnimID <= 0) return;
-
+        // 首次攻击（当前无动作）
+        CurrentAction = NAME_None;
         if (TryPlayAction(TEXT("Attack"), ESKActionPriority::Attack))
         {
-            AttackState.ComboIndex = FMath::Min(ComboIdx + 1, 4);
+            CurrentState = ESKCharacterState::Attack;
+            AttackState.ComboIndex = 1;
             AttackState.ComboTimeout = 1.0f;
         }
+    }
+    else
+    {
+        CurrentState = ESKCharacterState::Attack;
+        AttackState.ComboIndex = FMath::Min(ComboIdx + 1, 4);
+        AttackState.ComboTimeout = 1.0f;
     }
 }
 
 int32 USKAnimationController::GetComboAnimID(int32 ComboIdx) const
 {
-    if (CombatData && CurrentAnimID > 0)
+    if (CurrentAnimID > 0)
     {
-        // 从 ComboChain 查当前动画在 R1 下的派生
-        int32 Derived = CombatData->GetDerivedAnim(CurrentAnimID, TEXT("R1"));
-        if (Derived > 0)
-            return Derived;
+        int32 JudgeId = CurrentAnimID % 1000;
+        int32 NextAnimID = (CurrentAnimID / 1000) * 1000 + (JudgeId + 1);
+        if (AnimLogicData && AnimLogicData->AnimPrefixMap.Contains(NextAnimID))
+            return NextAnimID;
     }
-    // 回退到原来的逻辑
-    if (!AnimLogicData) return -1;
-    FString Category = FString::Printf(TEXT("Attack_R1_Combo%02d"), ComboIdx);
-    const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(Category);
-    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
+    return -1;
 }
 
 FName USKAnimationController::GetMoveDirectionSuffix() const
@@ -407,47 +467,44 @@ void USKAnimationController::HandleGuard()
 {
     if (!InputHandler.IsValid() || !AnimLogicData) return;
 
-    // 1. 检查是否有锁定目标且敌人在攻击
+    // Deflect 判定
     int32 BehaviorJudgeID = 0;
     int32 EnemyAttackStartFrame = 0;
     bool bEnemyAttacking = IsEnemyAttacking(BehaviorJudgeID, EnemyAttackStartFrame);
 
     if (bEnemyAttacking)
     {
-        // 2. 计算玩家当前帧与敌人攻击框起始帧的时间差
         float EnemyAttackStartTime = EnemyAttackStartFrame / 30.0f;
-        float PlayerAnimTime = GetCurrentAnimTime();
-        float TimeDiff = FMath::Abs(PlayerAnimTime - EnemyAttackStartTime);
+        float TimeDiff = FMath::Abs(GetCurrentAnimTime() - EnemyAttackStartTime);
 
-        // <=6帧 -> Deflect（完美格挡）
         if (TimeDiff <= (6.0f / 30.0f))
         {
             if (TryPlayAction(TEXT("Deflect"), ESKActionPriority::Deflect))
             {
-                bCounterWindow = true;            // 开启反斩窗口
-                GuardState.Phase = ESKGuardPhase::Idle;
+                bCounterWindow = true;
                 GuardState.bIsDeflecting = true;
+                CurrentState = ESKCharacterState::Guard;
                 return;
             }
         }
     }
 
-    // 3. 普通格挡（走 TryPlayAction 统一走 CanCancelTo 窗口判定）
+    // 普通格挡
     GuardState.bIsDeflecting = false;
     TryPlayAction(TEXT("Guard"), ESKActionPriority::Guard);
-    GuardState.Phase = ESKGuardPhase::Idle;
+    CurrentState = ESKCharacterState::Guard;
 }
 
 void USKAnimationController::OnGuardHit(int32 AnimID)
 {
     EnsureMontageLoaded(AnimID);
     PlayMontageByID(AnimID, 0.05f);
-    GuardState.Phase = ESKGuardPhase::HitReaction;
+    CurrentState = ESKCharacterState::Hit;
 }
 
 void USKAnimationController::OnGuardBreak()
 {
-    GuardState.Phase = ESKGuardPhase::Broken;
+    CurrentState = ESKCharacterState::Hit;
     if (AnimLogicData)
     {
         const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(TEXT("GuardBreak"));
@@ -459,7 +516,6 @@ void USKAnimationController::OnGuardBreak()
 
 ASKCharacter* USKAnimationController::GetLockOnTarget() const
 {
-    // TODO: Lock-on system not yet implemented
     return nullptr;
 }
 
@@ -468,20 +524,18 @@ bool USKAnimationController::IsEnemyAttacking(int32& OutBehaviorJudgeID, int32& 
     ASKCharacter* Target = GetLockOnTarget();
     if (!Target) return false;
 
-    USKAnimationController* TargetController = Target->GetAnimController();
-    if (!TargetController || !AnimLogicData) return false;
+    USKAnimInstance* TargetAnimInst = Cast<USKAnimInstance>(Target->GetMesh() ? Target->GetMesh()->GetAnimInstance() : nullptr);
+    if (!TargetAnimInst) return false;
 
-    int32 EnemyAnimID = TargetController->GetCurrentAnimID();
-    float EnemyAnimTime = TargetController->GetCurrentAnimTime();
-    int32 EnemyFrame = FMath::RoundToInt(EnemyAnimTime * 30.0f);
+    float CurveValue = 0.f;
+    if (!TargetAnimInst->GetCurveValue(TEXT("AttackHitbox"), CurveValue))
+        return false;
 
-    TArray<FSKAttackHitboxConfig> ActiveHitboxes;
-    AnimLogicData->GetActiveHitboxesAtFrame(EnemyAnimID, EnemyFrame, ActiveHitboxes);
-
-    if (ActiveHitboxes.Num() > 0)
+    if ((ESKAttackHitboxType)FMath::RoundToInt(CurveValue) != ESKAttackHitboxType::None)
     {
-        OutBehaviorJudgeID = ActiveHitboxes[0].BehaviorJudgeID;
-        OutStartFrame = ActiveHitboxes[0].StartFrame;
+        // 估算攻击框起始帧（从曲线有效的时间点计算）
+        OutBehaviorJudgeID = 0;
+        OutStartFrame = FMath::RoundToInt(TargetAnimInst->CurrentAnimTime * 30.0f);
         return true;
     }
 
@@ -495,28 +549,66 @@ void USKAnimationController::HandleDodge()
     if (!InputHandler.IsValid() || !AnimLogicData) return;
     FName DirSuffix = GetMoveDirectionSuffix();
     FName DodgeAction = (DirSuffix != NAME_None) ? FName(*(TEXT("Dodge_") + DirSuffix.ToString())) : TEXT("Dodge");
-    if (!TryPlayAction(DodgeAction, ESKActionPriority::Dodge))
-        TryPlayAction(TEXT("Dodge"), ESKActionPriority::Dodge);
+    if (TryPlayAction(DodgeAction, ESKActionPriority::Dodge))
+    {
+        CurrentState = ESKCharacterState::Dodge;
+    }
+    else if (TryPlayAction(TEXT("Dodge"), ESKActionPriority::Dodge))
+    {
+        CurrentState = ESKCharacterState::Dodge;
+    }
 }
 
 // ── 跳跃 ──────────────────────────────────────────────────
+
 void USKAnimationController::HandleJump()
 {
     if (!InputHandler.IsValid() || !AnimLogicData) return;
-    if (bWasInAir) return;
+    if (bWasInAir || bIsInAir) return;
+
     FName DirSuffix = GetMoveDirectionSuffix();
     FName JumpAction = (DirSuffix != NAME_None) ? FName(*(TEXT("Jump_") + DirSuffix.ToString())) : TEXT("Jump");
-    if (!TryPlayAction(JumpAction, ESKActionPriority::Jump))
-        TryPlayAction(TEXT("Jump"), ESKActionPriority::Jump);
-    bWasInAir = true;
+    if (TryPlayAction(JumpAction, ESKActionPriority::Jump))
+    {
+        CurrentState = ESKCharacterState::Jump;
+        bWasInAir = true;
+    }
+    else if (TryPlayAction(TEXT("Jump"), ESKActionPriority::Jump))
+    {
+        CurrentState = ESKCharacterState::Jump;
+        bWasInAir = true;
+    }
 }
 
-// ── 忍义�?────────────────────────────────────────────────
+bool USKAnimationController::HandleAirAttack()
+{
+    if (!AnimLogicData || !bIsInAir) return false;
+    if (TryPlayAction(TEXT("Attack_Jump"), ESKActionPriority::Attack))
+    {
+        CurrentState = ESKCharacterState::Attack;
+        return true;
+    }
+    return false;
+}
+
+bool USKAnimationController::HandleAirDodge()
+{
+    if (!AnimLogicData || !bIsInAir) return false;
+    if (TryPlayAction(TEXT("Dodge_Air"), ESKActionPriority::Dodge))
+    {
+        CurrentState = ESKCharacterState::Dodge;
+        return true;
+    }
+    return false;
+}
+
+// ── 忍义手 ─────────────────────────────────────────────────
 
 void USKAnimationController::HandleProsthetic()
 {
     if (!InputHandler.IsValid()) return;
-    TryPlayAction(TEXT("Prosthetic"), ESKActionPriority::Prosthetic);
+    if (!TryPlayAction(TEXT("Prosthetic"), ESKActionPriority::Prosthetic)) return;
+    CurrentState = ESKCharacterState::Idle;  // 义手播完后回空闲
 }
 
 // ── 道具 ──────────────────────────────────────────────────
@@ -524,7 +616,8 @@ void USKAnimationController::HandleProsthetic()
 void USKAnimationController::HandleItemUse()
 {
     if (!InputHandler.IsValid()) return;
-    TryPlayAction(TEXT("Item"), ESKActionPriority::ItemUse);
+    if (!TryPlayAction(TEXT("Item"), ESKActionPriority::ItemUse)) return;
+    CurrentState = ESKCharacterState::Idle;
 }
 
 // ── 钩绳 ──────────────────────────────────────────────────
@@ -532,29 +625,29 @@ void USKAnimationController::HandleItemUse()
 void USKAnimationController::HandleGrapple()
 {
     if (!InputHandler.IsValid()) return;
-    TryPlayAction(TEXT("Grapple"), ESKActionPriority::Attack);  // 与 Attack 同级优先级
+    if (!TryPlayAction(TEXT("Grapple"), ESKActionPriority::Attack)) return;
+    CurrentState = ESKCharacterState::Idle;
 }
 
 // ── 战技 ──────────────────────────────────────────────────
 
 void USKAnimationController::HandleCombatArt()
 {
-    TryPlayAction(TEXT("CombatArt"), ESKActionPriority::Attack);
+    if (!TryPlayAction(TEXT("CombatArt"), ESKActionPriority::Attack)) return;
+    CurrentState = ESKCharacterState::Attack;
 }
 
 // ── 忍杀 ──────────────────────────────────────────────────
 
 bool USKAnimationController::HandleDeathblow()
 {
-    // 必须满足：忍杀激活 + R1 输入 + 有动画数据
     if (!bDeathBlowActive || !AnimLogicData || !InputHandler.IsValid()) return false;
     if (!InputHandler->ConsumeBufferedInput(TEXT("Attack"))) return false;
 
-    // 断线攻击（Deathblow）由 HP/Break 系统在满架势+处决线时设置 bDeathBlowActive
-    // 这里的 TryPlayAction 保证通过 CanCancelTo 确认窗口
     if (TryPlayAction(TEXT("Deathblow"), ESKActionPriority::Deathblow))
     {
         bDeathBlowActive = false;
+        CurrentState = ESKCharacterState::Idle;
         return true;
     }
     return false;
@@ -566,6 +659,7 @@ void USKAnimationController::OnHitReceived(int32 AnimID)
 {
     EnsureMontageLoaded(AnimID);
     PlayMontageByID(AnimID, 0.05f);
+    CurrentState = ESKCharacterState::Hit;
     CurrentAction = TEXT("Hit");
 }
 
@@ -573,6 +667,7 @@ void USKAnimationController::OnDeath(int32 AnimID)
 {
     EnsureMontageLoaded(AnimID);
     PlayMontageByID(AnimID, 0.1f);
+    CurrentState = ESKCharacterState::Death;
     CurrentAction = TEXT("Death");
 }
 
@@ -583,61 +678,31 @@ void USKAnimationController::OnResurrection()
         const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(TEXT("Resurrection"));
         if (List && List->IDs.Num() > 0) PlayMontageByID(List->IDs[0], 0.2f);
     }
+    CurrentState = ESKCharacterState::Idle;
 }
 
 // ── 移动 — 含 Locomotion 动画播放 ──────────────────────────
 
 void USKAnimationController::ProcessLocomotion()
 {
-    if (!AnimLogicData)
-    {
-        static bool bWarned = false;
-        if (!bWarned) { UE_LOG(LogTemp, Warning, TEXT("ProcessLocomotion: AnimLogicData null")); bWarned = true; }
-        return;
-    }
-    if (!Mesh.IsValid())
-    {
-        static bool bWarned = false;
-        if (!bWarned) { UE_LOG(LogTemp, Warning, TEXT("ProcessLocomotion: Mesh invalid")); bWarned = true; }
-        return;
-    }
+    if (!AnimLogicData || !Mesh.IsValid()) return;
     USKAnimInstance* AnimInst = GetAnimInstance();
-    if (!AnimInst)
+    if (!AnimInst) return;
+
+    // 非 Idle 状态时只缓存 Locomotion 状态但不播放
+    if (CurrentState != ESKCharacterState::Idle)
     {
-        static bool bWarned = false;
-        if (!bWarned) { UE_LOG(LogTemp, Warning, TEXT("ProcessLocomotion: AnimInstance null, Mesh=%s"), *GetNameSafe(Mesh.Get())); bWarned = true; }
+        CurrentLocoState = EvaluateLocomotionState(AnimInst->Speed, AnimInst->Angle);
         return;
-    }
-
-    float MySpeed = AnimInst->Speed;
-    float MyAngle = AnimInst->Angle;
-
-    // 诊断：每 60 帧输出一次
-    static int32 LocoCounter = 0;
-    if (++LocoCounter % 60 == 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("LocoTick: Speed=%.1f Angle=%.1f Tier=%d Dir=%d LocoStateTier=%d AnimLogicData=%s"),
-            MySpeed, MyAngle,
-            (int32)CurrentLocoState.Tier, (int32)CurrentLocoState.Direction,
-            (int32)AnimInst->MovementTier,
-            AnimLogicData ? TEXT("ok") : TEXT("null"));
-        if (AnimLogicData)
-        {
-            const FSKAnimIDList* IdleList = AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion_Idle"));
-            UE_LOG(LogTemp, Log, TEXT("  CategoryAnimMap 'Locomotion_Idle': %s"),
-                (IdleList && IdleList->IDs.Num() > 0) ? *FString::Printf(TEXT("found %d ids"), IdleList->IDs.Num()) : TEXT("NOT FOUND"));
-        }
     }
 
     float Speed = AnimInst->Speed;
     float Angle = AnimInst->Angle;
 
-    // 更新冷却计时
     TurnCooldown = FMath::Max(0.f, TurnCooldown - GetWorld()->GetDeltaSeconds());
 
-    // ── 原地转身判定 ──
-    // 仅当速度很低（原地）且角度变化超过阈值时触发
-    if (CurrentPriority <= ESKActionPriority::Locomotion && Speed < 50.f && TurnCooldown <= 0.f)
+    // 原地转身
+    if (Speed < 50.f && TurnCooldown <= 0.f)
     {
         float AngleDelta = FMath::FindDeltaAngleDegrees(LastAngle, Angle);
         if (FMath::Abs(AngleDelta) > 90.f)
@@ -646,27 +711,19 @@ void USKAnimationController::ProcessLocomotion()
             if (TurnID > 0)
             {
                 PlayLocomotionMontage(TurnID, false);
-                TurnCooldown = 0.5f;   // 转身冷却
-                LastAngle = Angle;     // 缓存角度
-                return;                // 转身期间不处理移动
+                TurnCooldown = 0.5f;
+                LastAngle = Angle;
+                return;
             }
         }
     }
 
     LastAngle = Angle;
 
-    // ── 原有逻辑：Tier 升降 + Direction 切换 ──
     FSKLocomotionState NewState = EvaluateLocomotionState(Speed, Angle);
-
-    if (CurrentPriority > ESKActionPriority::Locomotion)
-    {
-        CurrentLocoState = NewState;
-        return;
-    }
 
     if (CurrentLocoState.AnimID == 0)
     {
-        // 初次Tick：从未播放过任何Locomotion动画 → 强制播放当前状态的动画
         int32 LocoID = ResolveLocomotionAnimID(NewState);
         if (LocoID > 0) PlayLocomotionMontage(LocoID, NewState.Tier != ESKMovementTier::Idle);
     }
@@ -741,7 +798,6 @@ int32 USKAnimationController::GetTransitionAnimID(const FSKLocomotionState& From
     FString Category = FString::Printf(TEXT("Locomotion_Transition_%d_to_%d"), (int32)From.Tier, (int32)To.Tier);
     const FSKAnimIDList* List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(Category) : nullptr;
     if (List && List->IDs.Num() > 0) return List->IDs[0];
-    // Fallback: any Locomotion anim
     List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion")) : nullptr;
     return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
 }
@@ -751,7 +807,6 @@ int32 USKAnimationController::GetStopAnimID(const FSKLocomotionState& State) con
     FString Category = FString::Printf(TEXT("Locomotion_Stop_%d"), (int32)State.Tier);
     const FSKAnimIDList* List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(Category) : nullptr;
     if (List && List->IDs.Num() > 0) return List->IDs[0];
-    // Fallback: any Locomotion anim
     List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion")) : nullptr;
     return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
 }
@@ -762,18 +817,17 @@ int32 USKAnimationController::GetTurnAnimID(float AngleDelta) const
     FString Category = (AngleDelta > 0) ? TEXT("Locomotion_Turn_R") : TEXT("Locomotion_Turn_L");
     const FSKAnimIDList* List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(Category) : nullptr;
     if (List && List->IDs.Num() > 0) return List->IDs[0];
-    // Fallback: any Locomotion anim
     List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion")) : nullptr;
     return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
 }
 
 void USKAnimationController::PlayLocomotionMontage(int32 AnimID, bool bLooping)
 {
-    if (AnimID <= 0) return;
+    if (AnimID <= 0 || !Mesh.IsValid()) return;
     EnsureMontageLoaded(AnimID);
 
     TObjectPtr<UAnimSequence>* Found = MontageCache.Find(AnimID);
-    if (!Found || !*Found || !Mesh.IsValid()) return;
+    if (!Found || !*Found) return;
 
     UAnimInstance* AnimInst = Mesh->GetAnimInstance();
     if (!AnimInst) return;
@@ -795,52 +849,152 @@ void USKAnimationController::OnLocoTransitionEnded(UAnimMontage* Montage, bool b
     if (!bInterrupted) ProcessLocomotion();
 }
 
+// ── Montage 结束统一回调 ──────────────────────────────────
+
+void USKAnimationController::OnActionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+    UE_LOG(LogTemp, Log, TEXT("OnActionMontageEnded: State=%d Action=%s AnimID=%d bInterrupted=%d"),
+        (int32)CurrentState, *CurrentAction.ToString(), CurrentAnimID, bInterrupted);
+
+    // 根据当前状态决定迁移
+    switch (CurrentState)
+    {
+    case ESKCharacterState::Attack:
+        // 攻击动画播完 → 回 Idle
+        CurrentState = ESKCharacterState::Idle;
+        break;
+
+    case ESKCharacterState::Guard:
+        // Guard 由 IsGuardHeld 持续控制，Montage 结束不影响状态
+        break;
+
+    case ESKCharacterState::Dodge:
+        // 闪避结束 → 回 Idle
+        CurrentState = ESKCharacterState::Idle;
+        break;
+
+    case ESKCharacterState::Jump:
+        // Jump 动画结束 → 进入 Airborne（物理控制上升/下落）
+        CurrentState = ESKCharacterState::Airborne;
+        break;
+
+    case ESKCharacterState::Hit:
+        // 受击结束 → 回 Idle
+        CurrentState = ESKCharacterState::Idle;
+        break;
+
+    case ESKCharacterState::Death:
+        // 死亡不退出
+        break;
+
+    default:
+        CurrentState = ESKCharacterState::Idle;
+        break;
+    }
+
+    CurrentPriority = ESKActionPriority::Locomotion;
+    CurrentAnimID = 0;
+    CurrentAction = NAME_None;
+}
+
 // ── 动画播放 ──────────────────────────────────────────────
 
 int32 USKAnimationController::ResolveAnimID(FName Action)
 {
-    // 先从 ComboChain 查派生动画
-    if (CurrentAnimID > 0 && CombatData)
-    {
-        int32 ComboNext = CombatData->GetDerivedAnim(CurrentAnimID, Action);
-        if (ComboNext > 0)
-            return ComboNext;
-    }
-    // 回退到 CategoryAnimMap
     if (!AnimLogicData) return -1;
+
+    if (CurrentAnimID > 0 && Action == CurrentAction)
+    {
+        int32 NextAnimID = DeriveNextAnim(CurrentAnimID, Action);
+        if (NextAnimID > 0)
+            return NextAnimID;
+    }
+
     const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(Action.ToString());
     return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
 }
 
-// 新增重载：从指定AnimID派生
 int32 USKAnimationController::ResolveAnimID(FName Action, int32 FromAnimID)
 {
-    if (FromAnimID > 0 && CombatData)
+    if (!AnimLogicData) return -1;
+
+    if (FromAnimID > 0 && Action == CurrentAction)
     {
-        int32 ComboNext = CombatData->GetDerivedAnim(FromAnimID, Action);
-        if (ComboNext > 0)
-            return ComboNext;
+        int32 NextAnimID = DeriveNextAnim(FromAnimID, Action);
+        if (NextAnimID > 0)
+            return NextAnimID;
     }
-    return ResolveAnimID(Action);
+
+    const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(Action.ToString());
+    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
 }
 
-int32 USKAnimationController::GetComboNextAnim(int32 InCurrentAnimID, FName Action) const
+int32 USKAnimationController::DeriveNextAnim(int32 InCurrentAnimID, FName Action) const
 {
-    if (!CombatData) return -1;
-    return CombatData->GetDerivedAnim(InCurrentAnimID, Action);
+    if (!AnimLogicData || InCurrentAnimID <= 0) return -1;
+
+    int32 JudgeId = InCurrentAnimID % 1000;
+    int32 NextAnimID = (InCurrentAnimID / 1000) * 1000 + (JudgeId + 1);
+
+    if (AnimLogicData->AnimPrefixMap.Contains(NextAnimID))
+        return NextAnimID;
+
+    return -1;
+}
+
+bool USKAnimationController::TryPlayAction(FName Action, int32 Priority)
+{
+    if (!AnimLogicData) return false;
+
+    // 优先级检查：高优先级不能被打断
+    if (CurrentPriority > Priority && CurrentAnimID > 0)
+        return false;
+
+    // CancelWindow 检查（同动作连段不需要）
+    if (CurrentAnimID > 0 && Action != CurrentAction)
+    {
+        float Crossfade;
+        USKAnimInstance* AnimInst = GetAnimInstance();
+        if (!AnimInst || !AnimInst->CanCancelTo(Action, Crossfade))
+            return false;
+    }
+
+    int32 AnimID = ResolveAnimID(Action);
+    if (AnimID <= 0) return false;
+
+    PlayMontageByID(AnimID, 0.1f);
+    CurrentAction = Action;
+    CurrentPriority = Priority;
+    CurrentAnimID = AnimID;
+    return true;
 }
 
 void USKAnimationController::PlayMontageByID(int32 AnimID, float Crossfade)
 {
+    if (!Mesh.IsValid()) { UE_LOG(LogTemp, Warning, TEXT("PlayMontageByID: Mesh invalid")); return; }
+    UAnimInstance* AnimInst = Mesh->GetAnimInstance();
+    if (!AnimInst) { UE_LOG(LogTemp, Warning, TEXT("PlayMontageByID: AnimInstance null")); return; }
+
     EnsureMontageLoaded(AnimID);
     TObjectPtr<UAnimSequence>* Found = MontageCache.Find(AnimID);
-    if (!Found || !*Found || !Mesh.IsValid()) return;
-
-    UAnimInstance* AnimInst = Mesh->GetAnimInstance();
-    if (!AnimInst) return;
+    if (!Found || !*Found)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("PlayMontageByID: AnimID=%d not in cache"), AnimID);
+        return;
+    }
 
     UAnimSequence* Seq = *Found;
-    AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, Crossfade, 0.0f);
+    UAnimMontage* DynMontage = AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, Crossfade, 0.0f);
+    if (DynMontage)
+    {
+        FOnMontageEnded EndDelegate;
+        EndDelegate.BindUObject(this, &USKAnimationController::OnActionMontageEnded);
+        AnimInst->Montage_SetEndDelegate(EndDelegate);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("PlayMontageByID: AnimID=%d -> FAILED"), AnimID);
+    }
 }
 
 void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
@@ -849,40 +1003,38 @@ void USKAnimationController::EnsureMontageLoaded(int32 AnimID)
     if (MontageCache.Contains(AnimID)) return;
 
     FString AssetPath = AnimLogicData->BuildAnimAssetPath(AnimID);
-
-    UE_LOG(LogTemp, Log, TEXT("AnimController[%s]: Load AnimID=%d (%s)"),
-        *GetOwner()->GetName(), AnimID, *AssetPath);
-
     UAnimSequence* Seq = LoadObject<UAnimSequence>(nullptr, *AssetPath);
     if (Seq) MontageCache.Add(AnimID, Seq);
 }
 
-// ── 攻击碰撞�?────────────────────────────────────────────
+// ── 攻击碰撞箱 ─────────────────────────────────────────────
 
 void USKAnimationController::UpdateAttackHitbox()
 {
     ASKWeapon* Weapon = GetWeapon();
-    if (!AnimLogicData || CurrentAnimID <= 0)
+    if (!Weapon) { if (Weapon) Weapon->DeactivateHitbox(); return; }
+
+    USKAnimInstance* AnimInst = GetAnimInstance();
+    if (!AnimInst)
     {
-        if (Weapon) Weapon->DeactivateHitbox();
+        Weapon->DeactivateHitbox();
         return;
     }
 
-    int32 Frame = FMath::RoundToInt(CurrentAnimTime * 30.0f);
-    if (!Weapon) return;
-
-    bool bHasActiveHitbox = false;
-    const FSKAttackHitboxList* List = AnimLogicData->AttackHitboxConfigs.Find(CurrentAnimID);
-    if (List)
+    // 从 "AttackHitbox" 曲线读取当前帧是否有活跃攻击框
+    float CurveValue = 0.f;
+    if (AnimInst->GetCurveValue(TEXT("AttackHitbox"), CurveValue))
     {
-        for (const FSKAttackHitboxConfig& Cfg : List->Hitboxes)
+        ESKAttackHitboxType HitType = (ESKAttackHitboxType)FMath::RoundToInt(CurveValue);
+        if (HitType != ESKAttackHitboxType::None)
         {
-            if (Frame >= Cfg.StartFrame && Frame <= Cfg.EndFrame) { bHasActiveHitbox = true; break; }
+            Weapon->ActivateHitbox();
+            return;
         }
     }
 
-    if (bHasActiveHitbox) Weapon->ActivateHitbox();
-    else { Weapon->DeactivateHitbox(); Weapon->ClearHitActors(); }
+    Weapon->DeactivateHitbox();
+    Weapon->ClearHitActors();
 }
 
 ASKWeapon* USKAnimationController::GetWeapon() const

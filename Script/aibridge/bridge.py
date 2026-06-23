@@ -764,6 +764,37 @@ async def cmd_anim_blueprint(args):
             "name": "anim_blueprint",
             "arguments": node_args
         })
+    elif action == "add_curve":
+        # bridge.py anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--frames f1,f2,...] [--values v1,v2,...]
+        if len(args) < 3:
+            return {"error": "用法: anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--frames f,f] [--values v,v]"}
+        path = args[1]
+        curve_name = args[2]
+        curve_type = "float"
+        frames = None
+        values = None
+        i = 3
+        while i < len(args):
+            if args[i] == "--type" and i + 1 < len(args):
+                curve_type = args[i + 1]
+                i += 2
+            elif args[i] == "--frames" and i + 1 < len(args):
+                frames = [int(x) for x in args[i + 1].split(",")]
+                i += 2
+            elif args[i] == "--values" and i + 1 < len(args):
+                values = [float(x) for x in args[i + 1].split(",")]
+                i += 2
+            else:
+                i += 1
+        kwargs = {"action": "add_curve", "path": path, "curve_name": curve_name}
+        if frames is not None and values is not None:
+            if len(frames) != len(values):
+                return {"error": "--frames 和 --values 长度必须相同"}
+            kwargs["keys"] = [{"time": f / 30.0, "value": v} for f, v in zip(frames, values)]
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": kwargs
+        })
     elif action == "info":
         path = args[1] if len(args) > 1 else None
         if not path:
@@ -835,7 +866,7 @@ async def cmd_anim_blueprint(args):
             "arguments": kwargs
         })
     else:
-        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, info, compile, layout, rename_node, set_anim_class"}
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, add_curve, info, compile, layout, rename_node, set_anim_class"}
 
 
 def _find_ue_editor():
@@ -1403,6 +1434,7 @@ def print_help():
   anim_blueprint layout <路径>                自动排版状态机节点（状态/Entry/内部节点）
   anim_blueprint rename_node <路径> state_machine <新名>  重命名状态机
   anim_blueprint rename_node <路径> state <旧名> <新名>    重命名状态
+  anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--frames f,f] [--values v,v]  添加动画曲线
   anim_blueprint set_anim_class <路径> --character <BP> 将ABP赋给角色Mesh组件
   editor start                               启动 UE 编辑器（自动清理 cmd 窗口）
   editor stop                                关闭编辑器及子进程（LiveCoding 等）

@@ -97,3 +97,10 @@ int32 USekiroAssetManagerBPLibrary::ImportAnimations(const FString& JsonPath, co
     UE_LOG(LogTemp, Error, TEXT("[ImportAnimations] Not yet implemented"));
     return 0;
 }
+
+bool USekiroAssetManagerBPLibrary::AddIntegerCurveToAnimation(const FString& AnimPath,
+    const FString& CurveName, const TArray<float>& KeyTimes, const TArray<float>& KeyValues)
+{
+    UE_LOG(LogTemp, Log, TEXT("[AddIntegerCurve] 已转移到 AIBridge"));
+    return false;
+}

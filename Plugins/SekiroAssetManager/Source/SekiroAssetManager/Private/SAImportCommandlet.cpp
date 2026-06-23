@@ -2,8 +2,6 @@
 #include "SAModelImporter.h"
 #include "SAAnimationImporter.h"
 #include "SAMaterialImporter.h"
-#include "SABehaviorParamImporter.h"
-#include "SekiroCombatData.h"
 #include "Engine/SkeletalMesh.h"
 #include "Animation/Skeleton.h"
 #include "Misc/Paths.h"
@@ -44,8 +42,6 @@ int32 USAImportCommandlet::Main(const FString& Params)
         return 1;
     }
 
-    FString ComboJsonPath     = ParseParam(Params, TEXT("Combo"));
-
     UE_LOG(LogTemp, Display, TEXT("========================================"));
     UE_LOG(LogTemp, Display, TEXT("SAImport Commandlet"));
     UE_LOG(LogTemp, Display, TEXT("  Params:   %s"), *Params);
@@ -54,58 +50,7 @@ int32 USAImportCommandlet::Main(const FString& Params)
     UE_LOG(LogTemp, Display, TEXT("  Anim:     %s"), *AnimJsonPath);
     UE_LOG(LogTemp, Display, TEXT("  Material: %s"), *MaterialJsonPath);
     UE_LOG(LogTemp, Display, TEXT("  Output:   %s"), *OutputBasePath);
-    UE_LOG(LogTemp, Display, TEXT("  Combo:    %s"), *ComboJsonPath);
     UE_LOG(LogTemp, Display, TEXT("========================================"));
-
-    // --- Mode 4: ComboChain Import ---
-    if (!ComboJsonPath.IsEmpty())
-    {
-        if (!IFileManager::Get().FileExists(*ComboJsonPath))
-        {
-            UE_LOG(LogTemp, Error, TEXT("ComboChain JSON not found: %s"), *ComboJsonPath);
-            return 1;
-        }
-
-        FString PackagePath = OutputBasePath;
-        if (!PackagePath.StartsWith(TEXT("/")))
-            PackagePath = TEXT("/Game/") + PackagePath;
-
-        UPackage* Package = CreatePackage(*PackagePath);
-        if (!Package)
-        {
-            UE_LOG(LogTemp, Error, TEXT("Failed to create package: %s"), *PackagePath);
-            return 1;
-        }
-
-        USKCombatData* CombatData = FSABehaviorParamImporter::ImportFromFile(ComboJsonPath, Package);
-        if (!CombatData)
-        {
-            UE_LOG(LogTemp, Error, TEXT("Failed to import ComboChain data"));
-            return 1;
-        }
-
-        FString AssetName = FPackageName::GetShortName(PackagePath);
-        CombatData->Rename(*AssetName, Package, REN_ForceNoResetLoaders | REN_DoNotDirty);
-
-        Package->MarkPackageDirty();
-        FString AssetFileName = FPackageName::LongPackageNameToFilename(PackagePath, FPackageName::GetAssetPackageExtension());
-        FSavePackageArgs SaveArgs;
-        SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-        SaveArgs.Error = GError;
-        bool bSaved = UPackage::SavePackage(Package, nullptr, *AssetFileName, SaveArgs);
-
-        if (bSaved)
-        {
-            UE_LOG(LogTemp, Display, TEXT("CombatData saved: %s"), *AssetFileName);
-            UE_LOG(LogTemp, Display, TEXT("  Entries: %d"), CombatData->ComboChain.Num());
-            return 0;
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("Failed to save package"));
-            return 1;
-        }
-    }
 
     // --- Mode 3: Material Import ---
     if (!MaterialJsonPath.IsEmpty())

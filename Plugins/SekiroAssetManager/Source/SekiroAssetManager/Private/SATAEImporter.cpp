@@ -1,12 +1,12 @@
 ﻿#include "SATAEImporter.h"
-#include "SATAELogicBuilder.h"     // 共享 Bit_* 位掩码常�?
+#include "SATAELogicBuilder.h"     // 共享 Bit_* 位掩码常量
 #include "Json.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Misc/FileHelper.h"
 
 // ============================================================================
-// 帧级行为标志位掩码（定义�?SATAELogicBuilder.h �?SekiroJTFlags 命名空间�?
+// 帧级行为标志位掩码（定义于 SATAELogicBuilder.h 和 SekiroJTFlags 命名空间
 // ============================================================================
 using namespace SekiroJTFlags;
 
@@ -48,14 +48,14 @@ FSAAnimLogicImportResult FSATAEImporter::ImportFromString(const FString& JsonCon
         return Result;
     }
 
-    // 遍历所�?TAE 文件
+    // 遍历所有 TAE 文件
     for (const TSharedPtr<FJsonValue>& TaeFileVal : *TaeFilesArr)
     {
         const TSharedPtr<FJsonObject>& TaeFileObj = TaeFileVal->AsObject();
-        // �?TAE 文件名推导动画前缀: a00.tae �?a000, a10.tae �?a010, a250.tae �?a250
+        // 从 TAE 文件名推导动画前缀: a00.tae → a000, a10.tae → a010, a250.tae → a250
         FString TaeFileName = TaeFileObj->GetStringField(TEXT("FileName"));
         FString AnimPrefix = TaeFileName.Replace(TEXT(".tae"), TEXT(""));
-        // 数字部分零填充到3�? a00→a000, a10→a010, a100→a100
+        // 数字部分零填充到3位: a00→a000, a10→a010, a100→a100
         {
             FString NumPart = AnimPrefix.RightChop(1);
             while (NumPart.Len() < 3) NumPart = TEXT("0") + NumPart;
@@ -68,7 +68,7 @@ FSAAnimLogicImportResult FSATAEImporter::ImportFromString(const FString& JsonCon
             const TSharedPtr<FJsonObject>& AnimObj = AnimVal->AsObject();
             int32 AnimID = AnimObj->GetIntegerField(TEXT("AnimID"));
 
-            // AnimID 直查，前缀�?TAE 文件名推�?
+            // AnimID 直查，前缀从 TAE 文件名推导
             FString AnimName = FString::Printf(TEXT("Sekiro_%s_%06d"), *AnimPrefix, AnimID);
 
             FSAAnimationLogicIR AnimLogic = ParseAnimationEntry(AnimObj, AnimName);
@@ -78,7 +78,7 @@ FSAAnimLogicImportResult FSATAEImporter::ImportFromString(const FString& JsonCon
             AnimLogic.AnimPrefix = AnimPrefix;
             AnimLogic.AnimPrefix = AnimPrefix;
 
-            // 计算总帧数（从最后一个事件帧推断�?
+            // 计算总帧数（从最后一个事件帧推断）
             for (const FSATAEEventIR& Evt : AnimLogic.AllEvents)
             {
                 AnimLogic.TotalFrames = FMath::Max(AnimLogic.TotalFrames, Evt.EndFrame);
@@ -93,7 +93,7 @@ FSAAnimLogicImportResult FSATAEImporter::ImportFromString(const FString& JsonCon
     // 构建状态机过渡规则
     BuildTransitions(Result.AnimLogicMap, Result.MainStateMachine);
 
-    // 按类别分�?
+    // 按类别分组
     for (const auto& Pair : Result.AnimLogicMap)
     {
         const FSAAnimationLogicIR& Logic = Pair.Value;
@@ -160,7 +160,7 @@ FSAAnimationLogicIR FSATAEImporter::ParseAnimationEntry(const TSharedPtr<FJsonOb
             }
         }
 
-        // 按类别分�?
+        // 按类别分组
         switch (Evt.Category)
         {
         case ESKTAEEventCategory::AttackBehavior:
@@ -224,10 +224,10 @@ FSAAnimationLogicIR FSATAEImporter::ParseAnimationEntry(const TSharedPtr<FJsonOb
         Logic.AllEvents.Add(Evt);
     }
 
-    // �?JumpTable 事件提取取消窗口
+    // 从 JumpTable 事件提取取消窗口
     ExtractCancelWindows(Logic.AllEvents, Logic.CancelWindows);
 
-    // �?JumpTable 事件提取帧级行为标志
+    // 从 JumpTable 事件提取帧级行为标志
     ExtractFrameFlags(Logic.AllEvents, Logic.JumpTableFlags);
 
     return Logic;
@@ -364,7 +364,7 @@ void FSATAEImporter::BuildTransitions(const TMap<int32, FSAAnimationLogicIR>& An
         const FSAAnimationLogicIR& Logic = Pair.Value;
         FString StateName = FString::Printf(TEXT("%s_%d"), *Logic.InferredCategory, Logic.AnimID);
 
-        // �?CancelWindow 生成过渡
+        // 从 CancelWindow 生成过渡
         for (const FSACancelWindowIR& Window : Logic.CancelWindows)
         {
             FSASMTransitionIR Transition;
@@ -396,7 +396,7 @@ void FSATAEImporter::BuildTransitions(const TMap<int32, FSAAnimationLogicIR>& An
 
             if (TargetCategory.IsEmpty()) continue;
 
-            // 从目标类别中选第一个动画作为默认目�?
+            // 从目标类别中选第一个动画作为默认目标
             const TArray<int32>* TargetIDs = CategoryAnimIDs.Find(TargetCategory);
             if (TargetIDs && TargetIDs->Num() > 0)
                 Transition.ToAnimID = (*TargetIDs)[0];
@@ -410,7 +410,7 @@ void FSATAEImporter::BuildTransitions(const TMap<int32, FSAAnimationLogicIR>& An
 }
 
 // ============================================================================
-// 分类与映�?
+// 分类与映射
 // ============================================================================
 
 ESKTAEEventCategory FSATAEImporter::ClassifyEventType(int32 Type, const FString& TypeName)
@@ -421,7 +421,7 @@ ESKTAEEventCategory FSATAEImporter::ClassifyEventType(int32 Type, const FString&
     if (Type == 2)   return ESKTAEEventCategory::BulletBehavior;
     if (Type == 5)   return ESKTAEEventCategory::CommonBehavior;
 
-    // 状态效�?
+    // 状态效果
     if (Type == 66 || Type == 67) return ESKTAEEventCategory::AddSpEffect;
 
     // 视觉特效
@@ -447,11 +447,11 @@ ESKTAEEventCategory FSATAEImporter::ClassifyEventType(int32 Type, const FString&
     FString Lower = TypeName.ToLower();
     if (Lower.Contains(TEXT("camera"))) return ESKTAEEventCategory::CameraModule;
 
-    // 音效�?
+    // 音效
     if (Lower.Contains(TEXT("sound")) || Lower.Contains(TEXT("sfx")) || Lower.Contains(TEXT("foot")))
         return ESKTAEEventCategory::PlaySound;
 
-    // 特效�?
+    // 特效
     if (Lower.Contains(TEXT("ffx")) || Lower.Contains(TEXT("spawnone")) || Lower.Contains(TEXT("spawnffx")))
         return ESKTAEEventCategory::SpawnFFX;
 

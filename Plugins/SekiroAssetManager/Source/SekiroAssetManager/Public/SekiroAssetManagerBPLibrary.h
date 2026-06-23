@@ -38,6 +38,16 @@ public:
     /// @param OutErrorMessage 错误信息
     /// @return 导入的 SkeletalMesh 路径（或空字符串）
 
+    /// 给指定动画资产添加 Integer 曲线（用于 FrameFlags/CancelActions/AttackHitbox）
+    /// @param AnimPath 动画资产路径
+    /// @param CurveName 曲线名
+    /// @param KeyTimes 关键帧时间数组（秒）
+    /// @param KeyValues 关键帧值数组（float，实际存整数值）
+    /// @return 是否成功
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation")
+    static bool AddIntegerCurveToAnimation(const FString& AnimPath, const FString& CurveName,
+        const TArray<float>& KeyTimes, const TArray<float>& KeyValues);
+
     /// 从 JSON 导入动画序列
     /// @param JsonPath JSON 文件绝对路径
     /// @param TargetBasePath UE 目标包基础路径（如 /Game/Characters/Sekiro）

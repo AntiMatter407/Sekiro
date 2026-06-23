@@ -4,6 +4,9 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/BlendSpace.h"
 #include "Animation/BlendSpace1D.h"
+#include "Animation/AnimData/IAnimationDataController.h"
+#include "Animation/AnimCurveTypes.h"
+#include "Animation/Skeleton.h"
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_StateMachineBase.h"
 #include "AnimGraphNode_SequencePlayer.h"
@@ -111,7 +114,7 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
     return TEXT("{"
         "\"type\":\"object\","
         "\"properties\":{"
-            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"add_curve\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
             "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
             "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
             "\"parent_class\":{\"type\":\"string\",\"description\":\"可选：AnimInstance父类脚本路径，如/Script/ModuleName.ClassName\"},"
@@ -181,6 +184,7 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("layout"))              return HandleLayout(ArgsObj, OutError);
     if (Action == TEXT("rename_node"))         return HandleRenameNode(ArgsObj, OutError);
     if (Action == TEXT("add_slot"))            return HandleAddSlotNode(ArgsObj, OutError);
+    if (Action == TEXT("add_curve"))           return HandleAddCurve(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -2102,6 +2106,81 @@ FString USKAnimBlueprintTool::HandleAddSlotNode(const TSharedPtr<FJsonObject>& A
     ResultObj->SetStringField(TEXT("node_pos_y"), FString::FromInt(SlotGraphNode->NodePosY));
     ResultObj->SetBoolField(TEXT("success"), true);
 
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString CurveName = Args->GetStringField(TEXT("curve_name"));
+
+    UAnimSequence* AnimSeq = LoadObject<UAnimSequence>(nullptr, *AssetPath);
+    if (!AnimSeq)
+    {
+        OutError = FString::Printf(TEXT("动画未找到: %s"), *AssetPath);
+        return FString();
+    }
+
+    IAnimationDataController& Controller = AnimSeq->GetController();
+    FName CurveFName = FName(*CurveName);
+
+    USkeleton* Skeleton = AnimSeq->GetSkeleton();
+    if (!Skeleton)
+    {
+        OutError = TEXT("动画没有关联骨骼");
+        return FString();
+    }
+
+    // 注册 SmartName 到骨骼
+    FSmartName SmartName;
+    Skeleton->AddSmartNameAndModify(CurveFName, CurveFName, SmartName);
+
+    // 构造 CurveIdentifier
+    FAnimationCurveIdentifier CurveId(SmartName, ERawCurveTrackTypes::RCT_Float);
+    if (!CurveId.IsValid())
+    {
+        OutError = TEXT("无法获取曲线标识");
+        return FString();
+    }
+
+    // 添加或清空曲线
+    if (!Controller.AddCurve(CurveId))
+    {
+        // 曲线已存在，清空关键帧
+        Controller.SetCurveKeys(CurveId, TArray<FRichCurveKey>());
+    }
+
+    // 设置关键帧
+    const TArray<TSharedPtr<FJsonValue>>* KeysArray = nullptr;
+    if (Args->TryGetArrayField(TEXT("keys"), KeysArray))
+    {
+        TArray<FRichCurveKey> Keys;
+        for (const auto& KeyVal : *KeysArray)
+        {
+            const TSharedPtr<FJsonObject>* KeyObj = nullptr;
+            if (!KeyVal->TryGetObject(KeyObj)) continue;
+
+            float Time = (*KeyObj)->GetNumberField(TEXT("time"));
+            float Value = (*KeyObj)->GetNumberField(TEXT("value"));
+            Keys.Add(FRichCurveKey(Time, Value));
+        }
+        if (Keys.Num() > 0)
+        {
+            Controller.SetCurveKeys(CurveId, Keys);
+        }
+    }
+
+    AnimSeq->PostEditChange();
+    AnimSeq->MarkPackageDirty();
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("animation"), AssetPath);
+    ResultObj->SetStringField(TEXT("curve_name"), CurveName);
+    ResultObj->SetBoolField(TEXT("success"), true);
     FString Output;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);

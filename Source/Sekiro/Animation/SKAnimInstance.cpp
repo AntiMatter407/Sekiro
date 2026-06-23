@@ -67,30 +67,68 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	DodgeDirection = OwnerCharacter->DodgeDirection;
 	DodgeDirectionLateral = OwnerCharacter->DodgeDirectionLateral;
 
-	// TAE: 更新当前动画时间
-	if (UAnimMontage* Montage = GetCurrentActiveMontage())
+	// TAE: 更新当前动画时间 + 从曲线读取帧标志
+	UAnimMontage* CurrentMontage = GetCurrentActiveMontage();
+	if (CurrentMontage)
 	{
-		CurrentAnimTime = Montage_GetPosition(Montage);
-		CurrentAnimLength = Montage->GetPlayLength();
+		CurrentAnimTime = Montage_GetPosition(CurrentMontage);
+		CurrentAnimLength = CurrentMontage->GetPlayLength();
+
+		// 从 "FrameFlags" 曲线读取位掩码（替代旧的 AnimFrameFlags 查表）
+		float CurveValue = 0.f;
+		if (GetCurveValue(TEXT("FrameFlags"), CurveValue))
+		{
+			int32 Mask = FMath::RoundToInt(CurveValue);
+			bDisableTurning  = (Mask & (1 << (uint8)ESKFrameFlag::DisableTurning)) != 0;
+			bDisableMovement = (Mask & (1 << (uint8)ESKFrameFlag::DisableMovement)) != 0
+			                || (Mask & (1 << (uint8)ESKFrameFlag::LimitMoveSpeedWalk)) != 0
+			                || (Mask & (1 << (uint8)ESKFrameFlag::LimitMoveSpeedDash)) != 0;
+			bCanDeflect      = (Mask & (1 << (uint8)ESKFrameFlag::EnableParry)) != 0
+			                && (Mask & (1 << (uint8)ESKFrameFlag::DisableParry)) == 0;
+			bInvincible      = (Mask & (1 << (uint8)ESKFrameFlag::Invincible)) != 0;
+		}
 	}
 }
 
 bool USKAnimInstance::CanCancelTo(FName TargetAction, float& OutCrossfade) const
 {
-	if (!AnimLogicData) return false;
+	// 从 "CancelActions" 曲线读取当前帧可取消的动作
+	// 曲线值 = ESKCancelAction 枚举值，0 = 无取消
+	float CurveValue = 0.f;
+	if (!GetCurveValue(TEXT("CancelActions"), CurveValue))
+		return false;
+
+	ESKCancelAction CancelAction = (ESKCancelAction)FMath::RoundToInt(CurveValue);
 
 	int32 CurrentPrio = GetActionPriority(CurrentAction);
 	int32 TargetPrio = GetActionPriority(TargetAction);
 	if (TargetPrio <= CurrentPrio && CurrentAction != NAME_None)
 		return false;
 
-	return AnimLogicData->CanCancelTo(CurrentAnimID, CurrentAnimTime, TargetAction, OutCrossfade);
+	// 将 TargetAction 映射为 ESKCancelAction 匹配
+	static const TMap<FName, ESKCancelAction> ActionMap = {
+		{TEXT("Attack"),     ESKCancelAction::Attack},
+		{TEXT("Guard"),      ESKCancelAction::Guard},
+		{TEXT("Dodge"),      ESKCancelAction::Dodge},
+		{TEXT("Prosthetic"), ESKCancelAction::Prosthetic},
+		{TEXT("Item"),       ESKCancelAction::Item},
+	};
+
+	const ESKCancelAction* Target = ActionMap.Find(TargetAction);
+	if (!Target) return false;
+
+	if (CancelAction != *Target)
+		return false;
+
+	OutCrossfade = 0.1f;
+	return true;
 }
 
-bool USKAnimInstance::GetCurrentHitbox(FSKAttackHitboxConfig& OutConfig) const
+bool USKAnimInstance::IsHitboxActive() const
 {
-	if (!AnimLogicData) return false;
+	float CurveValue = 0.f;
+	if (!GetCurveValue(TEXT("AttackHitbox"), CurveValue))
+		return false;
 
-	int32 Frame = FMath::RoundToInt(CurrentAnimTime * 30.f);
-	return AnimLogicData->GetAttackHitboxAtFrame(CurrentAnimID, Frame, OutConfig);
+	return (ESKAttackHitboxType)FMath::RoundToInt(CurveValue) != ESKAttackHitboxType::None;
 }

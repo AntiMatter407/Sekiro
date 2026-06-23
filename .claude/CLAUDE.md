@@ -51,4 +51,8 @@
 /review <范围>           → 审查报告 + 修复
 ```
 
+## 编码要求
+
+所有 `.h` / `.cpp` 使用 **UTF-8 with BOM**。禁止用 Bash/PowerShell 的 `Set-Content` 等命令写入源码文件——只能用 Write/Edit 工具，否则中文注释会损坏。
+
 所有对话、建议、文档使用简体中文。

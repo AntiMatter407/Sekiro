@@ -2,7 +2,7 @@
 
 | 状态 | 创建 | 更新 |
 |------|------|------|
-| 🔄 进行中 | 2026-06-15 | 2026-06-22 |
+| 🔄 进行中 | 2026-06-15 | 2026-06-23 |
 
 ## 需求描述
 
@@ -34,39 +34,36 @@
 | 测试方案文档 | 6/22 | `Docs/test-sekiro-input-jt-mapping.md` |
 | **义手长按计时修复** | 6/22 | `bProstheticPressed`→`bProstheticHeld`，新增变量全局统一 |
 | **Deathblow/Guard/Prosthetic/Item/Grapple/CombatArt 统一走 TryPlayAction** | 6/22 | 修复 6 个 handler 不走 CanCancelTo 窗口判定的问题 |
+| **ABP_Sekiro 配置确认** | 6/23 | AnimBlueprint Slot 节点和变量绑定已验证通过 |
+| **PIE 动画输出验证** | 6/23 | Move/Attack/Guard/Dodge/Jump/PIE 基础输入模拟全部成功 |
 
 ### 待完成
 
-#### 第一优先级：验证与实测
+#### 第一优先级：验证与实测（Sprint/转向/运行时日志）
 
-- 🔄 1. **PIE 动画输出验证**（6/22 初步验证通过，需逐项确认）
-  - [x] AIBridge input_simulate 连接成功
-  - [x] Move（Walk/Jog/Run）指令成功执行
-  - [x] R1 攻击连段（3次连续 R1 输入成功）
-  - [x] Guard 动画（按住 + 快速按放）
-  - [x] Dodge 闪避
-  - [x] Jump 跳跃
-  - [ ] 验证 Sprint（Dodge双击→保持移动）
-  - [ ] 验证转向动画（look 视角变化）
-  - [ ] 验证五级速度切换时的 Tier 过渡动画
-  - [ ] 运行时数据采集（GetCurrentAnimID / CurrentAction 日志输出确认动画播了对）
+- 🔄 1. **运行时数据采集验证**（Sprint 过渡 + 转向 + GetCurrentAnimID/CurrentAction 日志）
+  - ✅ 1.1 AIBridge PIE input_simulate 全部 7 项操作（Move/Sprint/Attack/Guard/Dodge/Jump/Look）验证执行成功，bridge 返回 success
+  - ✅ 1.2 确认 ABP 中 DefaultSlot 节点存在（AnimGraphNode_Slot_2, SlotName=DefaultSlot）
+  - ✅ 1.3 确认 AnimLogicData 加载正常（日志 `AnimLogicData=ok`）
+  - ✅ 1.4 Guard 动画触发确认（日志 `Action=Guard AnimID=300000` 连续触发）
+  - 🔴 1.5 **卡动画Bug修复：OnActionMontageEnded 复位 CurrentPriority**（PlayMontageByID 播完后复位 Priority/Locomotion）
+  - ⬜ 1.6 编译 + PIE 验证修复效果
 
 #### 第二优先级：战斗系统完善
 
-- ⬜ 2. **Jump 系统完善**
-  - [ ] 起跳/上升/下落/落地四阶段状态机
-  - [ ] 空中攻击（HandleAttack 上下文分支已就位但需空中动画）
-  - [ ] 空中闪避
+- 🔄 2. **Jump 系统完善**
+  - ✅ 2.1-2.3 起跳/落地/空中攻击/空中闪避已完成
+  - ⬜ 2.4 PIE 验证
 
 - ⬜ 3. **BehaviorParam_PC 完整解析**
-  - [ ] 用 Yapped 提取 param 列名（animId, nextBehaviorId 等）
-  - [ ] Python 自动生成完整 ComboChain（替代现在的手写 14 条）
+  - ⬜ 3.1 用 Yapped 提取 param 列名（animId, nextBehaviorId 等）
+  - ⬜ 3.2 Python 自动生成完整 ComboChain（替代当前的手写 14 条）
 
 #### 第三优先级：集成与工具
 
 - ⬜ 4. **AIBridge 输入模拟测试脚本**
-  - [ ] 自动化测试序列脚本（`Script/temp/test_sequence.py`）
-  - [ ] PIE 全按键功能 + 过渡流畅性 + 优先级打断验证
+  - ⬜ 4.1 自动化测试序列脚本（`Script/temp/test_sequence.py`）
+  - ⬜ 4.2 PIE 全按键功能 + 过渡流畅性 + 优先级打断验证
 
 ## 涉及文件
 
@@ -89,5 +86,9 @@
 | 2026-06-15 | 创建文档 |
 | 2026-06-22 | 第一次更新：整合为单文档，TAE 数据驱动方案 |
 | 2026-06-22 | 第二次更新：管线修复 + 全部 5 项运行时修正完成，进入验证阶段 |
-| 2026-06-22 | 第三次更新：修复义手长按计时 `bProstheticPressed`→`bProstheticHeld`；HandleDeathblow/Guard/Prosthetic/Item/Grapple/CombatArt 统一走 TryPlayAction 通过 CanCancelTo 窗口判定；HandleDeathblow 新增 `bDeathBlowActive` 守卫 |
+| 2026-06-22 | 第三次更新：修复义手长按计时；全部 handler 统一走 TryPlayAction |
 | 2026-06-22 | 第四次更新：AIBridge PIE 初步验证——Move/Attack/Guard/Dodge/Jump 基础输入模拟全部成功 |
+| 2026-06-23 | 第五次更新：确认 ABP+基础 PIE 验证完成，下一步 Sprint/转向/运行时日志确认 |
+| 2026-06-23 | 第六次更新：PIE 7 项操作全部执行成功；发现 Guard 播完后 CurrentPriority=5 残留导致后续动作被阻塞的Bug；新增 OnActionMontageEnded 回调复位 CurrentPriority；编译通过待 PIE 验证 |
+| 2026-06-23 | 第七次更新：ComboChain 删除→DeriveNextAnim 推导；SABehaviorParamImporter/SekiroCombatData 删除；SAImport Mode4 删除。Jump 系统完善 |
+| 2026-06-23 | 第八次更新：状态机重构。新增 ESKCharacterState 枚举(8状态)，ProcessIntents 改为 switch-case 状态迁移，OnActionMontageEnded 统一处理动画结束迁移，落地检测自动回 Idle，CanTransition+TransitionTo 统一迁移规则 |

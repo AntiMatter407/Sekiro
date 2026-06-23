@@ -66,6 +66,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Flags")
 	uint32 bDisableMovement : 1;
 
+	UPROPERTY(BlueprintReadOnly, Category = "Flags")
+	uint32 bInvincible : 1;
+
 	// ── 输入意图 ───────────────────────────────────
 	UPROPERTY(BlueprintReadOnly, Category = "Input")
 	FName InputIntent;
@@ -79,7 +82,7 @@ public:
 	bool CanCancelTo(FName TargetAction, float& OutCrossfade) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Attack")
-	bool GetCurrentHitbox(FSKAttackHitboxConfig& OutConfig) const;
+	bool IsHitboxActive() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Cancel")
 	static int32 GetActionPriority(FName Action);

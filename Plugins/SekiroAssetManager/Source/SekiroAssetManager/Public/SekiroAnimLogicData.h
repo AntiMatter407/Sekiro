@@ -1,180 +1,90 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "SekiroAnimLogicData.generated.h"
 
-// ============================================================================
-// 杩愯鏃跺姩鐢婚€昏緫鏁版嵁璧勪骇锛堜粠 TAE 鎻愬彇锛屼緵 AnimInstance 杩愯鏃舵煡璇級
-// ============================================================================
-
-USTRUCT(BlueprintType)
-struct FSKCancelRule
+// ════ 帧级标志位枚举（对应 TAE JumpTable ID）══════════════
+// 打包为 UAnimSequence 上的一条 Integer Curve "FrameFlags"。
+UENUM(BlueprintType, meta = (Bitflags))
+enum class ESKFrameFlag : uint8
 {
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 StartFrame = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 EndFrame = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	FName TargetAction;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	float CrossfadeDuration = 0.1f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 Priority = 0;
-
-	bool IsInWindow(int32 Frame) const { return Frame >= StartFrame && Frame <= EndFrame; }
+    DisableTurning      = 0,    // bit0,  JT=7
+    DisableMovement     = 1,    // bit1,  JT=89
+    DisableMapHit       = 2,    // bit2,  JT=19
+    EnableParry         = 3,    // bit3,  JT=119
+    DisableParry        = 4,    // bit4,  JT=137
+    DisableSpecial      = 5,    // bit5,  JT=133
+    DisableItem         = 6,    // bit6,  JT=134
+    Invincible          = 7,    // bit7,  JT=51
+    SetNoGravity        = 8,    // bit8,  JT=27
+    FlagAsDodging       = 9,    // bit9,  JT=8
+    InvokeDeath         = 10,   // bit10, JT=12
+    LimitMoveSpeedWalk  = 11,   // bit11, JT=90
+    LimitMoveSpeedDash  = 12,   // bit12, JT=91
+    EnterMovement       = 13,   // bit13, JT=32
+    ExitMovement        = 14,   // bit14, JT=31
+    Staggered           = 15,   // bit15, JT=55
 };
 
-USTRUCT(BlueprintType)
-struct FSKCancelRuleList
+// ════ Cancel 动作枚举（对应 TAE JumpTable 取消事件）════════
+// 打包为 UAnimSequence 上的一条 Integer Curve "CancelActions"。
+// 值 = CancelActionID，0 = 无取消。
+UENUM(BlueprintType)
+enum class ESKCancelAction : uint8
 {
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	TArray<FSKCancelRule> Rules;
+    None        = 0,
+    Attack      = 1,    // JT=115(R1CancelEnd), JT=26(GenericCancelStart)
+    Guard       = 2,    // JT=117(L1CancelEnd)
+    Dodge       = 3,    // JT=25(DodgeCancelStart)
+    Prosthetic  = 4,    // JT=118(L2CancelEnd)
+    Item        = 5,    // JT=154(ItemUseWindow)
 };
 
-USTRUCT(BlueprintType)
-struct FSKAttackHitboxConfig
+// ════ 攻击框类型枚举（对应 TAE AttackBehavior）════════════
+// 打包为 UAnimSequence 上的一条 Integer Curve "AttackHitbox"。
+// 值 = 0 表示无攻击框，非 0 表示当前帧有活跃攻击框。
+UENUM(BlueprintType)
+enum class ESKAttackHitboxType : uint8
 {
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 StartFrame = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 EndFrame = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 BehaviorJudgeID = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 AttackType = 0;
-};
-
-// 鈹€鈹€ 甯х骇琛屼负鏍囧織锛?6 浣嶄綅鍩燂紝瀵归綈 JumpTable ID 鏄犲皠锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-USTRUCT(BlueprintType)
-struct FSKFrameFlags
-{
-	GENERATED_BODY()
-
-	UPROPERTY() uint32 bDisableTurning : 1;                         // JumpTableID 7
-	UPROPERTY() uint32 bDisableMovement : 1;                        // JumpTableID 89
-	UPROPERTY() uint32 bDisableMapHit : 1;                          // JumpTableID 19
-	UPROPERTY() uint32 bEnableParry : 1;                            // JumpTableID 119
-	UPROPERTY() uint32 bDisableParry : 1;                           // JumpTableID 137
-	UPROPERTY() uint32 bDisableSpecial : 1;                         // JumpTableID 133锛堜箟鎵?鎴樻妧锛?
-	UPROPERTY() uint32 bDisableItem : 1;                            // JumpTableID 134
-	UPROPERTY() uint32 bInvincible : 1;                             // JumpTableID 51
-	UPROPERTY() uint32 bSetNoGravity : 1;                           // JumpTableID 27
-	UPROPERTY() uint32 bFlagAsDodging : 1;                          // JumpTableID 8
-	UPROPERTY() uint32 bInvokeDeath : 1;                            // JumpTableID 12
-	UPROPERTY() uint32 bLimitMoveSpeedWalk : 1;                     // JumpTableID 90
-	UPROPERTY() uint32 bLimitMoveSpeedDash : 1;                     // JumpTableID 91
-	UPROPERTY() uint32 bEnterMovement : 1;                          // JumpTableID 32
-	UPROPERTY() uint32 bExitMovement : 1;                           // JumpTableID 31
-	UPROPERTY() uint32 bStaggered : 1;                              // JumpTableID 55
-};
-
-// 鈹€鈹€ 甯х骇鏁版嵁锛堝叧閿抚瀛樺偍锛屽噺灏戝啑浣欙級鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-USTRUCT(BlueprintType)
-struct FSKAnimFrameData
-{
-	GENERATED_BODY()
-
-	UPROPERTY()
-	TArray<int32> KeyFrames;                                        // 鍏抽敭甯у彿
-
-	UPROPERTY()
-	TArray<FSKFrameFlags> Flags;                                    // 瀵瑰簲鏍囧織锛堜笌 KeyFrames 鍚岀储寮曪級
-};
-
-// 鈹€鈹€ 鏀诲嚮鐩掑垪琛紙澶氱洅鏀寔锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-USTRUCT(BlueprintType)
-struct FSKAttackHitboxList
-{
-	GENERATED_BODY()
-
-	UPROPERTY()
-	TArray<FSKAttackHitboxConfig> Hitboxes;                         // 璇ュ姩鐢荤殑鎵€鏈夋敾鍑荤洅
-};
-
-USTRUCT(BlueprintType)
-struct FSKSpEffectConfig
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 SpEffectID = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 StartFrame = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	int32 EndFrame = 0;
+    None        = 0,
+    Standard    = 1,    // 标准攻击
+    Thrust      = 2,    // 突刺
+    Sweep       = 3,    // 横扫
+    ForwardR1   = 4,    // 前R1
+    Plunging    = 5,    // 下落攻击
 };
 
 USTRUCT(BlueprintType)
 struct FSKAnimIDList
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	TArray<int32> IDs;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    TArray<int32> IDs;
 };
 
 UCLASS(BlueprintType)
 class SEKIROASSETMANAGER_API USKAnimationLogicData : public UDataAsset
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cancel")
-	TMap<int32, FSKCancelRuleList> CancelRules;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Attack")
-	TMap<int32, FSKAttackHitboxList> AttackHitboxConfigs;           // AnimID 鈫?鏀诲嚮鐩掑垪琛紙澶氱洅锛?
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SpEffect")
-	TMap<int32, FSKSpEffectConfig> SpEffectConfigs;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "FrameFlags")
-	TMap<int32, FSKAnimFrameData> AnimFrameFlags;                   // AnimID 鈫?甯х骇琛屼负鏍囧織
-
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
-	TMap<FString, FSKAnimIDList> CategoryAnimMap;
-
+    // AnimPrefixMap: AnimID → 动画前缀 (a000, a010, a200...)
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
-    TMap<int32, FString> AnimPrefixMap;  // AnimID → 动画前缀 (a000, a010, a200...)
+    TMap<int32, FString> AnimPrefixMap;
+
+    // CategoryAnimMap: 类别名称 → AnimID 列表（用于 ResolveAnimID fallback）
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
+    TMap<FString, FSKAnimIDList> CategoryAnimMap;
 
     // 运行时动画资产路径配置
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
-    FString AnimAssetBasePath = TEXT("/Game/Characters/Sekiro/Animations");  // Package 基础路径
+    FString AnimAssetBasePath = TEXT("/Game/Characters/Sekiro/Animations");
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
-    FString AnimAssetNamePrefix = TEXT("Anim_Sekiro");                       // 动画资产名前缀
+    FString AnimAssetNamePrefix = TEXT("Anim_Sekiro");
 
     UFUNCTION(BlueprintCallable, Category = "Animation Logic")
-    FString BuildAnimAssetPath(int32 AnimID) const;                          // 拼接完整资产路径
-
-	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
-	bool CanCancelTo(int32 AnimID, float CurrentTime, FName TargetAction, float& OutCrossfade) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
-	bool GetAttackHitboxAtFrame(int32 AnimID, int32 Frame, FSKAttackHitboxConfig& OutConfig) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
-	bool GetFrameFlags(int32 AnimID, int32 Frame, FSKFrameFlags& OutFlags) const;  // 鏌ヨ甯х骇鏍囧織
-
-	// 鑾峰彇褰撳墠甯ф墍鏈夋縺娲荤殑鏀诲嚮鐩掞紙鏀寔澶氱洅锛?
-	UFUNCTION(BlueprintCallable, Category = "Animation Logic")
-	void GetActiveHitboxesAtFrame(int32 AnimID, int32 Frame, TArray<FSKAttackHitboxConfig>& OutHitboxes) const;
+    FString BuildAnimAssetPath(int32 AnimID) const;
 };
-

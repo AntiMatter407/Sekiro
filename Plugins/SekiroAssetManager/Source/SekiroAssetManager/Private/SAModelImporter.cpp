@@ -138,7 +138,7 @@ void SAModelImporter::ParseMaterials(
         (*Obj)->TryGetBoolField(TEXT("IsDecal"), Mat.bIsDecal);
         (*Obj)->TryGetStringField(TEXT("DrawStep"), Mat.DrawStep);
 
-        // 直接�?Materials 对象读取 Textures 映射（Python 端已内联�?
+        // 直接从 Materials 对象读取 Textures 映射（Python 端已内联）
         const TSharedPtr<FJsonObject>* InlineTexObj = nullptr;
         if ((*Obj)->TryGetObjectField(TEXT("Textures"), InlineTexObj))
             for (const auto& Pair : (*InlineTexObj)->Values)
@@ -147,7 +147,7 @@ void SAModelImporter::ParseMaterials(
         OutMaterials.Add(MoveTemp(Mat));
     }
 
-    // 兼容�?JSON 格式：通过 ResolvedMaterials 找未匹配的纹�?
+    // 兼容旧 JSON 格式：通过 ResolvedMaterials 找未匹配的纹理
     if (ResolvedMatsArray)
     {
         for (const auto& RmVal : *ResolvedMatsArray)
@@ -160,7 +160,7 @@ void SAModelImporter::ParseMaterials(
                 [&RmName](const FSAImportMaterial& M) { return M.Name == RmName; });
             if (!Mat) continue;
 
-            // 仅当 Materials 中未内联 Textures 时才�?ResolvedMaterials 读取
+            // 仅当 Materials 中未内联 Textures 时才从 ResolvedMaterials 读取
             // ResolvedMaterials always override Materials textures (Python resolution wins)
             {
                 const TSharedPtr<FJsonObject>* TexObj = nullptr;
@@ -230,7 +230,7 @@ FSAImportVertex SAModelImporter::ParseVertex(const TSharedPtr<FJsonObject>& Vert
 }
 
 // ============================================================================
-// 网格体解�?
+// 网格体解析
 // ============================================================================
 
 void SAModelImporter::ParseMeshes(const TArray<TSharedPtr<FJsonValue>>& MeshesArray,
@@ -308,7 +308,7 @@ bool SAModelImporter::ParseFromFile(const FString& JsonPath, FSAModelData& OutDa
     if (Root->TryGetArrayField(TEXT("Bones"), BonesArr))
         ParseBones(*BonesArr, OutData.Bones);
 
-    // 解析可选的 FlverBones（用�?ModelOnly 追加的数据源�?
+    // 解析可选的 FlverBones（用于 ModelOnly 追加的数据源）
     const TArray<TSharedPtr<FJsonValue>>* FlverBonesArr = nullptr;
     if (Root->TryGetArrayField(TEXT("FlverBones"), FlverBonesArr))
         ParseBones(*FlverBonesArr, OutData.FlverBones);
@@ -669,7 +669,7 @@ bool SAModelImporter::Import(const FString& JsonPath, const FString& TargetPacka
         return false;
 
     // DSAnimStudio approach: Python already merged all needed bones into Bones array.
-    // No AppendModelOnlyBones needed �?Bones is the authoritative skeleton.
+    // No AppendModelOnlyBones needed — Bones is the authoritative skeleton.
 
 	FString SkeletonName = ModelData.SkeletonName;
 	if (SkeletonName.IsEmpty()) { UE_LOG(LogTemp, Error, TEXT("SkeletonName is empty in JSON")); return false; }
