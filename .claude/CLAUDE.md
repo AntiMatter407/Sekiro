@@ -10,7 +10,7 @@
 
 ## 项目结构
 
-@.claude/docs/directory-structure.md
+@Docs/directory-structure.md
 
 ## 编码规范
 

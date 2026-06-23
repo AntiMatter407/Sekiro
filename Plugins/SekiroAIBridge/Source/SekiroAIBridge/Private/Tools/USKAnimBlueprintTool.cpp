@@ -1,4 +1,4 @@
-#include "Tools/USKAnimBlueprintTool.h"
+﻿#include "Tools/USKAnimBlueprintTool.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimSequence.h"
@@ -41,6 +41,11 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+#include "Misc/FileHelper.h"
+#include "UObject/Package.h"
+#include "UObject/SavePackage.h"
+#include "Misc/PackageName.h"
+#include "FileHelpers.h"
 #include "Misc/Paths.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -185,6 +190,7 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("rename_node"))         return HandleRenameNode(ArgsObj, OutError);
     if (Action == TEXT("add_slot"))            return HandleAddSlotNode(ArgsObj, OutError);
     if (Action == TEXT("add_curve"))           return HandleAddCurve(ArgsObj, OutError);
+    if (Action == TEXT("batch_tae_curves"))     return HandleBatchTaeCurves(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -2137,9 +2143,13 @@ FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args
 
     // 注册 SmartName 到骨骼
     FSmartName SmartName;
-    Skeleton->AddSmartNameAndModify(CurveFName, CurveFName, SmartName);
+    Skeleton->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, CurveFName, SmartName);
 
-    // 构造 CurveIdentifier
+    // 选择曲线类型：int → RCIM_Constant 阶跃保持，默认 → RCIM_Linear
+    FString CurveType;
+    Args->TryGetStringField(TEXT("curve_type"), CurveType);
+    const bool bIsIntegerCurve = CurveType.Equals(TEXT("int"), ESearchCase::IgnoreCase);
+
     FAnimationCurveIdentifier CurveId(SmartName, ERawCurveTrackTypes::RCT_Float);
     if (!CurveId.IsValid())
     {
@@ -2147,32 +2157,42 @@ FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args
         return FString();
     }
 
-    // 添加或清空曲线
-    if (!Controller.AddCurve(CurveId))
+    // 添加曲线
+    Controller.OpenBracket(NSLOCTEXT("SekiroAIBridge", "AddCurve", "添加曲线"));
     {
-        // 曲线已存在，清空关键帧
-        Controller.SetCurveKeys(CurveId, TArray<FRichCurveKey>());
-    }
-
-    // 设置关键帧
-    const TArray<TSharedPtr<FJsonValue>>* KeysArray = nullptr;
-    if (Args->TryGetArrayField(TEXT("keys"), KeysArray))
-    {
-        TArray<FRichCurveKey> Keys;
-        for (const auto& KeyVal : *KeysArray)
+        if (!Controller.AddCurve(CurveId))
         {
-            const TSharedPtr<FJsonObject>* KeyObj = nullptr;
-            if (!KeyVal->TryGetObject(KeyObj)) continue;
-
-            float Time = (*KeyObj)->GetNumberField(TEXT("time"));
-            float Value = (*KeyObj)->GetNumberField(TEXT("value"));
-            Keys.Add(FRichCurveKey(Time, Value));
+            bool bOverwrite = false;
+            Args->TryGetBoolField(TEXT("overwrite"), bOverwrite);
+            if (bOverwrite)
+            {
+                Controller.SetCurveKeys(CurveId, TArray<FRichCurveKey>());
+            }
         }
-        if (Keys.Num() > 0)
+
+        // 设置关键帧（整数曲线用 RCIM_Constant 阶跃保持）
+        const ERichCurveInterpMode InterpMode = bIsIntegerCurve ? RCIM_Constant : RCIM_Linear;
+        const TArray<TSharedPtr<FJsonValue>>* KeysArray = nullptr;
+        if (Args->TryGetArrayField(TEXT("keys"), KeysArray))
         {
-            Controller.SetCurveKeys(CurveId, Keys);
+            TArray<FRichCurveKey> Keys;
+            for (const auto& KeyVal : *KeysArray)
+            {
+                const TSharedPtr<FJsonObject>* KeyObj = nullptr;
+                if (!KeyVal->TryGetObject(KeyObj)) continue;
+                FRichCurveKey Key;
+                Key.Time = (*KeyObj)->GetNumberField(TEXT("time"));
+                Key.Value = (*KeyObj)->GetNumberField(TEXT("value"));
+                Key.InterpMode = InterpMode;
+                Keys.Add(Key);
+            }
+            if (Keys.Num() > 0)
+            {
+                Controller.SetCurveKeys(CurveId, Keys);
+            }
         }
     }
+    Controller.CloseBracket();
 
     AnimSeq->PostEditChange();
     AnimSeq->MarkPackageDirty();
@@ -2180,6 +2200,7 @@ FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args
     TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
     ResultObj->SetStringField(TEXT("animation"), AssetPath);
     ResultObj->SetStringField(TEXT("curve_name"), CurveName);
+    ResultObj->SetStringField(TEXT("curve_type"), CurveType);
     ResultObj->SetBoolField(TEXT("success"), true);
     FString Output;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
@@ -2187,10 +2208,208 @@ FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args
     FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
     return Output;
 }
-
 // ============================================================================
 // AnimBlueprintToJson — 序列化 AnimBlueprint 结构
 // ============================================================================
+
+
+// ============================================================================
+// HandleBatchTaeCurves 鈥?鎵归噺澶勭悊 TAE JSON锛屽啓鍏?FrameFlags/CancelActions/AttackHitbox
+// ============================================================================
+FString USKAnimBlueprintTool::HandleBatchTaeCurves(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString TAEJsonPath = Args->GetStringField(TEXT("tae_json_path"));
+    FString BasePath;
+    if (!Args->TryGetStringField(TEXT("base_path"), BasePath))
+        BasePath = TEXT("/Game/Characters/Sekiro/Animations");
+    FString AssetPrefix;
+    if (!Args->TryGetStringField(TEXT("asset_prefix"), AssetPrefix))
+        AssetPrefix = TEXT("Anim_Sekiro");
+
+    FString JsonContent;
+    if (!FFileHelper::LoadFileToString(JsonContent, *TAEJsonPath))
+    {
+        OutError = FString::Printf(TEXT("Cannot read TAE JSON: %s"), *TAEJsonPath);
+        return FString();
+    }
+
+    TSharedPtr<FJsonObject> RootObj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonContent);
+    if (!FJsonSerializer::Deserialize(Reader, RootObj) || !RootObj.IsValid())
+    {
+        OutError = TEXT("JSON parse failed");
+        return FString();
+    }
+
+    static const TMap<int32, int32> JTFrameFlags = {
+        {7, 1<<0}, {89, 1<<1}, {19, 1<<2}, {119, 1<<3}, {137, 1<<4},
+        {133, 1<<5}, {134, 1<<6}, {51, 1<<7}, {27, 1<<8}, {8, 1<<9},
+        {12, 1<<10}, {90, 1<<11}, {91, 1<<12}, {32, 1<<13}, {31, 1<<14}, {55, 1<<15}
+    };
+    static const TMap<int32, int32> JTCancelActions = {
+        {115, 1}, {26, 1}, {117, 2}, {25, 3}, {118, 4}, {154, 5}
+    };
+    static const TMap<int32, int32> AttackTypeMap = {
+        {0, 1}, {2, 4}, {62, 5}, {64, 0}
+    };
+
+    auto DerivePrefix = [](const FString& Filename) -> FString {
+        FString P = Filename.Replace(TEXT(".tae"), TEXT(""));
+        FString Num = P.RightChop(1);
+        while (Num.Len() < 3) Num = TEXT("0") + Num;
+        return TEXT("a") + Num;
+    };
+
+    auto BuildKeys = [](const TArray<TSharedPtr<FJsonValue>>& Events,
+                        int32 TotalFrames,
+                        const TMap<int32, int32>& Mapping,
+                        bool bIsBitFlag) -> TArray<FRichCurveKey>
+    {
+        TArray<int32> FV;
+        FV.SetNumZeroed(TotalFrames + 1);
+        for (const auto& EV : Events)
+        {
+            const TSharedPtr<FJsonObject>* EO = nullptr;
+            if (!EV->TryGetObject(EO)) continue;
+            const int32 Type = (*EO)->GetIntegerField(TEXT("Type"));
+            const TSharedPtr<FJsonObject>* PO = nullptr;
+            if (!(*EO)->TryGetObjectField(TEXT("Parameters"), PO)) continue;
+            int32 MK = -1;
+            if (Type == 0) MK = (*PO)->GetIntegerField(TEXT("JumpTableID"));
+            else if (Type == 1 && !bIsBitFlag) MK = (*PO)->GetIntegerField(TEXT("AttackType"));
+            else continue;
+            const int32* VP = Mapping.Find(MK);
+            if (!VP || *VP == 0) continue;
+            const int32 S = (*EO)->GetIntegerField(TEXT("StartFrame"));
+            const int32 E = FMath::Min((*EO)->GetIntegerField(TEXT("EndFrame")), TotalFrames);
+            for (int32 f = S; f <= E; ++f)
+                bIsBitFlag ? FV[f] |= *VP : FV[f] = *VP;
+        }
+        TArray<FRichCurveKey> Keys;
+        int32 PV = 0;
+        for (int32 f = 0; f <= TotalFrames; ++f)
+        {
+            if (FV[f] != PV)
+            {
+                FRichCurveKey K;
+                K.Time = f / 30.0f; K.Value = (float)FV[f]; K.InterpMode = RCIM_Constant;
+                Keys.Add(K); PV = FV[f];
+            }
+        }
+        if (Keys.Num() == 0) { FRichCurveKey K; K.Time = 0; K.Value = 0; K.InterpMode = RCIM_Constant; Keys.Add(K); }
+        return Keys;
+    };
+
+    int32 TA = 0, OK = 0, SK = 0, CA = 0, ER = 0;
+    const TArray<TSharedPtr<FJsonValue>>* TFF = nullptr;
+    RootObj->TryGetArrayField(TEXT("TAE_Files"), TFF);
+    if (!TFF) { OutError = TEXT("TAE_Files not found"); return FString(); }
+
+    for (const auto& TFV : *TFF)
+    {
+        const TSharedPtr<FJsonObject>* TFO = nullptr;
+        if (!TFV->TryGetObject(TFO)) continue;
+        const FString FN = (*TFO)->GetStringField(TEXT("FileName"));
+        const FString AP = DerivePrefix(FN);
+        const TArray<TSharedPtr<FJsonValue>>* AN = nullptr;
+        if (!(*TFO)->TryGetArrayField(TEXT("Animations"), AN)) continue;
+
+        for (const auto& AV : *AN)
+        {
+            const TSharedPtr<FJsonObject>* AO = nullptr;
+            if (!AV->TryGetObject(AO)) continue;
+            const int32 AID = (*AO)->GetIntegerField(TEXT("AnimID")); TA++;
+            const TArray<TSharedPtr<FJsonValue>>* EV = nullptr;
+            if (!(*AO)->TryGetArrayField(TEXT("Events"), EV) || EV->Num() == 0) { SK++; continue; }
+
+            const FString ANm = FString::Printf(TEXT("%s_%s_%06d"), *AssetPrefix, *AP, AID);
+            const FString PP = FString::Printf(TEXT("%s/%s"), *BasePath, *ANm);
+            const FString FP = FString::Printf(TEXT("%s.%s"), *PP, *ANm);
+
+            UAnimSequence* ASq = LoadObject<UAnimSequence>(nullptr, *FP);
+            if (!ASq) { SK++; continue; }
+
+            int32 TFr = 1;
+            for (const auto& EVi : *EV)
+            {
+                const TSharedPtr<FJsonObject>* EO = nullptr;
+                if (!EVi->TryGetObject(EO)) continue;
+                TFr = FMath::Max3(TFr, (*EO)->GetIntegerField(TEXT("EndFrame")), (*EO)->GetIntegerField(TEXT("StartFrame")));
+            }
+
+            USkeleton* Sk = ASq->GetSkeleton();
+            if (!Sk) { ER++; continue; }
+            IAnimationDataController& Ctrl = ASq->GetController();
+
+            FSmartName SFF, SCA, SAH;
+            Sk->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName("FrameFlags"), SFF);
+            Sk->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName("CancelActions"), SCA);
+            Sk->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName("AttackHitbox"), SAH);
+
+            FAnimationCurveIdentifier IFF(SFF, ERawCurveTrackTypes::RCT_Float);
+            FAnimationCurveIdentifier ICA(SCA, ERawCurveTrackTypes::RCT_Float);
+            FAnimationCurveIdentifier IAH(SAH, ERawCurveTrackTypes::RCT_Float);
+
+            TArray<FRichCurveKey> KFF = BuildKeys(*EV, TFr, JTFrameFlags, true);
+            TArray<FRichCurveKey> KCA = BuildKeys(*EV, TFr, JTCancelActions, false);
+            TArray<FRichCurveKey> KAH = BuildKeys(*EV, TFr, AttackTypeMap, false);
+
+            Ctrl.OpenBracket(NSLOCTEXT("SekiroAIBridge", "BatchTAE", "Batch TAE Curves"));
+            if (!Ctrl.AddCurve(IFF)) Ctrl.SetCurveKeys(IFF, {});
+            Ctrl.SetCurveKeys(IFF, KFF); CA++;
+            if (!Ctrl.AddCurve(ICA)) Ctrl.SetCurveKeys(ICA, {});
+            Ctrl.SetCurveKeys(ICA, KCA); CA++;
+            if (!Ctrl.AddCurve(IAH)) Ctrl.SetCurveKeys(IAH, {});
+            Ctrl.SetCurveKeys(IAH, KAH); CA++;
+            Ctrl.CloseBracket();
+
+            ASq->PostEditChange();
+            ASq->MarkPackageDirty();
+            OK++;
+
+            if (OK % 100 == 0)
+                UE_LOG(LogTemp, Log, TEXT("[BatchTAE] %d/%d anims, %d curves"), OK, TA, CA);
+        }
+    }
+
+    // Save modified packages individually (avoid autosave/GC race)
+    UE_LOG(LogTemp, Log, TEXT("[BatchTAE] Saving %d modified packages..."), OK);
+    TArray<UPackage*> PackagesToSave;
+    for (TObjectIterator<UPackage> It; It; ++It)
+    {
+        if (It->IsDirty() && It->GetName().StartsWith(TEXT("/Game/Characters/Sekiro/Animations/")))
+        {
+            PackagesToSave.Add(*It);
+        }
+    }
+    for (UPackage* Pkg : PackagesToSave)
+    {
+        FString PackageFilename;
+        if (FPackageName::TryConvertLongPackageNameToFilename(Pkg->GetName(), PackageFilename, FPackageName::GetAssetPackageExtension()))
+        {
+            {
+            FSavePackageArgs SaveArgs;
+            SaveArgs.TopLevelFlags = RF_Standalone;
+            SaveArgs.SaveFlags = SAVE_NoError;
+            UPackage::SavePackage(Pkg, nullptr, *PackageFilename, SaveArgs);
+        }
+        }
+    }
+
+    TSharedPtr<FJsonObject> Res = MakeShareable(new FJsonObject());
+    Res->SetNumberField(TEXT("total"), TA);
+    Res->SetNumberField(TEXT("processed"), OK);
+    Res->SetNumberField(TEXT("skipped"), SK);
+    Res->SetNumberField(TEXT("curves"), CA);
+    Res->SetNumberField(TEXT("errors"), ER);
+    Res->SetBoolField(TEXT("success"), true);
+
+    FString Out;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> W =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Out);
+    FJsonSerializer::Serialize(Res.ToSharedRef(), W);
+    return Out;
+}
 
 FString USKAnimBlueprintTool::AnimBlueprintToJson(UAnimBlueprint* AnimBP) const
 {

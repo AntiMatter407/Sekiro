@@ -765,32 +765,49 @@ async def cmd_anim_blueprint(args):
             "arguments": node_args
         })
     elif action == "add_curve":
-        # bridge.py anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--frames f1,f2,...] [--values v1,v2,...]
+        # bridge.py anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--keys json] [--frames f,f] [--values v,v] [--overwrite true|false]
         if len(args) < 3:
-            return {"error": "用法: anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--frames f,f] [--values v,v]"}
+            return {"error": "用法: anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--keys json] [--frames f,f] [--values v,v] [--overwrite true|false]"}
         path = args[1]
         curve_name = args[2]
-        curve_type = "float"
-        frames = None
-        values = None
+        kwargs = {"action": "add_curve", "path": path, "curve_name": curve_name}
+        # 旧格式兼容变量（在 while 循环外声明，避免作用域问题）
+        raw_frames = None
+        raw_values = None
         i = 3
         while i < len(args):
-            if args[i] == "--type" and i + 1 < len(args):
-                curve_type = args[i + 1]
+            if args[i] == "--keys" and i + 1 < len(args):
+                import json as _json
+                try:
+                    kwargs["keys"] = _json.loads(args[i + 1])
+                except _json.JSONDecodeError as e:
+                    return {"error": f"--keys JSON解析失败: {e}"}
+                i += 2
+            elif args[i] == "--type" and i + 1 < len(args):
+                # 整数曲线用 RCIM_Constant 阶跃插值（FrameFlags/CancelActions/AttackHitbox）
+                ct = args[i + 1].lower()
+                if ct in ("int", "integer"):
+                    kwargs["curve_type"] = "int"
+                elif ct in ("float",):
+                    kwargs["curve_type"] = "float"
+                else:
+                    return {"error": f"未知曲线类型: {ct}，支持 int/float"}
+                i += 2
+            elif args[i] == "--overwrite" and i + 1 < len(args):
+                kwargs["overwrite"] = args[i + 1].lower() in ("true", "1", "yes")
                 i += 2
             elif args[i] == "--frames" and i + 1 < len(args):
-                frames = [int(x) for x in args[i + 1].split(",")]
+                raw_frames = [int(x) for x in args[i + 1].split(",")]
                 i += 2
             elif args[i] == "--values" and i + 1 < len(args):
-                values = [float(x) for x in args[i + 1].split(",")]
+                raw_values = [float(x) for x in args[i + 1].split(",")]
                 i += 2
             else:
                 i += 1
-        kwargs = {"action": "add_curve", "path": path, "curve_name": curve_name}
-        if frames is not None and values is not None:
-            if len(frames) != len(values):
-                return {"error": "--frames 和 --values 长度必须相同"}
-            kwargs["keys"] = [{"time": f / 30.0, "value": v} for f, v in zip(frames, values)]
+        # 兼容旧格式：--frames + --values（仅在 keys 未提供时用）
+        if "keys" not in kwargs:
+            if raw_frames is not None and raw_values is not None and len(raw_frames) == len(raw_values):
+                kwargs["keys"] = [{"time": f / 30.0, "value": v} for f, v in zip(raw_frames, raw_values)]
         return await send_request("tools/call", {
             "name": "anim_blueprint",
             "arguments": kwargs

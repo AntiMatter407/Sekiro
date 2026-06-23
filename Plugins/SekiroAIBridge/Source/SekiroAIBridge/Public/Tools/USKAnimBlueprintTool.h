@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
@@ -52,6 +52,7 @@ private:
     FString HandleRenameNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddSlotNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddCurve(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleBatchTaeCurves(const TSharedPtr<FJsonObject>& Args, FString& OutError);
 
     UAnimBlueprint* LoadAnimBlueprint(const FString& AssetPath, FString& OutError);
     UAnimGraphNode_StateMachine* FindOrCreateStateMachineNode(UAnimBlueprint* AnimBP, FString& OutError);

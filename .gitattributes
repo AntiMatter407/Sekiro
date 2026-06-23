@@ -1,4 +1,4 @@
-# Windows Ä¬ÈÏ£º´ÅÅÌ CRLF£¬²Ö¿â LF£¨ÓÉ core.autocrlf=true ¿ØÖÆ£©
+# Windows é»˜è®¤ï¼šç£ç›˜ CRLFï¼Œä»“åº“ LFï¼ˆç”± core.autocrlf=true æ§åˆ¶ï¼‰
 *.cpp    text
 *.h      text
 *.hpp    text
@@ -15,10 +15,10 @@
 *.Build.cs  text
 *.Target.cs text
 
-# UE ¶ş½øÖÆ×ÊÔ´
+# UE äºŒè¿›åˆ¶èµ„æº
 *.uasset binary
 *.umap   binary
 
-# ½Å±¾ÎÄ¼ş
+# è„šæœ¬æ–‡ä»¶
 *.sh     text
 *.ps1    text
