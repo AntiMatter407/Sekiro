@@ -8,16 +8,6 @@
 /**/obj/
 /Plugins/*/Binaries/
 /Plugins/*/Intermediate/
-/Tools/**/bin/
-/Tools/**/obj/
-/Tools/**/publish/
-/Tools/**/publish2/
-/Tools/**/runner/
-/Tools/**/runner2/
-/Tools/FlverToFbx/Sekiro_model_*.json
-/Tools/FlverToFbx/*.pyc
-/Tools/__pycache__/
-/Tools/**/__pycache__/
 /Extracted/*
 !/Extracted/README.md
 !/Extracted/Sekiro_common_anims.json
@@ -29,6 +19,7 @@
 /Platforms/
 
 # UE5 auto-generated
+/Tools/
 /Content/__ExternalActors__/
 /Content/__ExternalObjects__/
 
@@ -43,8 +34,6 @@
 /Content/*.rar
 
 # Dev tool scratch files
-/Tools/FlverToFbx/FlverToFbx/*.csx
-/Tools/InspectFlver/
 
 # Temporary scripts and diagnostic output
 /Script/temp/
@@ -55,6 +44,5 @@
 /.claude/proxy/proxy-stdout.log
 /.claude/proxy/proxy.log
 
-# 本地保留，不入远程仓库
-/Output/
+# 鏈湴淇濈暀锛屼笉鍏ヨ繙绋嬩粨搴?/Output/
 /Content/Characters/Sekiro/Animations/
