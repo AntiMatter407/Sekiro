@@ -249,6 +249,61 @@ struct FSAStateMachineIR
     TMap<FString, TArray<int32>> AnimIDsByCategory;
 };
 
+
+// ── ABIR: BehaviorParam 行为配置 ─────────────────────────────
+UENUM(BlueprintType)
+enum class ESKBehaviorRefType : uint8
+{
+    Attack    = 0,
+    Bullet    = 1,
+    SpEffect  = 2,
+    Unknown   = 255
+};
+
+USTRUCT(BlueprintType)
+struct FSAAnimBehaviorConfig
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    int32 VariationID = 0;
+
+    UPROPERTY()
+    int32 JudgeID = 0;
+
+    UPROPERTY()
+    ESKBehaviorRefType RefType = ESKBehaviorRefType::Unknown;
+
+    UPROPERTY()
+    int32 RefID = 0;
+
+    UPROPERTY()
+    int32 SFXID = -1;
+
+    UPROPERTY()
+    int32 Stamina = 0;
+
+    UPROPERTY()
+    int32 MP = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FSAAnimBehaviorIR
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FString PrimaryRefType;
+
+    UPROPERTY()
+    int32 BPCategory = -1;
+
+    UPROPERTY()
+    FString BPCategoryName;
+
+    UPROPERTY()
+    TArray<FSAAnimBehaviorConfig> Behaviors;
+};
 // ── ABIR: 完整导入结果 ────────────────────────────────────────
 USTRUCT(BlueprintType)
 struct FSAAnimLogicImportResult
@@ -260,4 +315,7 @@ struct FSAAnimLogicImportResult
     UPROPERTY() int32 TotalEvents = 0;
     UPROPERTY() TMap<int32, FSAAnimationLogicIR> AnimLogicMap;  // AnimID → Logic
     UPROPERTY() FSAStateMachineIR MainStateMachine;
+
+    UPROPERTY()
+    TMap<int32, FSAAnimBehaviorIR> BehaviorConfigs;    // BehaviorParam: AnimID → 行为配置
 };

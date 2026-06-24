@@ -2,7 +2,7 @@
 
 | 状态 | 创建 | 更新 |
 |------|------|------|
-| 🔄 进行中 | 2026-06-15 | 2026-06-23 |
+| 🔄 进行中 | 2026-06-15 | 2026-06-24 |
 
 ## 需求描述
 
@@ -39,7 +39,7 @@
 
 ### 待完成
 
-#### 第一优先级：验证与实测（Sprint/转向/运行时日志）
+#### 次要任务：运行时验证（按需执行）
 
 - 🔄 1. **运行时数据采集验证**（Sprint 过渡 + 转向 + GetCurrentAnimID/CurrentAction 日志）
   - ✅ 1.1 AIBridge PIE input_simulate 全部 7 项操作（Move/Sprint/Attack/Guard/Dodge/Jump/Look）验证执行成功，bridge 返回 success
@@ -49,7 +49,7 @@
   - 🔴 1.5 **卡动画Bug修复：OnActionMontageEnded 复位 CurrentPriority**（PlayMontageByID 播完后复位 Priority/Locomotion）
   - ⬜ 1.6 编译 + PIE 验证修复效果
 
-#### 第二优先级：战斗系统完善
+#### 次要任务：战斗系统完善（按需执行）
 
 - 🔄 2. **Jump 系统完善**
   - ✅ 2.1-2.3 起跳/落地/空中攻击/空中闪避已完成
@@ -66,11 +66,38 @@
   - ⬜ 4.4 基于 TAE 事件特征推断动画分类（替代纯数字范围 InferCategoryFromAnimID）
   - ⬜ 4.5 重新生成 DA_Sekiro_AnimLogic DataAsset
 
-#### 第三优先级：集成与工具
+#### 次要任务：集成与工具（按需执行）
 
-- ⬜ 4. **AIBridge 输入模拟测试脚本**
+- ⬜ 5. **AIBridge 输入模拟测试脚本**
   - ⬜ 4.1 自动化测试序列脚本（`Script/temp/test_sequence.py`）
   - ⬜ 4.2 PIE 全按键功能 + 过渡流畅性 + 优先级打断验证
+
+#### 第一优先级：数据管线完善（参见 [链路文档](../sekiro-input-to-animation-pipeline.md)）
+
+> 阶段1 依赖阶段2 的 BehaviorParam 数据做交叉验证，建议 **2→1→3→4** 顺序执行。
+
+> 以下为当前主要推进任务，按 pipeline 四阶段排列。
+
+- ⬜ 1. **阶段1：BehaviorVariationID ↔ AnimID 映射**（AnimID 编码 + BehaviorParam 交叉验证，方案见 [设计文档](../design/sekiro-anim-state-machine-extraction.md)）
+  - ⬜ 1.1 整理 AnimID ↔ behaviorVariationID 编码规则文档
+  - ⬜ 1.2 编写交叉查表脚本（TAE BehaviorJudgeID + BehaviorParam → VarID）
+  - ⬜ 1.3 输出 AnimToBehaviorMap.json（AnimID → VarID → RefType）
+
+- ⬜ 2. **阶段2：提取 BehaviorParam_PC**（Yabber 导出 → behaviorParamID → {RefType, Category, RefID} 权威分类）
+  - ⬜ 2.1 Yabber 导出 BehaviorParam_PC.param → XML
+  - ⬜ 2.2 Python 解析 XML → 构建 `{VariationID*1000 + BehaviorJudgeID → {RefType, Category}}` 查表
+  - ⬜ 2.3 对 262 个有 Type=1/2/5 的动画，查表获取 RefType 权威分类
+  - ⬜ 2.4 输出 AnimID → 权威分类 JSON
+
+- ⬜ 3. **阶段3：完善 TAE 事件解析**（修复 JumpTableID 读取 + 全事件类型覆盖）
+  - ⬜ 3.1 修复 Type=0 事件 param_bytes 字节顺序（当前 int 读到 float 值）
+  - ⬜ 3.2 验证 Type=1/2/5 事件的 BehaviorJudgeID 完整性
+  - ⬜ 3.3 重新运行 SekiroTAEExtractor → 生成修正版 Sekiro_TAE_Logic.json
+
+- 🔄 4. **阶段4：TAE 曲线写入 UAnimSequence**（FrameFlags + CancelActions + AttackHitbox）
+  - ✅ 4.1 write_tae_curves.py 已完成（支持 --animid 单动画写入）
+  - ⬜ 4.2 批量写入验证（选取 20 个代表性动画，PIE 中确认曲线数据正确）
+  - ⬜ 4.3 自动化全量写入脚本（按 AnimID 范围分批，错误重试）
 
 ## 涉及文件
 
@@ -85,11 +112,15 @@
 | `Plugins/SekiroAssetManager/.../SekiroCombatData.h/cpp` | ✅ 已完成 | USKCombatData 新 DataAsset |
 | `Plugins/SekiroAssetManager/.../SABehaviorParamImporter.h/cpp` | ✅ 已完成 | ComboChain JSON 导入器 |
 | `Docs/aibridge-reference.md` | ✅ 已完成 | AIBridge 完整参考文档 |
+| `Docs/sekiro-input-to-animation-pipeline.md` | ✅ 已完成 | 输入->动画 ID 链路参考文档 |
 
 ## 变更记录
 
 | 日期 | 变更 |
 |------|------|
+| 2026-06-24 | 第十二次更新：阶段1 方案设计完成（[设计文档](../design/sekiro-anim-state-machine-extraction.md)）——放弃完整状态机提取，改用 AnimID 编码 + BehaviorParam 交叉验证 |
+| 2026-06-24 | 第十一次更新：调整优先级——数据管线四阶段提升为第一优先级，原验证/战斗/集成降为次要任务 |
+| 2026-06-24 | 第十次更新：新增第四优先级 4 阶段数据管线任务（状态机/BehaviorParam/TAE/曲线写入）；新增参考文档 Docs/sekiro-input-to-animation-pipeline.md |
 | 2026-06-24 | 第九次更新：修复 AIBridge 输入模拟脉冲释放；添加 TAE 事件数据提取（tae_extractor.py）；新增任务 4.1-4.5 AnimID 分类修正 |
 | 2026-06-15 | 创建文档 |
 | 2026-06-22 | 第一次更新：整合为单文档，TAE 数据驱动方案 |

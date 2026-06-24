@@ -108,6 +108,73 @@ FSAAnimLogicImportResult FSATAEImporter::ImportFromString(const FString& JsonCon
 
     return Result;
 }
+// ============================================================================
+// BehaviorParam 导入：从 BehaviorVariationMap.json 加载行为配置
+// ============================================================================
+
+void FSATAEImporter::ImportBehaviorParam(const FString& JsonPath, FSAAnimLogicImportResult& InOutResult)
+{
+    FString JsonContent;
+    if (!FFileHelper::LoadFileToString(JsonContent, *JsonPath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[TAEImporter] BehaviorVariationMap.json not found, skipping"));
+        return;
+    }
+    TSharedPtr<FJsonObject> RootObj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonContent);
+    if (!FJsonSerializer::Deserialize(Reader, RootObj))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[TAEImporter] BehaviorVariationMap JSON parse failed"));
+        return;
+    }
+    const TSharedPtr<FJsonObject>* AnimLookupObj = nullptr;
+    if (!RootObj->TryGetObjectField(TEXT("anim_lookup"), AnimLookupObj)) return;
+    const TSharedPtr<FJsonObject>* VariationsObj = nullptr;
+    RootObj->TryGetObjectField(TEXT("variations"), VariationsObj);
+    int32 LoadedCount = 0;
+    for (const auto& Pair : (*AnimLookupObj)->Values)
+    {
+        int32 AnimID = FCString::Atoi(*Pair.Key);
+        const TSharedPtr<FJsonObject>& LookupEntry = Pair.Value->AsObject();
+        FSAAnimBehaviorIR BehaviorIR;
+        BehaviorIR.PrimaryRefType = LookupEntry->GetStringField(TEXT("primary_ref_type"));
+        BehaviorIR.BPCategory = LookupEntry->GetIntegerField(TEXT("bp_category"));
+        BehaviorIR.BPCategoryName = LookupEntry->GetStringField(TEXT("bp_category_name"));
+        if (VariationsObj)
+        {
+            FString VarKey = FString::FromInt(LookupEntry->GetIntegerField(TEXT("variation_id")));
+            const TSharedPtr<FJsonObject>* VarObj = nullptr;
+            if ((*VariationsObj)->TryGetObjectField(VarKey, VarObj))
+            {
+                const TArray<TSharedPtr<FJsonValue>>* BehaviorsArr = nullptr;
+                if ((*VarObj)->TryGetArrayField(TEXT("behaviors"), BehaviorsArr))
+                {
+                    for (const TSharedPtr<FJsonValue>& BVal : *BehaviorsArr)
+                    {
+                        const TSharedPtr<FJsonObject>& BObj = BVal->AsObject();
+                        FSAAnimBehaviorConfig Config;
+                        Config.VariationID = (*VarObj)->GetIntegerField(TEXT("variation_id"));
+                        Config.JudgeID = BObj->GetIntegerField(TEXT("judge_id"));
+                        Config.RefID = BObj->GetIntegerField(TEXT("ref_id"));
+                        Config.SFXID = BObj->GetIntegerField(TEXT("sfx_id"));
+                        Config.Stamina = BObj->GetIntegerField(TEXT("stamina"));
+                        Config.MP = BObj->GetIntegerField(TEXT("mp"));
+                        FString RefTypeStr = BObj->GetStringField(TEXT("ref_type"));
+                        if (RefTypeStr == TEXT("Attack")) Config.RefType = ESKBehaviorRefType::Attack;
+                        else if (RefTypeStr == TEXT("Bullet")) Config.RefType = ESKBehaviorRefType::Bullet;
+                        else if (RefTypeStr == TEXT("SpEffect")) Config.RefType = ESKBehaviorRefType::SpEffect;
+                        else Config.RefType = ESKBehaviorRefType::Unknown;
+                        BehaviorIR.Behaviors.Add(Config);
+                    }
+                }
+            }
+        }
+        InOutResult.BehaviorConfigs.Add(AnimID, BehaviorIR);
+        LoadedCount++;
+    }
+    UE_LOG(LogTemp, Log, TEXT("[TAEImporter] BehaviorParam loaded: %d AnimIDs"), LoadedCount);
+}
+
 
 // ============================================================================
 // 动画条目解析

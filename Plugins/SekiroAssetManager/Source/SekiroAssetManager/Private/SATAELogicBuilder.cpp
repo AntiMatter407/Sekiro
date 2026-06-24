@@ -1,4 +1,4 @@
-#include "SATAELogicBuilder.h"
+﻿#include "SATAELogicBuilder.h"
 #include "SATAELogicIR.h"
 #include "SekiroAnimLogicData.h"
 
@@ -71,5 +71,12 @@ void FSATAELogicBuilder::BuildNameMaps(const FSAAnimLogicImportResult& IR,
             FString BaseCategory = Category.Left(UnderscoreIdx);
             AddToCategory(BaseCategory, AnimID);
         }
+
+    // Build BehaviorParamMap from IR
+    for (const TTuple<int32, FSAAnimBehaviorIR>& BehaviorPair : IR.BehaviorConfigs)
+    {
+        DataAsset->BehaviorParamMap.Add(BehaviorPair.Key, BehaviorPair.Value);
+    }
+    UE_LOG(LogTemp, Log, TEXT("[AnimDataBuilder] BehaviorParamMap: %d entries"), DataAsset->BehaviorParamMap.Num());
     }
 }

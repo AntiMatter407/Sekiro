@@ -1,7 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "SATAELogicIR.h"
 #include "SekiroAnimLogicData.generated.h"
 
 // ════ 帧级标志位枚举（对应 TAE JumpTable ID）══════════════
@@ -77,6 +78,10 @@ public:
     // CategoryAnimMap: 类别名称 → AnimID 列表（用于 ResolveAnimID fallback）
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")
     TMap<FString, FSKAnimIDList> CategoryAnimMap;
+
+    // BehaviorParam: AnimID → behavior config (AtkParam/Bullet/SpEffect refs)
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Behavior")
+    TMap<int32, FSAAnimBehaviorIR> BehaviorParamMap;
 
     // 运行时动画资产路径配置
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Meta")

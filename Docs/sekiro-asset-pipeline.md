@@ -1,11 +1,12 @@
-# 只狼资源导入管线
+﻿# 只狼资源导入管线
 
 ## 概述
 
-将 FromSoftware《Sekiro: Shadows Die Twice》的角色资源（模型、骨骼、材质、动画）从游戏私有二进制格式转换为结构化 JSON 中间格式。分为两个阶段：
+将 FromSoftware《Sekiro: Shadows Die Twice》的角色资源（模型、骨骼、材质、动画、行为参数、TAE 事件）从游戏私有二进制格式转换为结构化 JSON 中间格式。分为三个阶段：
 
-- **Phase 1** — 资源提取：从游戏目录解包 .dcx 压缩包，得到 .flver / .hkx / .tpf / .mtd
+- **Phase 1** — 资源提取：从游戏目录解包 .dcx 压缩包，得到 .flver / .hkx / .tpf / .mtd / .tae / .param
 - **Phase 2** — JSON 生成：C# 工具将二进制格式转为结构化 JSON
+- **Phase 3** — UE5 导入：JSON 通过 Commandlet 导入为 .uasset
 
 ---
 
@@ -15,7 +16,7 @@
 
 | 工具 | 路径 | 用途 |
 |------|------|------|
-| Yabber 1.3.1 | `Tools/Yabber 1.3.1/Yabber.exe` | 万能解包器：BND4/DCX/TPF |
+| Yabber 1.3.1 | `Tools/Yabber 1.3.1/Yabber.exe` | 万能解包器：BND4/DCX/TPF/PARAMBND |
 | unpack_sekiro.py | `Script/unpack_sekiro.py` | 批量提取脚本 |
 | extract_mtd.py | `Script/extract_mtd.py` | 提取 MTD 材质定义 |
 
@@ -25,11 +26,14 @@
 |--------|------|------|
 | `.chrbnd.dcx` | DCX→BND4 包 | `c0000.flver`(骨骼) + `skeleton.hkx` |
 | `.partsbnd.dcx` | DCX→BND4 包 | `*.flver`(模型) + `*.tpf`(纹理) |
-| `.anibnd.dcx` | DCX→BND4 包 | 多个 `*.hkx` 动画文件 |
+| `.anibnd.dcx` | DCX→BND4 包 | 多个 `*.hkx` 动画文件 + `*.tae` 事件文件 |
+| `.parambnd.dcx` | DCX→BND4 包 | `*.param` 参数表（BehaviorParam / AtkParam 等） |
 | `.mtdbnd.dcx` | DCX→BND4 包 | `*.mtd` 材质定义 |
 | `.flver` | FLVER2 | 骨骼节点、网格、材质引用、纹理槽 |
 | `.hkx` | Havok TAG0 | 骨骼层次+参考姿势，或动画曲线 |
 | `.tpf` | Texture Pack | 多个 `.dds` 纹理 |
+| `.tae` | TAE 二进制 | 动画事件（攻击判定框、取消窗口、特效） |
+| `.param` | PARAM (Souls) | 游戏参数表（行为配置、攻击参数等） |
 | `.mtd` | Material Definition | Shader路径、混合模式、纹理类型槽 |
 
 ### 提取流程
@@ -40,15 +44,17 @@ Sekiro Game Directory
   │                              ├── c0000.flver          (骨骼 FLVER)
   │                              └── skeleton.hkx         (HKX 骨骼)
   ├── chr/c0000_*.anibnd.dcx  → Yabber → Extracted/c0000_*-anibnd-dcx/
-  │                              └── a00_*.hkx            (动画文件)
+  │                              ├── a00_*.hkx            (动画文件)
+  │                              └── tae/*.tae            (TAE 事件)
   ├── parts/hd_m_9520.partsbnd.dcx → Yabber →
   │                              ├── hd_m_9520.flver      (脸部模型)
   │                              └── hd_m_9520-tpf/       (脸部纹理 .dds)
-  ├── parts/bd_m_9000.partsbnd.dcx → Yabber →
-  │                              ├── bd_m_9000.flver      (身体模型)
-  │                              └── bd_m_9000-tpf/       (身体纹理 .dds)
-  ├── parts/am_m_9000.partsbnd.dcx → Yabber → ...
-  ├── parts/lg_m_9000.partsbnd.dcx → Yabber → ...
+  ├── parts/bd_m_9000.partsbnd.dcx → Yabber → ...
+  ├── Data/gameparam.parambnd.dcx  → Yabber → Extracted/gameparam/
+  │                              └── param/GameParam/
+  │                                  ├── BehaviorParam_PC.param
+  │                                  ├── AtkParam_PC.param
+  │                                  └── ... (其他 param 表)
   └── Data/Data*.mtdbnd.dcx   → Yabber → Extracted/mtd/
                                  └── *.mtd                (材质定义)
 ```
@@ -59,16 +65,23 @@ Sekiro Game Directory
 
 ### 工具链
 
-| 项目 | 路径 | 输出 |
-|------|------|------|
-| FlverToFbx | `Tools/FlverToFbx/FlverToFbx/` | 模型 JSON |
-| SekiroAnimExtractor | `Tools/SekiroAnimExtractor/` | 动画 JSON |
-| SoulsAssetPipeline | `Tools/SoulsAssetPipeline/` | 共享库（FLVER/HKX/MTD 解析） |
+所有 C# 工具位于 `Script/sekiro_asset_manager/ext_tools/`：
+
+| 项目 | 路径 | 输出 | 格式 |
+|------|------|------|------|
+| FlverToJson | `ext_tools/FlverToJson/` | 模型 JSON | FLVER2 → JSON |
+| SekiroAnimExtractor | `ext_tools/SekiroAnimExtractor/` | 动画 JSON | HKX → JSON |
+| SekiroTAEExtractor | `ext_tools/SekiroTAEExtractor/` | TAE 事件 JSON | .tae → JSON |
+| ParamReader | `ext_tools/ParamReader/` | BehaviorParam JSON | .param → JSON |
+| SoulsAssetPipeline | `ext_tools/SoulsAssetPipeline/` | 共享库 DLL | SoulsFormats.dll |
+
+> 运行方式：`dotnet run --project <项目路径> -c Release -- <参数>`
+> 共享 `ext_tools/SoulsFormats.dll`（从 DSAnimStudio 编译输出复制）
 
 ### Step A：生成模型 JSON
 
 ```bash
-FlverToFbx.exe \
+FlverToJson.exe \
   c0000.flver \           # 骨骼 FLVER
   hd_m_9520.flver \      # 脸部
   bd_m_9000.flver \      # 身体
@@ -171,7 +184,105 @@ SekiroAnimExtractor.exe skeleton.hkx anim_dir/ Sekiro_animations.json --sample-r
 }
 ```
 
-### Step C：生成材质配置 JSON（Blender Python）
+### Step C：生成 TAE 事件 JSON
+
+```bash
+dotnet run --project Script/sekiro_asset_manager/ext_tools/SekiroTAEExtractor -c Release -- \
+  Extracted/c0000-anibnd-dcx/chr/c0000/tae/ \
+  Output/Sekiro_TAE_Logic.json
+```
+
+**内部流程：**
+
+1. 解析 `TAE.Template.SDT.xml` 获取事件类型定义
+2. 遍历 tae 目录下所有 `.tae` 文件
+3. 按模板解析每个事件的二进制布局（JumpTableID / Type / 参数）
+4. 提取关键事件类型：
+   - Type=1：攻击判定框（BehaviorJudgeID + 判定框尺寸）
+   - Type=2：子弹/投射物
+   - Type=5：特殊攻击
+   - JT=25/26/115/117/118/154：取消窗口
+   - JT=7/51/89：帧标志（NoTurn/Invincible/NoMove）
+5. 输出 JSON
+
+**输出：`Sekiro_TAE_Logic.json`** (~28 MB，21148 个 JT 事件)
+
+```json
+{
+  "anims": {
+    "300000": {
+      "anim_id": 300000,
+      "events": [
+        {
+          "type": 1,
+          "judge_id": 0,
+          "start_frame": 5,
+          "end_frame": 12,
+          "hitbox": { ... }
+        },
+        {
+          "jt_id": 25,
+          "jt_name": "DodgeCancelStart",
+          "start_frame": 0,
+          "end_frame": 10
+        }
+      ]
+    }
+  }
+}
+```
+
+### Step D：生成 BehaviorParam JSON
+
+```bash
+dotnet run --project Script/sekiro_asset_manager/ext_tools/ParamReader -c Release -- \
+  Extracted/gameparam/gameparam-parambnd-dcx/param/GameParam/BehaviorParam_PC.param \
+  Output/
+```
+
+**内部流程：**
+
+1. SoulsFormats `PARAM.Read()` 解析 .param 标头和行索引
+2. 反射访问 `Row.DataOffset`（internal 字段）获取每行数据偏移
+3. 按 BehaviorParam 布局（30 字节/行）解析：
+   - variation_id (= AnimID / 100)
+   - behaviorJudgeID（链接 TAE 事件）
+   - RefType（0=AtkParam, 1=Bullet, 2=SpEffect）
+   - RefID（引用目标 ID）
+   - stamina / mp / category / hero_point
+4. 输出 JSON
+
+**输出：`BehaviorParam_PC.json`** (170 KB，611 条)
+
+```json
+[
+  {
+    "variation_id": 5000,
+    "row_id": 105000000,
+    "judge_id": 0,
+    "ez_state_behavior_type": 0,
+    "ref_type": 0,
+    "ref_type_name": "Attack",
+    "ref_id": 5000000,
+    "sfx_id": 0,
+    "stamina": 0,
+    "mp": 0,
+    "category": 1,
+    "hero_point": 0
+  }
+]
+```
+
+**编码公式（已验证）：**
+
+```
+Row.ID  = 100000000 + variation_id × 1000 + behaviorJudgeID
+AnimID  = variation_id × 100 + sub_id  (sub_id ∈ [0,99])
+```
+
+详见 `Docs/design/sekiro-anim-state-machine-extraction.md`
+
+### Step E：生成材质配置 JSON（Python）
 
 由 `common_blender.py` 在导出 FBX 时自动生成：
 
@@ -196,6 +307,27 @@ SekiroAnimExtractor.exe skeleton.hkx anim_dir/ Sekiro_animations.json --sample-r
 
 ---
 
+## 数据关系图
+
+```
+BehaviorParam_PC.json ─────┐
+  variation_id             │
+  behaviorJudgeID ─────────┼──→ Sekiro_TAE_Logic.json
+  RefType → AtkParam_ID    │      anim_id
+  Category                 │      judge_id (Type=1/2/5)
+                           │      JT events (取消窗口)
+AtkParam_PC.param ────────┘
+  (待提取)
+
+Output/
+├── BehaviorParam_PC.json      ← ParamReader
+├── Sekiro_TAE_Logic.json      ← SekiroTAEExtractor
+├── Sekiro_model_hkx.json      ← FlverToJson
+└── Sekiro_animations_*.json   ← SekiroAnimExtractor
+```
+
+---
+
 ## 关键数据约定
 
 | 约定 | 说明 |
@@ -212,7 +344,8 @@ SekiroAnimExtractor.exe skeleton.hkx anim_dir/ Sekiro_animations.json --sample-r
 
 ```
 Phase 1 (提取) ────── 独立，只需游戏目录 + Yabber
-Phase 2 (JSON)  ────── 依赖 Phase 1 的输出 (.flver/.hkx/.mtd)
+Phase 2 (JSON)  ────── 依赖 Phase 1 输出 (.flver/.hkx/.mtd/.tae/.param)
+Phase 3 (UE5)  ────── 依赖 Phase 2 输出的 JSON 文件
 ```
 
 JSON 是中间格式，下游可为 Blender FBX 导出、UE C++ 插件导入或自定义管线，独立于 Phase 1/2 工具链。
@@ -224,25 +357,36 @@ JSON 是中间格式，下游可为 Blender FBX 导出、UE C++ 插件导入或�
 ### Python / C# 工具链
 
 ```
-Script/                           Python 脚本（Blender/UE5/诊断）
-  common_blender.py               Blender 共享库 (骨骼/材质/网格/动画/FBX)
-  export_common_anims.py          完整导出脚本 (模型+动画+材质配置)
-  import_model.py                 仅模型 FBX 导出
-  import_anims.py                 仅动画 FBX 导出
-  unpack_sekiro.py                资源提取
-  extract_mtd.py                  MTD 材质提取
-  ue5_import_character.py         UE5 Python 导入 (FBX→UAssets)
-  ue5_setup_materials.py          UE5 Python 材质配置
-  check_*.py / diag_*.py         诊断/审计脚本
+Script/sekiro_asset_manager/    资产导入管线
+  cli.py                         命令行入口
+  pipeline_config.py             路径配置（自动探测 + settings.local.json）
+  model_importer.py              模型导入编排
+  animation_importer.py          动画导入编排
+  material_importer.py           材质导入编排
+  flver_parser.py                FLVER 解析
+  mtd_parser.py                  MTD 材质定义解析
+  skeleton_merge.py              骨骼合并
+  ext_tools/
+    SoulsFormats.dll             共享解析库（FLVER/HKX/PARAM/MTD）
+    Yabber/                      万能解包器 (.dcx/.bnd/.tpf)
+    FlverToJson/                 FLVER → JSON (外部)
+    SekiroAnimExtractor/         HKX 动画 → JSON (外部)
+    SekiroTAEExtractor/          .tae → JSON (C# 自建)
+    ParamReader/                 .param → JSON (C# 自建)
+    SoulsAssetPipeline/          SoulsFormats 源码
+    texconv/                     DDS → PNG 转换
 
-Tools/FlverToFbx/FlverToFbx/      C# 工具（模型/动画 JSON 生成器）
-  Program.cs                      C# 模型 JSON 生成器
-
-Tools/SoulsAssetPipeline/
-  SoulsFormats/Formats/FLVER/    FLVER2 解析器
-  SoulsFormats/Formats/MTD.cs    MTD 材质定义解析
-  SoulsAssetPipeline/Animation/  HKX 骨骼/动画解析器
-  Havoc/                         Havok TAG0 二进制读写
-
-Tools/Yabber 1.3.1/             万能解包器 (DCX/BND4/TPF)
+Tools/                           外部工具备份
+  FlverToFbx/FlverToFbx/        C# 模型 JSON 生成器 (旧，已迁移到 ext_tools)
+  Soul…2654 chars truncated…Yabber 1.3.1/             万能解包器 (DCX/BND4/TPF)
 ```
+
+### 详细文档
+
+| 文档 | 说明 |
+|------|------|
+| `Docs/sekiro-asset-import.md` | 快速参考 |
+| `Docs/sekiro-asset-pipeline.md` | 本文档 |
+| `Docs/pipeline-materials-unified.md` | 材质/纹理管线 |
+| `Docs/sekiro-animation-system.md` | 动画系统 |
+| `Docs/design/sekiro-anim-state-machine-extraction.md` | BehaviorParam ↔ AnimID 映射 |

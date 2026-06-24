@@ -13,6 +13,9 @@ public:
     /// 从 JSON 字符串导入
     static FSAAnimLogicImportResult ImportFromString(const FString& JsonContent);
 
+    /// Load BehaviorParam config from BehaviorVariationMap.json
+    static void ImportBehaviorParam(const FString& JsonPath, FSAAnimLogicImportResult& InOutResult);
+
     /// 分析动画类别归属
     static FString InferCategoryFromAnimID(int32 AnimID);
 
