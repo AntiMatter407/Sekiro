@@ -14,6 +14,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "SekiroAIBridgeLog.h"
+#include "TimerManager.h"
 
 // ============================================================================
 // 动作 → UInputAction 资产路径映射
@@ -170,7 +171,7 @@ FString USKInputSimulateTool::Execute(const FString& ArgsJson, FString& OutError
 
 	// ── 立即执行 ──
 
-	FString Result = SimulateAction(Action, ValueX, ValueY, OutError);
+	FString Result = SimulateAction(PlayWorld, Action, ValueX, ValueY, OutError);
 	if (!OutError.IsEmpty())
 	{
 		return FString();
@@ -190,7 +191,7 @@ FString USKInputSimulateTool::Execute(const FString& ArgsJson, FString& OutError
 // 模拟输入 — 核心逻辑
 // ============================================================================
 
-FString USKInputSimulateTool::SimulateAction(const FString& Action, float ValueX, float ValueY, FString& OutError)
+FString USKInputSimulateTool::SimulateAction(UWorld* World, const FString& Action, float ValueX, float ValueY, FString& OutError)
 {
 	// ── 处理 release 类动作 ──
 
@@ -236,9 +237,6 @@ FString USKInputSimulateTool::SimulateAction(const FString& Action, float ValueX
 		return FString();
 	}
 
-	// 构建输入值
-	FInputActionValue InputValue;
-
 	// 判断是轴还是按钮：通过 ActionInputActionMappings 表查询
 	bool bIsAxis = false;
 	for (int32 i = 0; i < NumActionMappings; ++i)
@@ -249,6 +247,9 @@ FString USKInputSimulateTool::SimulateAction(const FString& Action, float ValueX
 			break;
 		}
 	}
+
+	// 构建输入值并注入
+	FInputActionValue InputValue;
 
 	if (bIsAxis)
 	{
@@ -262,6 +263,13 @@ FString USKInputSimulateTool::SimulateAction(const FString& Action, float ValueX
 	InjectInput(InputAction, InputValue);
 
 	UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: %s (x=%.2f, y=%.2f, isAxis=%d)"), *Action, ValueX, ValueY, bIsAxis ? 1 : 0);
+
+	// ── 按钮类动作：安排 1 帧后自动释放（形成完整的 pulse），确保 Started/Completed 事件触发 ──
+
+	if (!bIsAxis && World)
+	{
+		SchedulePulseRelease(World, InputAction);
+	}
 
 	return BuildSuccessJson(FString::Printf(TEXT("已模拟输入: %s"), *Action));
 }
@@ -392,10 +400,10 @@ void USKInputSimulateTool::ExecuteWithDelay(UWorld* World, const FString& Action
 	}
 
 	FTimerHandle Handle;
-	FTimerDelegate Delegate = FTimerDelegate::CreateLambda([Action, ValueX, ValueY]()
+	FTimerDelegate Delegate = FTimerDelegate::CreateLambda([World, Action, ValueX, ValueY]()
 	{
 		FString Error;
-		SimulateAction(Action, ValueX, ValueY, Error);
+		SimulateAction(World, Action, ValueX, ValueY, Error);
 		if (!Error.IsEmpty())
 		{
 			UE_LOG(LogSekiroAIBridge, Warning, TEXT("input.simulate 延迟执行失败: %s"), *Error);
@@ -452,6 +460,39 @@ void USKInputSimulateTool::ScheduleRelease(UWorld* World, const FString& Action,
 	});
 
 	World->GetTimerManager().SetTimer(Handle, Delegate, HoldTime, false);
+}
+
+// ============================================================================
+// 脉冲释放（按钮类动作自动释放，1 帧后发 false）
+// ============================================================================
+
+void USKInputSimulateTool::SchedulePulseRelease(UWorld* World, const UInputAction* InputAction)
+{
+	if (!World || !InputAction)
+	{
+		return;
+	}
+
+	// 延迟 1 帧后注入 false（约 0.05s 或一个 delta 时间）
+	const float PulseDelay = FMath::Max(World->GetDeltaSeconds(), 0.03f);
+
+	FTimerHandle Handle;
+	FTimerDelegate Delegate = FTimerDelegate::CreateLambda([InputAction]()
+	{
+		UInputAction* MutableAction = const_cast<UInputAction*>(InputAction);
+		if (!MutableAction)
+		{
+			return;
+		}
+
+		// 注入 false 模拟释放，形成完整的 pulse (true → false)
+		InjectInput(MutableAction, FInputActionValue(false));
+
+		UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: pulse release %s (1-frame delay)"),
+			*MutableAction->GetName());
+	});
+
+	World->GetTimerManager().SetTimer(Handle, Delegate, PulseDelay, false);
 }
 
 // ============================================================================

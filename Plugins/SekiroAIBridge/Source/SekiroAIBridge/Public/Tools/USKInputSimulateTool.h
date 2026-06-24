@@ -37,7 +37,7 @@ public:
 
 private:
 	/** 通过 InjectInputForAction 模拟一个输入动作（立即执行） */
-	static FString SimulateAction(const FString& Action, float ValueX, float ValueY, FString& OutError);
+	static FString SimulateAction(UWorld* World, const FString& Action, float ValueX, float ValueY, FString& OutError);
 
 	/** 查找 PIE 中的 Enhanced Input 子系统 */
 	static UEnhancedInputLocalPlayerSubsystem* FindEnhancedInputSubsystem(FString& OutError);
@@ -53,6 +53,9 @@ private:
 
 	/** 长按后自动释放 */
 	static void ScheduleRelease(UWorld* World, const FString& Action, float HoldTime);
+
+	/** 按钮类动作：延迟 1 帧后自动注入 false（脉冲释放），确保 Started/Completed 事件触发 */
+	static void SchedulePulseRelease(UWorld* World, const UInputAction* InputAction);
 
 	/** 构建成功 JSON 响应 */
 	static FString BuildSuccessJson(const FString& Message);

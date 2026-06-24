@@ -57,12 +57,19 @@ void USKAnimationController::TickComponent(float DeltaTime, ELevelTick TickType,
     UpdateFrameState();
 
     static int32 TickCounter = 0;
-    if (++TickCounter % 60 == 0)
+    if (++TickCounter % 10 == 0)
     {
         UE_LOG(LogTemp, Log, TEXT("AnimTick[%s]: State=%d Action=%s AnimID=%d Priority=%d"),
             *GetNameSafe(OwnerCharacter.Get()),
             (int32)CurrentState, *CurrentAction.ToString(),
             CurrentAnimID, CurrentPriority);
+        if (CurrentAnimID > 0)
+        {
+            TObjectPtr<UAnimSequence>* FoundSeq = MontageCache.Find(CurrentAnimID);
+            UE_LOG(LogTemp, Log, TEXT("  CacheHit=%s AnimLogicData=%s"),
+                FoundSeq && *FoundSeq ? TEXT("yes") : TEXT("no"),
+                AnimLogicData ? TEXT("ok") : TEXT("null"));
+        }
     }
 
     UpdateAttackHitbox();
@@ -911,7 +918,19 @@ int32 USKAnimationController::ResolveAnimID(FName Action)
     }
 
     const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(Action.ToString());
-    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
+    if (!List || List->IDs.Num() == 0) return -1;
+
+    // Attack 类别：跳过 200000-200999 过渡段，从 201000 开始取
+    if (Action == TEXT("Attack"))
+    {
+        for (int32 Id : List->IDs)
+        {
+            if (Id >= 201000)
+                return Id;
+        }
+    }
+
+    return List->IDs[0];
 }
 
 int32 USKAnimationController::ResolveAnimID(FName Action, int32 FromAnimID)

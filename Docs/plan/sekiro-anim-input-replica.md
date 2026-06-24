@@ -59,6 +59,13 @@
   - ⬜ 3.1 用 Yapped 提取 param 列名（animId, nextBehaviorId 等）
   - ⬜ 3.2 Python 自动生成完整 ComboChain（替代当前的手写 14 条）
 
+- 🔄 4. **TAE 事件数据提取与 AnimID 分类修正**
+  - ✅ 4.1 Python TAE 解析器 → Script/sekiro_asset_manager/tae_extractor.py，支持从 .tae 二进制提取事件数据并导出为 JSON
+  - ✅ 4.2 Sekiro_TAE_Logic.json 已重新生成（64/65 文件成功），包含所有动画的 TAE 事件
+  - 🔴 4.3 JumpTableID 参数读取修正：type=0 事件的 param_bytes 字节顺序需要根据 TAE 模板确认（当前 int 解析得到的是 float 值，JumpTableID 可能在其他偏移位置）
+  - ⬜ 4.4 基于 TAE 事件特征推断动画分类（替代纯数字范围 InferCategoryFromAnimID）
+  - ⬜ 4.5 重新生成 DA_Sekiro_AnimLogic DataAsset
+
 #### 第三优先级：集成与工具
 
 - ⬜ 4. **AIBridge 输入模拟测试脚本**
@@ -83,6 +90,7 @@
 
 | 日期 | 变更 |
 |------|------|
+| 2026-06-24 | 第九次更新：修复 AIBridge 输入模拟脉冲释放；添加 TAE 事件数据提取（tae_extractor.py）；新增任务 4.1-4.5 AnimID 分类修正 |
 | 2026-06-15 | 创建文档 |
 | 2026-06-22 | 第一次更新：整合为单文档，TAE 数据驱动方案 |
 | 2026-06-22 | 第二次更新：管线修复 + 全部 5 项运行时修正完成，进入验证阶段 |
@@ -92,3 +100,4 @@
 | 2026-06-23 | 第六次更新：PIE 7 项操作全部执行成功；发现 Guard 播完后 CurrentPriority=5 残留导致后续动作被阻塞的Bug；新增 OnActionMontageEnded 回调复位 CurrentPriority；编译通过待 PIE 验证 |
 | 2026-06-23 | 第七次更新：ComboChain 删除→DeriveNextAnim 推导；SABehaviorParamImporter/SekiroCombatData 删除；SAImport Mode4 删除。Jump 系统完善 |
 | 2026-06-23 | 第八次更新：状态机重构。新增 ESKCharacterState 枚举(8状态)，ProcessIntents 改为 switch-case 状态迁移，OnActionMontageEnded 统一处理动画结束迁移，落地检测自动回 Idle，CanTransition+TransitionTo 统一迁移规则 |
+| 2026-06-24 | 第九次更新：修复 AIBridge 输入模拟脉冲释放（SchedulePulseRelease）；新增 TAE 事件数据提取脚本 tae_extractor.py；Sekiro_TAE_Logic.json 已重新生成（64/65 成功）；新增任务 4.1-4.5 TAE 事件驱动 AnimID 分类 |
