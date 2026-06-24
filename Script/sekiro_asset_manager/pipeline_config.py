@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sekiro 资产管线配置管理模块。
 
 负责从 settings.local.json、环境变量和默认值三个来源合并读取路径配置。
@@ -27,10 +27,11 @@ DEFAULT_PATHS = {
 # ---- 工具路径（相对于 Tools/ 的子目录结构） ----
 
 DEFAULT_TOOLS = {
-    "yabber": ("Yabber.exe",),
-    "texconv": ("texconv.exe",),
-    "flver_to_fbx": ("FlverToJson.exe",),
-    "sekiro_anim_extractor": ("SekiroAnimExtractor.exe",),
+    "yabber": ("Yabber", "Yabber.exe"),
+    "texconv": ("texconv", "texconv.exe"),
+    "flver_to_fbx": ("FlverToJson", "FlverToJson.exe"),
+    "sekiro_anim_extractor": ("SekiroAnimExtractor", "SekiroAnimExtractor.exe"),
+    "sekiro_tae_extractor": ("SekiroTAEExtractor", "SekiroTAEExtractor.exe"),
 }
 
 # ---- 默认游戏路径（Steam 常见安装位置） ----
@@ -172,6 +173,16 @@ class PipelineConfig:
             return ""
         parts = DEFAULT_TOOLS[tool_name]
         return os.path.join(self.tools_dir, *parts)
+
+    def tae_extractor_path(self) -> str:
+        """返回 SekiroTAEExtractor 可执行文件路径。
+
+        该工具位于 Script/sekiro_asset_manager/ext_tools/ 下。
+        """
+        return os.path.join(
+            self._project_dir, "Script", "sekiro_asset_manager", "ext_tools",
+            "SekiroTAEExtractor", "SekiroTAEExtractor.exe",
+        )
 
     # ---- 辅助路径 ----
 
