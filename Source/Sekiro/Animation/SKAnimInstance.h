@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
 #include "Movement/SKMovementComponent.h"
+#include "Animation/SKAnimationController.h"
 #include "SekiroAnimLogicData.h"
 #include "SKAnimInstance.generated.h"
 
@@ -26,6 +27,9 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
 	ESKMovementTier MovementTier = ESKMovementTier::Run;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
+	ESKLocomotionDirection Direction = ESKLocomotionDirection::Fwd;   // 8方向，由 Controller ProcessLocomotion 更新
 
 	UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
 	uint32 bIsInAir : 1;

@@ -259,8 +259,7 @@ void USKAnimationController::ProcessIntents()
             if (CanTransition(TEXT("Dodge"), Prio)) { HandleDodge(); return; }
         }
 
-        // 持续防御
-        HandleGuard();
+        // Guard 动画由 OnActionMontageEnded 回调管理，不重复调用 TryPlayAction
         return;
     }
 
@@ -688,172 +687,51 @@ void USKAnimationController::OnResurrection()
     CurrentState = ESKCharacterState::Idle;
 }
 
-// ── 移动 — 含 Locomotion 动画播放 ──────────────────────────
+// ── Locomotion — 只更新 AnimInstance 参数，不播放 Montage ──
 
 void USKAnimationController::ProcessLocomotion()
 {
-    if (!AnimLogicData || !Mesh.IsValid()) return;
+    if (!Mesh.IsValid()) return;
     USKAnimInstance* AnimInst = GetAnimInstance();
     if (!AnimInst) return;
 
-    // 非 Idle 状态时只缓存 Locomotion 状态但不播放
+    // 非 Idle 状态时 Locomotion 被战斗/动作动画覆盖，不更新 Locomotion 参数
     if (CurrentState != ESKCharacterState::Idle)
-    {
-        CurrentLocoState = EvaluateLocomotionState(AnimInst->Speed, AnimInst->Angle);
         return;
-    }
 
-    float Speed = AnimInst->Speed;
-    float Angle = AnimInst->Angle;
+    // Speed 已在 USKAnimInstance::NativeUpdateAnimation 中计算
+    // 此处更新 MovementTier（基于速度）和 Direction（8方向）
+    ESKMovementTier Tier = ESKMovementTier::Idle;
+    float Spd = AnimInst->Speed;
+    if (Spd >= 550.f)
+        Tier = ESKMovementTier::Sprint;
+    else if (Spd >= 430.f)
+        Tier = ESKMovementTier::Run;
+    else if (Spd >= 200.f)
+        Tier = ESKMovementTier::Jog;
+    else if (Spd >= 10.f)
+        Tier = ESKMovementTier::Walk;
 
-    TurnCooldown = FMath::Max(0.f, TurnCooldown - GetWorld()->GetDeltaSeconds());
+    AnimInst->MovementTier = Tier;
 
-    // 原地转身
-    if (Speed < 50.f && TurnCooldown <= 0.f)
-    {
-        float AngleDelta = FMath::FindDeltaAngleDegrees(LastAngle, Angle);
-        if (FMath::Abs(AngleDelta) > 90.f)
-        {
-            int32 TurnID = GetTurnAnimID(AngleDelta);
-            if (TurnID > 0)
-            {
-                PlayLocomotionMontage(TurnID, false);
-                TurnCooldown = 0.5f;
-                LastAngle = Angle;
-                return;
-            }
-        }
-    }
-
-    LastAngle = Angle;
-
-    FSKLocomotionState NewState = EvaluateLocomotionState(Speed, Angle);
-
-    if (CurrentLocoState.AnimID == 0)
-    {
-        int32 LocoID = ResolveLocomotionAnimID(NewState);
-        if (LocoID > 0) PlayLocomotionMontage(LocoID, NewState.Tier != ESKMovementTier::Idle);
-    }
-    else if (NewState.Tier == ESKMovementTier::Idle && CurrentLocoState.Tier != ESKMovementTier::Idle)
-    {
-        int32 StopID = GetStopAnimID(CurrentLocoState);
-        if (StopID > 0) PlayLocomotionMontage(StopID, false);
-    }
-    else if (NewState.Tier != CurrentLocoState.Tier || NewState.Direction != CurrentLocoState.Direction)
-    {
-        if (CurrentLocoState.Tier != ESKMovementTier::Idle && NewState.Tier != ESKMovementTier::Idle)
-        {
-            int32 TransID = GetTransitionAnimID(CurrentLocoState, NewState);
-            if (TransID > 0) { PlayLocomotionMontage(TransID, false); CurrentLocoState = NewState; return; }
-        }
-        int32 LocoID = ResolveLocomotionAnimID(NewState);
-        if (LocoID > 0) PlayLocomotionMontage(LocoID, NewState.Tier != ESKMovementTier::Idle);
-    }
-    CurrentLocoState = NewState;
-}
-
-FSKLocomotionState USKAnimationController::EvaluateLocomotionState(float Speed, float Angle) const
-{
-    FSKLocomotionState State;
-    if (Speed < 10.f)           { State.Tier = ESKMovementTier::Idle; State.bIsMoving = false; }
-    else if (Speed < 200.f)     { State.Tier = ESKMovementTier::Walk; State.bIsMoving = true; }
-    else if (Speed < 430.f)     { State.Tier = ESKMovementTier::Jog; State.bIsMoving = true; }
-    else if (Speed < 550.f)     { State.Tier = ESKMovementTier::Run; State.bIsMoving = true; }
-    else                         { State.Tier = ESKMovementTier::Sprint; State.bIsMoving = true; }
-
-    if (Angle > -22.5f && Angle <= 22.5f)           State.Direction = ESKLocomotionDirection::Fwd;
-    else if (Angle > 22.5f && Angle <= 67.5f)       State.Direction = ESKLocomotionDirection::Fwd_R;
-    else if (Angle > 67.5f && Angle <= 112.5f)      State.Direction = ESKLocomotionDirection::R;
-    else if (Angle > 112.5f && Angle <= 157.5f)     State.Direction = ESKLocomotionDirection::Bwd_R;
-    else if (Angle > 157.5f || Angle <= -157.5f)    State.Direction = ESKLocomotionDirection::Bwd;
-    else if (Angle > -157.5f && Angle <= -112.5f)   State.Direction = ESKLocomotionDirection::Bwd_L;
-    else if (Angle > -112.5f && Angle <= -67.5f)    State.Direction = ESKLocomotionDirection::L;
-    else                                             State.Direction = ESKLocomotionDirection::Fwd_L;
-    return State;
-}
-
-int32 USKAnimationController::ResolveLocomotionAnimID(const FSKLocomotionState& State) const
-{
-    if (!AnimLogicData) return -1;
-    FString Category;
-    switch (State.Tier)
-    {
-    case ESKMovementTier::Idle:   Category = TEXT("Locomotion_Idle"); break;
-    case ESKMovementTier::Walk:   Category = TEXT("Locomotion_Walk"); break;
-    case ESKMovementTier::Run:    Category = TEXT("Locomotion_Run"); break;
-    case ESKMovementTier::Jog:    Category = TEXT("Locomotion_Jog"); break;
-    case ESKMovementTier::Sprint: Category = TEXT("Locomotion_Sprint"); break;
-    default: return -1;
-    }
-    FString DirStr;
-    switch (State.Direction)
-    {
-    case ESKLocomotionDirection::Fwd: DirStr = TEXT("_Fwd"); break;
-    case ESKLocomotionDirection::Bwd: DirStr = TEXT("_Bwd"); break;
-    case ESKLocomotionDirection::L:   DirStr = TEXT("_L"); break;
-    case ESKLocomotionDirection::R:   DirStr = TEXT("_R"); break;
-    default: DirStr = TEXT("_Fwd"); break;
-    }
-    const FSKAnimIDList* List = AnimLogicData->CategoryAnimMap.Find(Category + DirStr);
-    if (List && List->IDs.Num() > 0) return List->IDs[0];
-    List = AnimLogicData->CategoryAnimMap.Find(Category);
-    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
-}
-
-int32 USKAnimationController::GetTransitionAnimID(const FSKLocomotionState& From, const FSKLocomotionState& To) const
-{
-    FString Category = FString::Printf(TEXT("Locomotion_Transition_%d_to_%d"), (int32)From.Tier, (int32)To.Tier);
-    const FSKAnimIDList* List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(Category) : nullptr;
-    if (List && List->IDs.Num() > 0) return List->IDs[0];
-    List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion")) : nullptr;
-    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
-}
-
-int32 USKAnimationController::GetStopAnimID(const FSKLocomotionState& State) const
-{
-    FString Category = FString::Printf(TEXT("Locomotion_Stop_%d"), (int32)State.Tier);
-    const FSKAnimIDList* List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(Category) : nullptr;
-    if (List && List->IDs.Num() > 0) return List->IDs[0];
-    List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion")) : nullptr;
-    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
-}
-
-int32 USKAnimationController::GetTurnAnimID(float AngleDelta) const
-{
-    if (FMath::Abs(AngleDelta) < 15.f) return -1;
-    FString Category = (AngleDelta > 0) ? TEXT("Locomotion_Turn_R") : TEXT("Locomotion_Turn_L");
-    const FSKAnimIDList* List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(Category) : nullptr;
-    if (List && List->IDs.Num() > 0) return List->IDs[0];
-    List = AnimLogicData ? AnimLogicData->CategoryAnimMap.Find(TEXT("Locomotion")) : nullptr;
-    return (List && List->IDs.Num() > 0) ? List->IDs[0] : -1;
-}
-
-void USKAnimationController::PlayLocomotionMontage(int32 AnimID, bool bLooping)
-{
-    if (AnimID <= 0 || !Mesh.IsValid()) return;
-    EnsureMontageLoaded(AnimID);
-
-    TObjectPtr<UAnimSequence>* Found = MontageCache.Find(AnimID);
-    if (!Found || !*Found) return;
-
-    UAnimInstance* AnimInst = Mesh->GetAnimInstance();
-    if (!AnimInst) return;
-
-    UAnimSequence* Seq = *Found;
-    UAnimMontage* DynMontage = AnimInst->PlaySlotAnimationAsDynamicMontage(Seq, TEXT("DefaultSlot"), 0.1f, 0.1f, 1.0f, 1, 0.15f, 0.0f);
-    if (DynMontage)
-    {
-        FOnMontageEnded EndDelegate;
-        EndDelegate.BindUObject(this, &USKAnimationController::OnLocoTransitionEnded);
-        AnimInst->Montage_SetEndDelegate(EndDelegate);
-    }
-    CurrentAnimID = AnimID;
-    CurrentPriority = ESKActionPriority::Locomotion;
-}
-
-void USKAnimationController::OnLocoTransitionEnded(UAnimMontage* Montage, bool bInterrupted)
-{
-    if (!bInterrupted) ProcessLocomotion();
+    // 8方向计算 — Angle 已经由 NativeUpdateAnimation 算出
+    float Ang = AnimInst->Angle;
+    if (Ang > -22.5f && Ang <= 22.5f)
+        AnimInst->Direction = ESKLocomotionDirection::Fwd;
+    else if (Ang > 22.5f && Ang <= 67.5f)
+        AnimInst->Direction = ESKLocomotionDirection::Fwd_R;
+    else if (Ang > 67.5f && Ang <= 112.5f)
+        AnimInst->Direction = ESKLocomotionDirection::R;
+    else if (Ang > 112.5f && Ang <= 157.5f)
+        AnimInst->Direction = ESKLocomotionDirection::Bwd_R;
+    else if (Ang > 157.5f || Ang <= -157.5f)
+        AnimInst->Direction = ESKLocomotionDirection::Bwd;
+    else if (Ang > -157.5f && Ang <= -112.5f)
+        AnimInst->Direction = ESKLocomotionDirection::Bwd_L;
+    else if (Ang > -112.5f && Ang <= -67.5f)
+        AnimInst->Direction = ESKLocomotionDirection::L;
+    else
+        AnimInst->Direction = ESKLocomotionDirection::Fwd_L;
 }
 
 // ── Montage 结束统一回调 ──────────────────────────────────
@@ -872,8 +750,10 @@ void USKAnimationController::OnActionMontageEnded(UAnimMontage* Montage, bool bI
         break;
 
     case ESKCharacterState::Guard:
-        // Guard 由 IsGuardHeld 持续控制，Montage 结束不影响状态
-        break;
+        // Guard 动画结束，不改变状态（由下一帧 ProcessIntents 检测 !IsGuardHeld 回退）
+        // 不清空 CurrentAction/CurrentPriority，保持 Guard 状态
+        CurrentAnimID = 0;
+        return;  // 不执行后面的清理
 
     case ESKCharacterState::Dodge:
         // 闪避结束 → 回 Idle

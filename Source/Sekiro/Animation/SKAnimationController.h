@@ -141,14 +141,9 @@ protected:
     void HandleCombatArt();
     bool HandleDeathblow();
 
+    // ── Locomotion ───────────────────────────────────────────
+    // Locomotion 动画完全由 AnimBlueprint 驱动，C++ 只更新参数
     void ProcessLocomotion();
-    FSKLocomotionState EvaluateLocomotionState(float Speed, float Angle) const;
-    int32 ResolveLocomotionAnimID(const FSKLocomotionState& State) const;
-    int32 GetTransitionAnimID(const FSKLocomotionState& From, const FSKLocomotionState& To) const;
-    int32 GetStopAnimID(const FSKLocomotionState& State) const;
-    int32 GetTurnAnimID(float AngleDelta) const;
-    void PlayLocomotionMontage(int32 AnimID, bool bLooping);
-    void OnLocoTransitionEnded(UAnimMontage* Montage, bool bInterrupted);
 
     int32 ResolveAnimID(FName Action);
     int32 ResolveAnimID(FName Action, int32 FromAnimID);
@@ -186,10 +181,6 @@ private:
     bool bCounterWindow = false;
     bool bDeathBlowActive = false;
     bool bIsInAir = false;
-
-    FSKLocomotionState CurrentLocoState = FSKLocomotionState();
-    float LastAngle = 0.f;
-    float TurnCooldown = 0.f;
 
     TMap<int32, TObjectPtr<UAnimSequence>> MontageCache;
     TWeakObjectPtr<ASKCharacter> OwnerCharacter;
