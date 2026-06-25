@@ -75,7 +75,7 @@ class SekiroAssetManager:
                 "steps": {步骤名: bool},
                 "error": str,           # 仅失败时
                 "output_json": str,     # 最终 JSON 路径
-                "output_fbx": str,      # 最终 FBX 路径
+                "output_json": str,     # 最终 JSON 路径
                 "target_ue_path": str,  # UE 导入目标
             }
         """
@@ -98,7 +98,7 @@ class SekiroAssetManager:
                 "error": str,              # 仅失败时
                 "anibnd_dir": str,
                 "anim_json": str,
-                "output_fbx": str,
+                "import_json": str,
                 "target_ue_path": str,
             }
         """
@@ -330,7 +330,6 @@ class SekiroAssetManager:
           - 游戏目录是否存在
           - 引擎目录是否存在
           - 各工具是否可执行
-          - Blender 路径是否有效
           - EU Python 是否可执行
 
         Returns:
@@ -343,7 +342,6 @@ class SekiroAssetManager:
                     "sekiro_anim_extractor": bool,
                     "yabber": bool,
                     "texconv": bool,
-                    "blender": bool,
                     "ue_python": bool,
                     "uproject": bool,
                 },
@@ -366,14 +364,6 @@ class SekiroAssetManager:
         for name in tool_names:
             path = self.config.tool_path(name)
             checks[name] = bool(path and os.path.exists(path))
-
-        # Blender
-        checks["blender"] = bool(
-            self.config.get_blender() and (
-                os.path.exists(self.config.get_blender())
-                or self.config.get_blender() == "blender"
-            )
-        )
 
         # UE Python
         ue_py = self.config.get_python()

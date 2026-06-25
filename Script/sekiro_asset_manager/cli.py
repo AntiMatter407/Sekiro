@@ -1,4 +1,4 @@
-﻿"""
+"""
 CLI —— SekiroAssetManager 命令行入口。
 
 支持以下命令格式：
@@ -53,11 +53,9 @@ def _add_model_subcommand(subparsers) -> None:
     import_cmd.add_argument("--skeleton-flver", help="骨架 FLVER 路径")
     import_cmd.add_argument("--skeleton-hkx", help="骨架 HKX 路径")
     import_cmd.add_argument("--output-json", help="FlverToJson 输出的 JSON 路径")
-    import_cmd.add_argument("--output-fbx", help="Blender 导出的 FBX 路径")
     import_cmd.add_argument("--target-ue-path", help="UE 内容浏览器中的目标路径")
     import_cmd.add_argument("--skip-unpack", action="store_true", help="跳过解包步骤")
     import_cmd.add_argument("--skip-flver-to-fbx", action="store_true", help="跳过 FlverToJson 步骤")
-    import_cmd.add_argument("--skip-blender", action="store_true", help="跳过 Blender 步骤")
     import_cmd.add_argument("--skip-ue-import", action="store_true", help="跳过 UE 导入步骤")
 
 
@@ -78,11 +76,10 @@ def _add_anim_subcommand(subparsers) -> None:
     import_cmd.add_argument("--anibnd-dir", help="anibnd 解包目录路径")
     import_cmd.add_argument("--model-json", help="模型 JSON 路径（含骨架定义）")
     import_cmd.add_argument("--anim-json", help="动画 JSON 路径（提取器输出）")
-    import_cmd.add_argument("--output-fbx", help="Blender 导出的 FBX 路径")
     import_cmd.add_argument("--target-ue-path", help="UE 动画导入路径")
     import_cmd.add_argument("--skip-unpack", action="store_true", help="跳过 anibnd 解包")
     import_cmd.add_argument("--skip-extractor", action="store_true", help="跳过动画提取器")
-    import_cmd.add_argument("--skip-blender", action="store_true", help="跳过 Blender 导出")
+    import_cmd.add_argument("--skip-md-fix", action="store_true", help="跳过 MD reference-delta 修复")
     import_cmd.add_argument("--skip-ue-import", action="store_true", help="跳过 UE 导入")
 
     # anim import-all (批量)
@@ -101,7 +98,7 @@ def _add_anim_subcommand(subparsers) -> None:
     )
     import_all_cmd.add_argument("--skip-unpack", action="store_true", help="跳过解包")
     import_all_cmd.add_argument("--skip-extractor", action="store_true", help="跳过提取器")
-    import_all_cmd.add_argument("--skip-blender", action="store_true", help="跳过 Blender")
+    import_all_cmd.add_argument("--skip-md-fix", action="store_true", help="跳过 MD 修复")
     import_all_cmd.add_argument("--skip-ue-import", action="store_true", help="跳过 UE 导入")
 
 
@@ -200,16 +197,12 @@ def _execute_model_import(args: argparse.Namespace, mgr: SekiroAssetManager) -> 
         kwargs["skeleton_hkx"] = args.skeleton_hkx
     if args.output_json:
         kwargs["output_json"] = args.output_json
-    if args.output_fbx:
-        kwargs["output_fbx"] = args.output_fbx
     if args.target_ue_path:
         kwargs["target_ue_path"] = args.target_ue_path
     if args.skip_unpack:
         kwargs["skip_unpack"] = True
     if args.skip_flver_to_fbx:
         kwargs["skip_flver_to_fbx"] = True
-    if args.skip_blender:
-        kwargs["skip_blender"] = True
     if args.skip_ue_import:
         kwargs["skip_ue_import"] = True
 
@@ -233,16 +226,14 @@ def _execute_anim_import(args: argparse.Namespace, mgr: SekiroAssetManager) -> d
         kwargs["model_json"] = args.model_json
     if args.anim_json:
         kwargs["anim_json"] = args.anim_json
-    if args.output_fbx:
-        kwargs["output_fbx"] = args.output_fbx
     if args.target_ue_path:
         kwargs["target_ue_path"] = args.target_ue_path
     if args.skip_unpack:
         kwargs["skip_unpack"] = True
     if args.skip_extractor:
         kwargs["skip_extractor"] = True
-    if args.skip_blender:
-        kwargs["skip_blender"] = True
+    if args.skip_md_fix:
+        kwargs["skip_md_fix"] = True
     if args.skip_ue_import:
         kwargs["skip_ue_import"] = True
 
@@ -272,8 +263,8 @@ def _execute_anim_import_all(
         kwargs["skip_unpack"] = True
     if args.skip_extractor:
         kwargs["skip_extractor"] = True
-    if args.skip_blender:
-        kwargs["skip_blender"] = True
+    if args.skip_md_fix:
+        kwargs["skip_md_fix"] = True
     if args.skip_ue_import:
         kwargs["skip_ue_import"] = True
 
@@ -382,7 +373,6 @@ def _execute_config_show(mgr: SekiroAssetManager) -> None:
     print(f"Yabber:               {config.tool_path('yabber')}")
     print(f"texconv:              {config.tool_path('texconv')}")
     print()
-    print(f"Blender:              {config.get_blender()}")
     print(f"UE Python:            {config.get_python()}")
     print(f"bridge.py:            {config.get_bridge_py()}")
 
@@ -402,7 +392,6 @@ def _execute_config_check(mgr: SekiroAssetManager) -> None:
         "sekiro_anim_extractor": "SekiroAnimExtractor",
         "yabber": "Yabber",
         "texconv": "texconv",
-        "blender": "Blender",
         "ue_python": "UE Python",
         "uproject": ".uproject 文件",
     }

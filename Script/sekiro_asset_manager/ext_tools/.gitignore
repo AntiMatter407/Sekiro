@@ -1,0 +1,13 @@
+# Build output
+bin/
+obj/
+
+# NuGet package cache
+*.nuget.*
+project.assets.json
+project.nuget.cache
+
+# IDE
+.vs/
+*.user
+*.suo

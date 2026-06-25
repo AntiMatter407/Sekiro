@@ -19,8 +19,9 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from sekiro_asset_manager.pipeline_config import config as pipeline_config
+
 _PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
-_FLVER_TO_JSON_EXE = _PROJECT_DIR / "Script" / "sekiro_asset_manager" / "ext_tools" / "FlverToJson.exe"
 
 # ======================================================================
 # FLVER NodeFlags - match SoulsFormats.FLVER.Node.NodeFlags
@@ -191,17 +192,11 @@ class FlverParser:
 
     @classmethod
     def _find_exe(cls) -> str:
-        """Find FlverToJson.exe in various possible locations."""
-        candidates = [
-            _FLVER_TO_JSON_EXE,
-            _PROJECT_DIR / "Script" / "sekiro_asset_manager" / "ext_tools" / "FlverToJson.exe",
-            _PROJECT_DIR / "Tools" / "FlverToJson" / "runner" / "FlverToJson.exe",
-            _PROJECT_DIR / "Tools" / "FlverToJson" / "FlverToJson" / "bin" / "Release" / "net9.0-windows" / "FlverToJson.exe",
-        ]
-        for c in candidates:
-            if c.exists():
-                return str(c)
-        raise FileNotFoundError(f"FlverToJson.exe not found in any expected location")
+        """统一从 ext_tools 中查找 FlverToJson.exe。"""
+        exe = pipeline_config.tool_path("flver_to_json", ensure_built=False)
+        if exe and os.path.exists(exe):
+            return exe
+        raise FileNotFoundError("FlverToJson.exe not found under Script/sekiro_asset_manager/ext_tools")
 
     @classmethod
     def _call_flver_to_fbx(cls, flver_paths: list[str], output_json: str,

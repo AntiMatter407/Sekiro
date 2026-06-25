@@ -7,9 +7,8 @@
     <Platforms>x64</Platforms>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\SoulsAssetPipeline\Havoc\Havoc.csproj" />
     <ProjectReference Include="..\SoulsAssetPipeline\SoulsFormats\SoulsFormats.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="TAE.Template.SDT.xml" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="..\SoulsAssetPipeline\SoulsAssetPipeline\SoulsAssetPipeline.csproj" />
   </ItemGroup>
 </Project>
