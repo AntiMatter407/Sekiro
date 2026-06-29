@@ -1,4 +1,4 @@
-"""
+﻿"""
 ?? Sekiro MD?????? JSON?
 
 ???MD ?? HKX ? BoneTransforms ???????? local delta?UE ?????
@@ -205,7 +205,7 @@ def fix_md_animations(src: str, out_dir: str, combined_out: str, write_single: b
     delta_count = 0
     fixed_anims = []
     for anim in animations:
-        if looks_like_raw_delta(anim, ref_locals):
+        if looks_like_raw_delta(anim, correct_ref_locals):
             fixed = compose_ref_delta(anim, correct_ref_locals)
             delta_count += 1
         else:
