@@ -94,8 +94,31 @@ FString USekiroAssetManagerBPLibrary::ImportSkeletalMesh(
 int32 USekiroAssetManagerBPLibrary::ImportAnimations(const FString& JsonPath, const FString& TargetBasePath,
     const FString& AssetName, const FString& SkeletonPath)
 {
-    UE_LOG(LogTemp, Error, TEXT("[ImportAnimations] Not yet implemented"));
-    return 0;
+    if (!FPaths::FileExists(JsonPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[ImportAnimations] JSON not found: %s"), *JsonPath);
+        return 0;
+    }
+
+    USkeleton* Skeleton = LoadObject<USkeleton>(nullptr, *SkeletonPath);
+    if (!Skeleton)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[ImportAnimations] Skeleton not found: %s"), *SkeletonPath);
+        return 0;
+    }
+
+    FSAAnimData AnimData;
+    if (!SAAnimationImporter::ParseFromFile(JsonPath, AnimData))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[ImportAnimations] ParseFromFile failed"));
+        return 0;
+    }
+
+    TArray<UAnimSequence*> Results = SAAnimationImporter::BuildBatch(
+        AnimData, Skeleton, nullptr, TargetBasePath, AssetName);
+
+    UE_LOG(LogTemp, Display, TEXT("[ImportAnimations] Imported %d/%d animations"), Results.Num(), AnimData.Clips.Num());
+    return Results.Num();
 }
 
 bool USekiroAssetManagerBPLibrary::AddIntegerCurveToAnimation(const FString& AnimPath,

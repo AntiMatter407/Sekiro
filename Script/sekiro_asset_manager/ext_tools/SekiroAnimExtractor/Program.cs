@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Collections.Generic;
+using System.Numerics;
 using System.Text.Json;
 using SoulsAssetPipeline.Animation;
 using HKX = SoulsAssetPipeline.Animation.HKX;
@@ -65,12 +66,24 @@ Console.WriteLine($"Skeleton loaded: {boneCount} bones");
 var boneNames = new List<string>();
 var boneParents = new List<int>();
 var boneLocalTransforms = new List<object>();
+    // Build skeleton reference transforms as NewBlendableTransform for additive baking
+    var skeletonRefTransforms = new List<NewBlendableTransform>();
+    for (int ri = 0; ri < boneCount; ri++)
+    {
+        var rt = skeleton.Transforms[ri];
+        skeletonRefTransforms.Add(new NewBlendableTransform(
+            new Vector3(rt.Position.Vector.X, rt.Position.Vector.Y, rt.Position.Vector.Z),
+            new Vector3(rt.Scale.Vector.X, rt.Scale.Vector.Y, rt.Scale.Vector.Z),
+            new Quaternion(rt.Rotation.Vector.X, rt.Rotation.Vector.Y, rt.Rotation.Vector.Z, rt.Rotation.Vector.W)
+        ));
+    }
 for (int i = 0; i < boneCount; i++)
 {
     boneNames.Add(skeleton.Bones[i].Name.GetString());
     boneParents.Add(skeleton.ParentIndices[i].data);
     var t = skeleton.Transforms[i];
-    boneLocalTransforms.Add(new
+
+        boneLocalTransforms.Add(new
     {
         P = new[] { t.Position.Vector.X, t.Position.Vector.Y, t.Position.Vector.Z },
         R = new[] { t.Rotation.Vector.X, t.Rotation.Vector.Y, t.Rotation.Vector.Z, t.Rotation.Vector.W },
@@ -88,8 +101,7 @@ var animFiles = Directory.GetFiles(animDir, "*.hkx", SearchOption.AllDirectories
     .ToList();
 
 Console.WriteLine($"Found {animFiles.Count} animation files in {animDir}");
-if (filter != null)
-    Console.WriteLine($"Filter: {filter}");
+
 
 // Find compendium files (one per directory)
 var compendiumCache = new Dictionary<string, byte[]?>();
@@ -105,6 +117,12 @@ byte[]? GetCompendium(string animPath)
 }
 
 // ---- Process animations ----
+var scanOnly = args.Contains("--scan");
+if (scanOnly)
+{
+    Console.WriteLine("name,blend_hint,is_additive,frame_count,track_count,raw_bytes");
+}
+
 var animationsOut = new List<object>();
 int processed = 0, failed = 0;
 
@@ -137,15 +155,29 @@ foreach (var animPath in animFiles)
 
         foreach (var obj in animHkx.DataSection.Objects)
         {
-            if (obj is HKX.HKASplineCompressedAnimation s) splineAnim = s;
-            else if (obj is HKX.HKAInterleavedUncompressedAnimation u) interleavedAnim = u;
-            else if (obj is HKX.HKAAnimationBinding b) binding = b;
-            else if (obj is HKX.HKADefaultAnimatedReferenceFrame r) refFrame = r;
+            string objType = obj.GetType().Name;
+            if (obj is HKX.HKASplineCompressedAnimation s) { splineAnim = s; }
+            else if (obj is HKX.HKAQuantizedAnimation q) { Console.WriteLine($"  [{animName}] HKAQuantizedAnimation (NOT SUPPORTED)"); }
+            else if (obj is HKX.HKAInterleavedUncompressedAnimation u) { interleavedAnim = u; }
+            else if (obj is HKX.HKAAnimationBinding b) { binding = b; }
+            else if (obj is HKX.HKADefaultAnimatedReferenceFrame r) { refFrame = r; }
+            else { Console.WriteLine($"  [{animName}] Unknown object: {objType}"); }
         }
 
-        if (binding == null) { Console.WriteLine($"  SKIP [{animName}]: no binding"); failed++; continue; }
+        if (binding == null) { Console.WriteLine($"  SKIP [{animName}]: no binding (spline={splineAnim != null}, interleaved={interleavedAnim != null}, refFrame={refFrame != null})"); failed++; continue; }
+        Console.WriteLine($"  [{animName}] spline={splineAnim != null}, interleaved={interleavedAnim != null}, binding={binding != null}");
 
-        // Create animation data wrapper
+        // Create animation data wrapper (or skip for scan mode)
+        bool isAdd = binding.BlendHint == HKX.AnimationBlendHint.ADDITIVE_CHILD_SPACE
+                  || binding.BlendHint == HKX.AnimationBlendHint.ADDITIVE_PARENT_SPACE;
+        if (scanOnly) {
+            int fc = splineAnim?.FrameCount ?? 0;
+            int trk = splineAnim?.TransformTrackCount ?? 0;
+            float dur = splineAnim?.Duration ?? 0;
+            Console.WriteLine($"{animName},{binding.BlendHint},{isAdd},{fc},{trk},{dur:F3}");
+            continue;
+        }
+
         HavokAnimationData? animData = null;
         if (splineAnim != null)
         {
@@ -159,11 +191,19 @@ foreach (var animPath in animFiles)
         }
 
         if (animData == null || animData.FrameCount <= 0) { Console.WriteLine($"  SKIP [{animName}]: no anim data (frames={animData?.FrameCount})"); failed++; continue; }
+        Console.WriteLine($"  [{animName}] FrameCount={animData.FrameCount}, Duration={animData.Duration}, FrameDuration={animData.FrameDuration}");
+        Console.WriteLine($"  [{animName}] HkxBoneIndexToTransformTrackMap Length={animData.HkxBoneIndexToTransformTrackMap?.Length}");
+        int mappedBones = animData.HkxBoneIndexToTransformTrackMap?.Count(x => x >= 0) ?? 0;
+        Console.WriteLine($"  [{animName}] Mapped bone tracks: {mappedBones}/{animData.HkxBoneIndexToTransformTrackMap?.Length}");
+        if (splineAnim != null) Console.WriteLine($"  [{animName}] Spline: BlockCount={splineAnim.BlockCount}, FramesPerBlock={splineAnim.FramesPerBlock}, TransformTrackCount={splineAnim.TransformTrackCount}");
+
 
         // Sample animation at target rate
         float duration = animData.Duration;
         int totalSamples = Math.Max(2, (int)(duration * sampleRate) + 1);
         float frameDuration = animData.FrameDuration;
+
+        bool isAdditive = animData.IsAdditiveBlend;
 
         var frames = new List<object>();
         for (int s = 0; s < totalSamples; s++)
@@ -174,12 +214,28 @@ foreach (var animPath in animFiles)
             var boneTransforms = new List<object>();
             for (int b = 0; b < boneCount; b++)
             {
-                var t = animData.GetTransformOnFrameByBone(b, hkxFrame, false);
+                var delta = animData.GetTransformOnFrameByBone(b, hkxFrame, false);
+                NewBlendableTransform final;
+                if (isAdditive)
+                {
+                    var refT = skeletonRefTransforms[b];
+                    // Proper additive parent-space composition:
+                    // finalPos = refPos + refRot * deltaPos
+                    // finalRot = refRot * deltaRot
+                    // finalScl = refScl * deltaScl
+                    final.Translation = refT.Translation + Vector3.Transform(delta.Translation, refT.Rotation);
+                    final.Rotation = refT.Rotation * delta.Rotation;
+                    final.Scale = refT.Scale * delta.Scale;
+                }
+                else
+                {
+                    final = delta;
+                }
                 boneTransforms.Add(new
                 {
-                    P = new[] { MathF.Round(t.Translation.X, 6), MathF.Round(t.Translation.Y, 6), MathF.Round(t.Translation.Z, 6) },
-                    R = new[] { MathF.Round(t.Rotation.X, 6), MathF.Round(t.Rotation.Y, 6), MathF.Round(t.Rotation.Z, 6), MathF.Round(t.Rotation.W, 6) },
-                    S = new[] { MathF.Round(t.Scale.X, 6), MathF.Round(t.Scale.Y, 6), MathF.Round(t.Scale.Z, 6) },
+                    P = new[] { MathF.Round(final.Translation.X, 6), MathF.Round(final.Translation.Y, 6), MathF.Round(final.Translation.Z, 6) },
+                    R = new[] { MathF.Round(final.Rotation.X, 6), MathF.Round(final.Rotation.Y, 6), MathF.Round(final.Rotation.Z, 6), MathF.Round(final.Rotation.W, 6) },
+                    S = new[] { MathF.Round(final.Scale.X, 6), MathF.Round(final.Scale.Y, 6), MathF.Round(final.Scale.Z, 6) },
                 });
             }
 
@@ -192,6 +248,7 @@ foreach (var animPath in animFiles)
             Duration = duration,
             FrameCount = totalSamples,
             SampleRate = sampleRate,
+            IsAdditiveBlend = isAdditive,
             Frames = frames,
         });
 

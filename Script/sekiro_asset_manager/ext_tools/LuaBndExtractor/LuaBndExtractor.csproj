@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>LuaBndExtractor</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="SoulsFormats">
+      <HintPath>..\..\..\..\Tools\DSLuaDecompiler\SoulsFormats\SoulsFormats\bin\Release\netstandard2.1\SoulsFormats.dll</HintPath>
+    </Reference>
+    <Reference Include="LuaDecompilerCore">
+      <HintPath>..\..\..\..\Tools\DSLuaDecompiler\LuaDecompilerCore\bin\Release\net9.0\LuaDecompilerCore.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

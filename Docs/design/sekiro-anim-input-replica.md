@@ -1,312 +1,314 @@
-# 只狼动画+输入系统复刻 — 技术方案
+﻿# 只狼动画+输入系统复制 — 技术方案
 
 | 进度文档 | 状态 | 创建 | 更新 |
 |-----------|------|------|------|
-| [需求](../plan/sekiro-anim-input-replica.md) | 🔄 进行中 | 2026-06-15 | 2026-06-23 |
+| [需求](../plan/sekiro-anim-input-replica.md) | ⏸️ 搁置 | 2026-06-15 | 2026-06-27 |
 
-## 架构总览
+---
+
+## 一、架构总览（当前状态）
 
 ```
 Extracted/Sekiro_TAE_Logic.json (28MB, 21148个JT事件)
-        │
-        ▼  FSATAEImporter::ImportFromFile()
-        │
+         │
+         ▼ FSATAEImporter::ImportFromFile()
+         │
   FSAAnimLogicImportResult (IR)
-  ┌─────────────────────────────────┐
-  │ AnimLogicMap: AnimID → Logic   │
-  │   · CancelWindows [JT=25/26/115/117/118/154]│
-  │   · AttackHitboxes [Type=1]     │
-  │   · JumpTableFlags [JT=7,51,...]│
-  │   · SpEffects [Type=67]         │
-  │   · Sound/FFX/Rumble/Camera     │
-  └────────────────┬────────────────┘
-                   │  FSATAELogicBuilder::BuildDataAsset()
-                   ▼
+  ┌──────────────────────────────────┐
+  │ AnimLogicMap: AnimID → Logic    │
+  │   · CancelWindows [JT=25/26/115/117/118/154]
+  │   · AttackHitboxes [Type=1]      │
+  │   · JumpTableFlags [JT=7,51,...] │
+  │   · SpEffects [Type=67]          │
+  │   · Sound/FFX/Rumble/Camera      │
+  └──────────────────────────────────┘
+                    │ FSATAELogicBuilder::BuildDataAsset()
+                    ▼
   USKAnimationLogicData (.uasset, DataAsset)
-  ┌─────────────────────────────────┐
-  │ CancelRules: AnimID→[FSKCancelRule] │
-  │ AttackHitboxConfigs: AnimID→[Hitbox]│
-  │ AnimFrameFlags: AnimID→FrameData│
-  │ SpEffectConfigs                 │
-  │ CategoryAnimMap                 │
-  │ AnimPrefixMap                   │
-  └────────────────┬────────────────┘
-                   │  运行时加载
-                   ▼
-  USKAnimationController::TryPlayAction()
-  → CanCancelTo(CurrentAnimID, CurrentFrame, TargetAction)
-    └─ CancelRules[AnimID] 中 TargetAction 匹配且帧覆盖?
-
-  ProcessIntents():
-    Priority 降序遍历:
-      Deathblow(10) > Hit(8) > Dodge(7) > Deflect(6)
-      > Guard/Jump(5) > Prosthetic(4) > Item(3)
-      > Attack(2) > Quickstep(1) > Locomotion(0)
-
-  USKInputHandler:
-      17个 EnhancedInput Action → 消费型/持续型意图
-      输入缓冲队列 (6帧)
-
-  SKAnimInstance:
-      Speed/Angle / bCanDeflect / bDisableTurning / ...
+  ┌──────────────────────────────────┐
+  │ CancelRules: AnimID→[FSKCancelRule]
+  │ AttackHitboxConfigs: AnimID→[Hitbox]
+  │ AnimFrameFlags: AnimID→FrameData │
+  │ CategoryAnimMap: Action→AnimIDList
+  │ AnimPrefixMap: AnimID→bool       │
+  └──────────────────────────────────┘
+                    │ 运行时加载
+                    ▼
+  USKAnimationController:
+    ProcessIntents(): Priority降序遍历 8 状态 switch-case
+    TryPlayAction(): CanCancelTo → ResolveAnimID → PlayMontageByID
+    PlayMontageByID(): PlaySlotAnimationAsDynamicMontage → DefaultSlot
 ```
+
+**C++ 运行时核心已完成**。当前主要工作是**数据管线 → 运行时的最后集成**。
 
 ---
 
-## 第一优先级：PIE 运行时验证 — Sprint/转向/日志确认
+## 二、当前架构关键设计
 
-### 1.1 Sprint 验证
+### 2.1 状态机（ESKCharacterState）
 
-**原版行为**：
-- 移动中按住 Dodge（Shift/◻）→ 从 Run 切换到 Sprint
-- Sprint 中停止移动或离地 → 回到 Run
-- Sprint 期间应播放 Sprint_Fwd 动画（Speed ≥ 550）
-
-**当前实现检查**（已就位，无需改代码）：
-
-`SKInputHandler::OnDodgeStarted`：
 ```cpp
-void USKInputHandler::OnDodgeStarted(...) {
-    bDodgeHeld = true;                          // 持续按住标记
-    // ...
-    if (USKMovementComponent* MoveComp = ...) {
-        MoveComp->CurrentMovementTier = ESKMovementTier::Sprint;
-    }
+enum class ESKCharacterState : uint8 {
+    Idle,       // 空闲/Locomotion
+    Attack,     // 攻击动作中
+    Guard,      // 防御/格挡中
+    Dodge,      // 闪避中
+    Jump,       // 起跳动画中
+    Airborne,   // 空中（Jump后物理上升/下落）
+    Hit,        // 受击
+    Death       // 死亡
+};
+```
+
+迁移规则（`TransitionTo` + `CanTransition`）：
+- Idle → Attack/Guard/Dodge/Jump（任意输入触发）
+- Attack → Attack（连段）/ Guard / Dodge / Airborne
+- Guard → Deflect / Hit / Idle（释放L1）
+- Dodge → Idle（闪避结束）
+- Jump → Airborne（离地）/ Idle（若未离地）
+- Airborne → AirAttack / AirDodge / Idle（落地）
+- Hit → Idle（硬直结束）/ Death
+- Any → Death（HP=0）
+
+### 2.2 优先级系统
+
+```
+Deathblow(10) > Death(9) > Hit(8) > Dodge(7) > Deflect(6)
+> Jump(5) = Guard(5) > Prosthetic(4) > ItemUse(3) > Attack(2)
+> Quickstep(1) > Locomotion(0)
+```
+
+处理逻辑（`TryPlayAction`）：
+1. 若 `CurrentPriority > NewPriority` 且动画未播完 → 拒绝
+2. 若非同动作 → 检查 `CanCancelTo`（CancelWindow 覆盖当前帧）
+3. `ResolveAnimID` → 查找 CategoryAnimMap 中的 AnimID
+4. `PlayMontageByID` → PlaySlotAnimationAsDynamicMontage
+
+### 2.3 连段推导（DeriveNextAnim）
+
+当前方案为最简单递增：
+```cpp
+int32 DeriveNextAnim(int32 InCurrentAnimID, FName Action) const {
+    int32 JudgeId = InCurrentAnimID % 1000;
+    int32 NextAnimID = (InCurrentAnimID / 1000) * 1000 + (JudgeId + 1);
+    return AnimLogicData->AnimPrefixMap.Contains(NextAnimID) ? NextAnimID : -1;
 }
 ```
 
-`SKInputHandler::TickComponent`（冲刺状态检查）：
+**限制**：只能处理同系列连续递增的连段（如 201000→201001→201002），无法处理原版的复杂连段分支。
+
+---
+
+## 三、数据管线集成方案（第一优先级）
+
+### 3.1 DataTable 导入管道
+
+**目标**：将 Python 生成的 StateAnimMap 和 StateTransitions 数据导入 UE5 DataTable，替代运行时的硬编码逻辑。
+
+**已生成数据**：
+- `Output/StateAnimMap_DataTable.json` — 142 个状态的动画映射
+- `Output/StateTransitions_DataTable.json` — 状态迁移规则
+
+**需要新建的 USTRUCT**（在 `Plugins/SekiroAssetManager/Public/`）：
+
 ```cpp
-if (MoveComp->CurrentMovementTier == ESKMovementTier::Sprint) {
-    if (MoveIntent.Size() < 0.1f || 离地) {
-        MoveComp->CurrentMovementTier = ESKMovementTier::Run;
-    }
-}
+// FSKStateAnimEntry — 状态→动画映射行
+USTRUCT(BlueprintType)
+struct FSKStateAnimEntry : public FTableRowBase {
+    GENERATED_BODY()
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    FString State;           // 状态名
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    TArray<int32> AnimIDs;   // 该状态的动画ID列表
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    TArray<FString> TriggerEvents;  // 触发事件名列表
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    FString Category;        // 分类标签
+};
+
+// FSKStateTransition — 状态迁移规则行
+USTRUCT(BlueprintType)
+struct FSKStateTransition : public FTableRowBase {
+    GENERATED_BODY()
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    FString EventName;       // 触发事件
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    FString FromState;       // 源状态
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    FString ToState;         // 目标状态
+    UPROPERTY(EditAnywhere, BlueprintReadOnly)
+    float BlendDuration = 0.2f;  // 混合时长
+};
 ```
 
-`EvaluateLocomotionState`（速度分级）：
-- Speed < 10 → Idle
-- Speed < 200 → Walk
-- Speed < 430 → Jog
-- Speed < 550 → Run
-- **≥ 550 → Sprint**
+**SAImport Commandlet 新增模式**：
+- 读取 JSON → 调用 `FDataTableImporterTools::CreateDataTable` → 生成 .uasset
+- 或者：直接用 Python 调用 UnrealPython API 导入
 
-**验证方法**（AIBridge）：
-```python
-# 1. 前移 + Sprint
-bridge.input_simulate("move", {"x": 0.0, "y": 1.0})   # 前移加速到Run
-time.sleep(0.5)
-bridge.input_simulate("dodge", {"started": True})      # 按住Dodge → Sprint
-time.sleep(1.0)
-state = bridge.get_anim_state()                        # 验证Speed≥550 + AnimID匹配Sprint
+**运行时集成**：
+- `USKAnimationController` 在 `BeginPlay` 加载 DataTable
+- `ResolveAnimID` 改为查表替代 `CategoryAnimMap`
+- `CanTransition` 改为查表替代硬编码规则
 
-# 2. Sprint 中停止移动
-bridge.input_simulate("move", {"x": 0.0, "y": 0.0})   # 松开移动
-time.sleep(0.5)
-state = bridge.get_anim_state()                        # 验证回退到 Run/Stop
+### 3.2 TAE 曲线批量写入
 
-# 3. Sprint 中离地
-bridge.input_simulate("move", {"x": 0.0, "y": 1.0})
-bridge.input_simulate("dodge", {"started": True})
-time.sleep(0.3)
-bridge.input_simulate("jump", {"started": True})       # 跳跃
-time.sleep(0.3)
-state = bridge.get_anim_state()                        # 验证离地后 Sprint→Run
+**当前状态**：`Script/write_tae_curves.py` 已支持单 AnimID 写入：
+```
+FrameFlags → AnimSequence curves (bDisableTurning, bDisableParry, ...)
+CancelActions → AnimSequence curves (CanCancelTo_Attack, CanCancelTo_Guard, ...)
+AttackHitbox → AnimSequence curves (AttackHitbox 激活帧区间)
 ```
 
-### 1.2 转向动画验证
-
-**原版行为**：
-- 静止状态下视角旋转 > 90° → 触发原地转身
-- 转身有 0.5s 冷却
-- 方向分 L/R（根据 AngleDelta 正负）
-
-**当前实现**（`ProcessLocomotion`）：
-```cpp
-if (Speed < 50.f && TurnCooldown <= 0.f) {
-    float AngleDelta = FMath::FindDeltaAngleDegrees(LastAngle, Angle);
-    if (FMath::Abs(AngleDelta) > 90.f) {
-        int32 TurnID = GetTurnAnimID(AngleDelta);
-        // ...
-    }
-}
-```
+**需要新建**：
+- `Script/write_tae_curves_batch.py` — 批量处理所有已导入的 AnimSequence
+- 错误重试 + 进度日志
+- 处理边界：无事件动画跳过、部分失败不阻塞整体
 
 **验证方法**：
+- PIE 中 `AnimInstance::GetCurveValue("AttackHitbox")` 验证正确帧
+- 日志确认 FrameFlags 生效（攻击中 bDisableTurning = true）
+
+### 3.3 BehaviorParam 连段方案评估
+
+**当前**：`DeriveNextAnim` 简单递增（AnimID % 1000 + 1）
+
+**BehaviorParam 方案可通过查表替换**：
+- 已提取 BehaviorParam_PC.json（1206条）
+- 关键字段：`variationId`, `behaviorJudgeId`, `refType`, `refId`
+- 但这些是"行为调度"数据而非"动画连段"数据
+- 原版真正的连段是通过 ezState 状态机 + TAE CancelWindow 实现的
+
+**决策点**：行为调度（BehaviorParam）和动画连段是两层。当前 CancelWindow 已从 TAE 正确提取，连段推导用简化公式可行。**完整 BehaviorParam 解析可作为后续优化项，不阻塞当前进度**。
+
+---
+
+## 四、运行时验证方案（第二优先级）
+
+### 4.1 验证脚本设计
+
+使用 AIBridge Python API 编写自动化验证脚本 `Script/temp/test_full_anim.py`：
+
 ```python
-# 原地静止 → 快速旋转视角
-bridge.input_simulate("move", {"x": 0.0, "y": 0.0})   # 确保静止
-time.sleep(0.5)
-bridge.input_simulate("look", {"x": 180.0, "y": 0.0}) # 快速转180度
-time.sleep(0.3)
-state = bridge.get_anim_state()                        # 验证触发了Turn动画
+# 测试序列
+tests = [
+    # Sprint 测试
+    {"name": "Sprint过渡", "steps": [
+        ("move", {"y": 1.0}, 0.5),        # 前移加速到Run
+        ("dodge_start", {}, 0.1),          # 按住Dodge
+        ("wait", {}, 1.0),                 # 等待Sprint
+        ("assert_speed_ge", 550),          # 验证Speed>=550
+    ]},
+    # 转向测试
+    {"name": "原地转向", "steps": [
+        ("ensure_idle", {}, 0.5),          # 确保静止
+        ("look", {"x": 180}, 0.2),         # 快速旋转180°
+        ("assert_turn_anim", True),        # 验证触发Turn动画
+    ]},
+    # 连段测试
+    {"name": "连段CancelWindow", "steps": [
+        ("attack", {}, 0.1),               # R1攻击
+        ("wait", {}, 0.3),                 # 进入CancelWindow
+        ("attack", {}, 0.1),               # 窗内R1 → 下段
+        ("assert_combo_advanced", True),   # 验证连段推进
+    ]},
+    # Guard→Deflect 窗口测试
+    # Jump全分支测试
+]
 ```
 
-### 1.3 运行时日志确认
+### 4.2 验证通过标准
 
-**当前代码已有 Tick 诊断输出**（`TickComponent`）：
-```cpp
-static int32 TickCounter = 0;
-if (++TickCounter % 60 == 0) {
-    UE_LOG(LogTemp, Log, TEXT("AnimTick[%s]: Action=%s AnimID=%d Priority=%d ..."),
-        ..., *CurrentAction.ToString(), CurrentAnimID, CurrentPriority, ...);
-}
+| 测试项 | 标准 |
+|--------|------|
+| Sprint过渡 | Speed≥550 + Tier=Sprint |
+| 原地转向 | TurnID>0 + 0.5s冷却第二次不触发 |
+| 连段窗口 | CancelWindow内R1→第二段触发，窗外R1→不触发 |
+| Jump分支 | 起跳→Airborne→空中攻击可选→落地→Idle |
+| Guard窗口 | L1按下→检测敌人攻击→弹反触发 |
+| 动画不卡 | OnActionMontageEnded后 Locomotion 恢复 |
+
+---
+
+## 五、打磨和完善（第三优先级）
+
+### 5.1 锁敌系统
+- `IsEnemyAttacking` 需要锁敌目标
+- 当前实现依赖 `GetLockOnTarget()` 返回 `ASKCharacter*`
+- 需配合锁敌系统（EnhancedInput LockOn Action）激活
+
+### 5.2 Deathblow 激活
+- `bDeathBlowActive = true` 需在敌人架势条满时触发
+- 需配合 `USKPostureComponent`（未实现）
+
+### 5.3 CombatArt 战技
+- 当前 `HandleCombatArt` 为空壳
+- 需配合义手/战技资源导入和 DataTable
+
+---
+
+## 六、数据流总览
+
 ```
-
-**验证方法**：
-```python
-# PIE 中执行一系列操作 → 检查日志输出 → 验证 Action/AnimID 是否与预期一致
-bridge.input_simulate("attack", {"started": True})      # R1攻击
-time.sleep(0.3)
-logs = bridge.get_output_log()                           # 获取最近日志
-# 检查: 是否包含 "Action=Attack AnimID=201010" 等
-```
-
-### 1.4 CancelWindow 命中验证
-
-**关键验证**：
-- 播放攻击动画期间，R1 在 CancelWindow 内按下 → 触发连段下一击
-- 播放攻击动画期间，R1 在 CancelWindow 外按下 → 不触发
-- Guard 在 CancelWindow 内按下 → 触发 Guard 动画
-
-**验证方法**：
-```python
-# 在攻击动作中按 R1
-bridge.input_simulate("attack", {"started": True})
-time.sleep(0.1)                                           # 攻击动作早期（可能在 CancelWindow 内）
-bridge.input_simulate("attack", {"started": True})        # 第二下
-time.sleep(0.5)                                           # 等动画接近尾声
-bridge.input_simulate("attack", {"started": True})        # 第三下或不在窗口内
-state = bridge.get_anim_state()
-# 验证连段推进或停止
+┌──────────────┐    ┌────────────────┐    ┌──────────────────────┐
+│ TAE二进制    │ →  │ SekiroTAE      │ →  │ Sekiro_TAE_Logic     │
+│ .tae (65个)  │    │ Extractor (.cs) │    │ .json (28MB)         │
+└──────────────┘    └────────────────┘    └──────────┬───────────┘
+                                                     │
+                    ┌────────────────────────────────┤
+                    ▼                                ▼
+           ┌──────────────┐                  ┌──────────────────┐
+           │ SAImport     │                  │ Python 分析脚本  │
+           │ Commandlet   │                  │ build_v2.py      │
+           │ (SATAEImp)   │                  │ build_statemap.py │
+           └──────┬───────┘                  └────────┬─────────┘
+                  ▼                                   ▼
+    ┌─────────────────────┐              ┌──────────────────────┐
+    │ USKAnimLogicData    │              │ StateAnimMap_        │
+    │ (DataAsset .uasset) │              │ DataTable.json       │
+    │ · CancelRules       │              │ StateTransitions_    │
+    │ · CategoryAnimMap   │              │ DataTable.json       │
+    │ · AnimPrefixMap     │              └──────────┬───────────┘
+    └──────────┬──────────┘                         │
+               │                    ┌───────────────┘
+               ▼                    ▼
+    ┌──────────────────────────────────────┐
+    │ USKAnimationController 运行时        │
+    │ · ProcessIntents (Priority遍历)      │
+    │ · TryPlayAction (CancelWindow判定)   │
+    │ · PlayMontageByID (DefaultSlot)      │
+    └──────────────────────────────────────┘
 ```
 
 ---
 
-## 第二章：运行时实现（已就位，作为参考）
+## 七、Agent 派发
 
-### 2.1 输入缓冲（已完成）
-
-```
-输入产生 → [Buffer: 6帧] → ProcessIntents 采样 → 找到合法转换 → 播放动画
-                              │
-                      (找不到合法转换 → 丢弃)
-```
-
-USKInputHandler 中缓冲队列的结构和工作逻辑已在 6/22 实现，无需修改。
-
-### 2.2 ProcessIntents 优先级遍历（已完成）
-
-Priority 降序遍历，高优先级意图优先被消费，低优先级不能打断当前动作。
-
-当前意图优先级表：
-
-| 意图 | 优先级 | 触发方式 |
-|------|--------|---------|
-| Deathblow | 10 | bDeathBlowActive + ConsumeBufferedInput("Attack") |
-| Dodge | 7 | ConsumeBufferedInput("Dodge") → HandleDodge |
-| Jump | 5 | ConsumeBufferedInput("Jump") → HandleJump |
-| Guard | 5 | IsGuardHeld() → HandleGuard |
-| Prosthetic | 4 | ConsumeBufferedInput("Prosthetic") → HandleProsthetic |
-| ItemUse | 3 | ConsumeBufferedInput("Item") → HandleItemUse |
-| Grapple | 2 | ConsumeBufferedInput("Grapple") → HandleGrapple |
-| Attack | 2 | HandleAttack（内部消费缓冲） |
-
-### 2.3 Deflect 判定（已完成）
-
-```
-L1 按下 → 检查敌人当前动画是否有攻击判定
-  → 有且时间差 ≤6帧 → Deflect（完美格挡，开启 bCounterWindow）
-  → 有且时间差 >6帧 → Guard（普通格挡）
-  → 无 → Guard（普通格挡）
-```
-
-### 2.4 转向系统（已完成）
-
-```
-静止 + 角度变化 >90° + 冷却 0.5s → 播 Turn 动画
-  → AngleDelta > 0 → Locomotion_Turn_R
-  → AngleDelta < 0 → Locomotion_Turn_L
-```
+| 任务 | Agent | 说明 |
+|------|-------|------|
+| DataTable USTRUCT 新建 | plugin-programmer | 在 Plugins/SekiroAssetManager 中添加 |
+| SAImport DataTable 导入模式 | plugin-programmer | Commandlet 扩展 |
+| TAE 曲线批量写入脚本 | 主 Agent (Python) | Script/temp/ |
+| PIE 验证脚本 | 主 Agent (Python) + AIBridge | Script/temp/ |
+| 锁敌/Deathblow/CombatArt | gameplay-programmer | Source/Sekiro/ |
 
 ---
-
-## 第三章：验证方案（当前重点）
-
-### 3.1 测试环境
-
-- AIBridge PIE 模式下运行
-- 日志通过 `bridge.get_output_log()` 采集
-- 动画状态通过 `bridge.get_anim_state()` 获取
-- 验证脚本放在 `Script/temp/test_sprint_turn_log.py`
-
-### 3.2 验证序列
-
-| 序号 | 测试项 | 输入序列 | 预期输出 | 通过标准 |
-|------|--------|---------|---------|---------|
-| 1 | Run→Sprint 过渡 | 前移 → 加速到 Run → 按住 Dodge | Speed ≥ 550, Tier=Sprint, Action=Locomotion | 日志输出 Speed≥550 |
-| 2 | Sprint→Run 回退 | Sprint 中松开移动 | Speed < 550, Tier=Run | 日志输出 Speed 下降 |
-| 3 | Sprint→Jump→Run | Sprint 中跳跃再落地 | Sprint→离地→Run | Tier 变化符合预期 |
-| 4 | 原地转身 | 静止 + 快速旋转视角 | 触发 Turn 动画 (TurnID > 0) | 日志输出 Turn 动作 |
-| 5 | 转身冷却 | 连续快速旋转 → 第二次不触发 | 第一次 Turn，第二次不触发 | 0.5s 内第二次无 Turn |
-| 6 | 连段(CancelWindow) | 攻击 → 窗口内R1 → 窗口外R1 | 第一击 → 第二击 → 不触发 | AnimID 按连段推进 |
-| 7 | Guard 取消 | 攻击中按 Guard | 触发 Guard 或 Deflect | Action=Guard/Deflect |
-
-### 3.3 失败处理
-
-如果验证结果不符合预期：
-1. 分析日志确定原因（Missing CategoryAnimMap / CancelWindow 不匹配 / BuildAnimAssetPath 错误）
-2. 如果是 DataAsset 数据问题 → 重新运行 SAImport Commandlet
-3. 如果是 C++ 逻辑问题 → 按照 bug-fix-workflow.md 先分析后修复
-
----
-
-## 涉及文件
-
-| 文件 | 操作 | 说明 |
-|------|------|------|
-| `Script/temp/test_sprint_turn_log.py` | **新建** | Sprint/转向/运行时日志验证脚本 |
-| `Docs/plan/sekiro-anim-input-replica.md` | **更新** | 任务状态同步 |
-
-**无需修改任何 C++ 源文件**。本次验证纯 AIBridge + Python 脚本操作。
-
-## 数据流
-
-```
-AIBridge input_simulate
-    ↓
-USKInputHandler (OnMove/OnDodgeStarted/OnAttackStarted)
-    ↓
-USKMovementComponent (CurrentMovementTier + GetMaxSpeed)
-    ↓
-USKAnimInstance (Speed/Angle 计算)
-    ↓
-USKAnimationController::ProcessLocomotion
-    ↓
-PlaySlotAnimationAsDynamicMontage → ABP_Sekiro Default Slot
-    ↓
-TickComponent 日志输出 (每60帧)
-    ↓
-bridge.get_output_log() 采集验证
-```
-
-## 依赖与风险
-
-| 依赖 | 说明 |
-|------|------|
-| AIBridge 连接 | 需要编辑器在 PIE 模式下运行，bridge.py 能正常连接 |
-| DataAsset 数据 | CategoryAnimMap 中 Sprint/Turn 类别必须有动画ID（否则播不出） |
-| 无 C++ 修改必要 | 如果验证失败，需要排查的是数据层（DataAsset）而非逻辑层 |
-
-## Agent 派发
-
-本次全部直接在主 Agent 中完成，不需要 C++ Agent：
-- Python 验证脚本不需要 C++ 修改
-- 不需要编译
 
 ## 变更记录
 
 | 日期 | 变更 |
 |------|------|
+| 2026-06-27 | 全面重写：反映 C++ 核心完成现状，聚焦数据管线集成三优先级 |
 | 2026-06-23 | 创建：聚焦第一优先级 Sprint/转向/运行时日志确认，纯验证不修改 C++ |
-| 2026-06-23 | 新增 2.5 Priority 复位：Guard 播完后 CurrentPriority 残留导致阻塞后续动作，OnActionMontageEnded 复位 CurrentPriority/Locomotion |
+
+
+---
+
+## ⏸️ 搁置 (2026-06-27)
+
+此方案已搁置。新方向：**人工识别动画内容 + AI 状态机制作**。
+
+保留资产：
+- C++ 运行时：USKAnimationController / USKInputHandler 继续使用
+- TAE 数据管线：可作为动画分类参考
+- DataTable：DT_StateAnimMap / DT_StateTransitions 可作为审阅材料
