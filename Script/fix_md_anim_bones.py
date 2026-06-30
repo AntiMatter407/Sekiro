@@ -1,10 +1,10 @@
-"""
+﻿"""
 ?? Sekiro MD?????? JSON?
 
 ???MD ?? HKX ? BoneTransforms ???????? local delta?UE ?????
 ?? local pose???? delta ????? local pose ???????????????????
 
-?????? a000_100000~199999 ? MD ???
+?????? a000_100000~199999 ? delta ???
     full_pose = reference_local * delta_local
 
 ???????? SekiroAnimExtractor ????
@@ -76,9 +76,9 @@ def normalize_anim_name(name: str) -> str:
     return name if name.startswith("Sekiro_") else f"Sekiro_{name}"
 
 
-def is_md_anim(anim: dict[str, Any]) -> bool:
-    anim_id = parse_anim_id(normalize_anim_name(anim.get("Name", "")))
-    return anim_id is not None and MD_ANIM_RANGE[0] <= anim_id <= MD_ANIM_RANGE[1]
+def is_delta_anim(anim: dict[str, Any]) -> bool:
+    """Check if animation is in delta format (no range restriction ? any spline-compressed anim)."""
+    return True  # Process all animations; looks_like_raw_delta handles per-anim detection
 
 
 def looks_like_raw_delta(anim: dict[str, Any], ref_locals: list[dict[str, Any]]) -> bool:
@@ -117,8 +117,25 @@ def compose_ref_delta(anim: dict[str, Any], ref_locals: list[dict[str, Any]]) ->
             delta_r = bone_transform.get("R", [0, 0, 0, 1])
             delta_s = bone_transform.get("S", [1, 1, 1])
 
-            bone_transform["P"] = rounded([float(ref_p[i]) + float(delta_p[i]) for i in range(3)])
-            bone_transform["R"] = rounded(quat_multiply(ref_r, delta_r))
+            # Properly rotate delta position by reference rotation, then add
+            ref_q = ref_r  # [x,y,z,w]
+            # Rotate delta_p by ref_q: q * v * q^{-1} = q * (0,v) * conj(q)
+            # Simplified: use rotation matrix or quat_vec_rotate
+            def quat_rotate_vec(q, v):
+                qx, qy, qz, qw = float(q[0]), float(q[1]), float(q[2]), float(q[3])
+                vx, vy, vz = float(v[0]), float(v[1]), float(v[2])
+                # q * v * conj(q)
+                ux = qw * vx + qy * vz - qz * vy
+                uy = qw * vy + qz * vx - qx * vz
+                uz = qw * vz + qx * vy - qy * vx
+                uw = -qx * vx - qy * vy - qz * vz
+                rx = ux * qw - uw * qx - uy * qz + uz * qy
+                ry = uy * qw - uw * qy - uz * qx + ux * qz
+                rz = uz * qw - uw * qz - ux * qy + uy * qx
+                return [rx, ry, rz]
+            rotated_delta_p = quat_rotate_vec(ref_q, delta_p)
+            bone_transform["P"] = rounded([float(ref_p[i]) + rotated_delta_p[i] for i in range(3)])
+            bone_transform["R"] = rounded(quat_multiply(ref_r, delta_r))  # ref * delta (Havok: apply ref, then delta additive on top)
             bone_transform["S"] = rounded([float(ref_s[i]) * float(delta_s[i]) for i in range(3)])
 
     return out_anim
@@ -157,23 +174,45 @@ def fix_md_animations(src: str, out_dir: str, combined_out: str, write_single: b
 
     bone_names = data.get("BoneNames", [])
     ref_locals = data.get("BoneLocalTransforms", [])
-    animations = [anim for anim in data.get("Animations", []) if is_md_anim(anim)]
+    animations = [anim for anim in data.get("Animations", []) if is_delta_anim(anim)]
     if not bone_names or not ref_locals:
         print("[??] ?? JSON ?? BoneNames ? BoneLocalTransforms")
         return False
     if not animations:
-        print("[??] ??? MD ???? a000_100000~199999")
+        print("[??] ??? delta ???? a000_100000~199999")
         return False
 
-    raw_delta = looks_like_raw_delta(animations[0], ref_locals)
     print(f"??: {src}")
     print(f"???: {len(bone_names)}")
-    print(f"MD ???: {len(animations)}")
-    print(f"???????: {'raw delta??? ref*delta' if raw_delta else 'full local pose??? ref*delta'}")
+    print(f"delta ???: {len(animations)}")
 
-    fixed_anims = [compose_ref_delta(anim, ref_locals) if raw_delta else deepcopy(anim) for anim in animations]
-    for anim in fixed_anims:
-        anim["Name"] = normalize_anim_name(anim.get("Name", ""))
+    # --- FIX: Use correct reference from dense animation instead of BoneLocalTransforms ---
+    # BoneLocalTransforms is the HKX skeleton reference (wrong for 91/146 bones).
+    # Dense animations have correct full-local from spline; use frame 0 as reference.
+    correct_ref_locals = None
+    for anim in animations:
+        if not looks_like_raw_delta(anim, ref_locals):
+            frames = anim.get("Frames", [])
+            if frames:
+                correct_ref_locals = frames[0].get("BoneTransforms", [])
+                print(f"[Fix] Using {anim.get('Name', '?')} frame 0 as correct reference")
+                break
+    if correct_ref_locals is None or len(correct_ref_locals) != len(ref_locals):
+        print("[Fix] No dense animation found, falling back to BoneLocalTransforms")
+        correct_ref_locals = ref_locals
+
+    # Per-animation delta detection (each animation may have different compression mode)
+    delta_count = 0
+    fixed_anims = []
+    for anim in animations:
+        if looks_like_raw_delta(anim, correct_ref_locals):
+            fixed = compose_ref_delta(anim, correct_ref_locals)
+            delta_count += 1
+        else:
+            fixed = deepcopy(anim)
+        fixed["Name"] = normalize_anim_name(fixed.get("Name", ""))
+        fixed_anims.append(fixed)
+    print(f"???????: {delta_count} delta (ref+delta??? {len(animations) - delta_count} full local (??????)")
 
     if backup and write_single:
         backup_dir = backup_existing_outputs(out_dir, DEFAULT_BACKUP_ROOT)
@@ -211,7 +250,7 @@ def fix_md_animations(src: str, out_dir: str, combined_out: str, write_single: b
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="?? Sekiro MD ???? delta ??")
+    parser = argparse.ArgumentParser(description="?? Sekiro delta ???? delta ??")
     parser.add_argument("--src", default=DEFAULT_SRC, help="SekiroAnimExtractor ??? MD delta JSON")
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="??? JSON ????")
     parser.add_argument("--combined-out", default=DEFAULT_COMBINED_OUT, help="?? JSON ????")
