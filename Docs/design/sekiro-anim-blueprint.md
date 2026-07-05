@@ -1,7 +1,10 @@
-# Sekiro AnimBlueprint — 需求 + 技术方案
+# Sekiro AnimBlueprint — 技术方案
 
-> 更新日期：2026-06-30
-> 关联文档：[Docs/animation_annotation.md](animation_annotation.md)（动画资产清单，随资产导入持续更新）
+> 更新日期：2026-07-02
+> 关联文档：
+> - [进度文档](../plan/sekiro-anim-blueprint.md)
+> - [动画资产清单](../animation_annotation.md)（所有动画资源定义在此）
+>
 > 架构原则：C++ 只提供通用接口（UPROPERTY/UFUNCTION），ABP 蓝图负责编排
 
 ---
@@ -10,297 +13,347 @@
 
 ### 1.1 目标
 
-基于已导入 UE5 的 Sekiro 动画资产（覆盖 `a000` ~ `a250`），构建一套完整的角色动画蓝图系统，实现原版只狼的动画行为：
+基于已导入 UE5 的 Sekiro 动画资产（覆盖 `a000` ~ `a250`），构建一套完整的角色动画蓝图系统，实现原版只狼的动画行为。资产路径：`/Game/Characters/Sekiro/Animations/Anim_Sekiro_*`，命名格式为 `Anim_Sekiro_{prefix}_{6位ID}`。
 
-- **Locomotion**：Idle / Walk / Jog / Run / Sprint / Crouch / 悬挂 / 游泳 / 贴墙
-- **Combat**：攻击 / 防御 / 弹刀 / 闪避 / 忍义手 / 战技
-- **Reaction**：受击 / 死亡 / 回生
-- **Interaction**：忍杀 / 交互 / 道具使用 / 窃听
+需要覆盖的状态：
 
-### 1.2 动画资产映射
-
-动画资产全部在 `Docs/animation_annotation.md` 中按 TAE 原始 ID 分组列出，此处按动画蓝图系统的分类方式汇总：
-
-| 分类 | 来源（TAE 前缀 / 范围） | 方案动画名前缀 | 用途 |
-|------|----------------------|--------------|------|
-| 站立 Ground | a000: 0, 100-103, 400-403, 500-503, 1151-1154, 1200 | `_Walk_*` / `_Jog_*` / `_Run_*` / `_Sprint_*` | 地面移动循环 |
-| 过渡 Transition | a000: 10-13, 300-303, 600-603, 1402-1403, 1510-1512 | `_*_Stop` / `_*_To_*` | 起停/变速过渡 |
-| 转向 Turn | a000: 132-133, 432-433, 442-443 | `_TurnL` / `_TurnR` | 急转 |
-| 蹲姿 Crouch | a000: 5000-5603 | `_Crouch_*` | 蹲行/蹲跑 |
-| 悬挂 Hang | a000: 20000-20433 | `_Hang_*` | 悬挂边缘状态 |
-| 贴墙 Wall | a000: 21000 开头 | `_Wall_*` | 贴墙状态 |
-| 游泳 Swim | a000: 30000-41000 | `_Swim_*` | 水中移动 |
-| 跳跃 Jump | a000: 200000 开头 | `_Jump_*` / `_Airborne_*` / `_Land_*` | 垂直机动 |
-| 受击 Hit | a000: 100000 开头 + 190000 开头 | `_Hit_*` / `_Hit_State_*` | 伤害反馈 |
-| 死亡/回生 | a000: 110000 开头 | `_Death_*` / `_Resurrection_*` | 死亡循环 |
-| 翻滚 Roll | a000: 206000 | `_Roll` | 翻滚规避 |
-| 战斗姿态 | a050 | `_Guard_*` / `_Deflect_*` / `_AttackPose_*` | 战斗核心动作 |
-| 忍义手 | a070 ~ a079 | `_Prosthetic_*` | 义手技能 |
-| 战技 | a100 ~ a110 | `_CombatArt_*` | 流派技能 |
-| 互动 Interact | a200 ~ a250 | `_Deathblow_*` / `_MikiriCounter_*` / `_BossSync_*` | 忍杀/识破 |
-| 道具道具 | a000: 250000 开头 | `_ItemUse_*` | 使用道具 |
-| 窃听 Eavesdrop | a000: 220000 开头 | `_Eavesdrop_*` | 窃听 |
-
-### 1.3 分阶段路线
-
-| 阶段 | 内容 | 核心动画 |
-|:----:|------|---------|
-| **1** | 站立 Locomotion（Idle / Walk / Jog / Run / Sprint） | Walk_*, Jog_*, Run_*, Sprint_*, Idle_* |
-| **2** | 过渡 + 转向 | Walk_Stop, Run_Stop, Sprint_To_*, Walk_Turn, Jog_Turn |
-| **3** | Jump / Air / Land | Jump_*, Airborne_*, Land_* |
-| **4** | Crouch 蹲姿 | Crouch_* |
-| **5** | Combat（Attack / Guard / Deflect / Dodge） | Guard_*, Deflect_*, AttackPose_*, Quickstep_*, StepDodge_* |
-| **6** | Prosthetic 忍义手 / CombatArt 战技 | Prosthetic_*, CombatArt_* |
-| **7** | Reaction（Hit / Death / Resurrection） | Hit_*, Death_*, Resurrection_* |
-| **8** | Interaction（Deathblow / Interact / Eavesdrop） | Deathblow_*, Interact_*, Eavesdrop_* |
-| **9** | 特殊状态（Hang / Swim / Wall / Roll） | Hang_*, Swim_*, Wall_*, Roll |
-| **10** | ItemUse / 道具 | ItemUse_* |
+| 分类 | 状态 | 优先级层 |
+|------|------|:--------:|
+| 地面 Locomotion | Idle / Walk / Jog / Run / Sprint | Layer 0 |
+| 空中 | JumpStart / FreeFall / Land | Layer 0 |
+| 蹲姿 | CrouchIdle / CrouchWalk / CrouchRun | Layer 0 |
+| 悬挂 | Hang_Idle / Hang_Move | Layer 0 替代 |
+| 游泳 | Swim_* / Dive_* | Layer 0 替代 |
+| 贴墙 | Wall_* | Layer 0 替代 |
+| 战斗 | Guard / Deflect / Attack | Layer 1 (UpperBody) |
+| 闪避 | Dodge / Quickstep | Layer 2 (FullBody) |
+| 忍义手 | Prosthetic | Layer 1 (UpperBody) |
+| 战技 | CombatArt | Layer 1 (UpperBody) |
+| 受击 | Hit | Layer 2 (FullBody) |
+| 死亡/回生 | Death / Resurrection | Layer 3 (Cinematic) |
+| 互动 | Deathblow / Interact / Eavesdrop | Layer 3 (Cinematic) |
+| 道具 | ItemUse | Layer 1 (UpperBody) |
 
 ---
 
-## 第二部分：技术方案
+## 第二部分：基于动画资源的技术方案
 
-### 2.1 整体架构
+### 2.1 动画资源分析
+
+Locomotion 核心动画分布：
+
+| Tier | TAE ID | 方向覆盖 | 原始姿态 | 转向动画 | 停止动画 | 过渡动画 |
+|:----:|:------:|:---------:|:--------:|:--------:|:--------:|:--------:|
+| **Idle** | 0 | 单方向 | 站立待机 | — | — | — |
+| **Walk** | 100-103 | **4方向** (F/B/L/R) | 走路 | 132-133 (TurnL/R) | 300-303 Stop + 10-13 | — |
+| **Jog** | 400-403 | **3方向** (F+FL+FR) | 小跑 | 432-433/442-443 (TurnL/R) | — | — |
+| **Run** | 500-503 | **4方向** (F/B/L/R) | 跑 | — | 600-603 Stop | — |
+| **Sprint** | 1151-1154 | **3方向** (F+FL+FR) + 1200 Loop | 冲刺 | — | 1402-1403 Stop | 1510-1512 Sprint→Idle/Jog/Run |
+
+**关键观察**：
+1. Walk 的循环动画是 200-203（WalkAlt），100-103 **不是 Walk 循环而是 Idle 起步到走路的过渡**
+2. Run 是完整 4 方向，Jog 和 Sprint **缺少后向和侧向**动画
+3. Idle 只有单方向 + 等待循环
+3. 转向动画：Walk_TurnL/R (132-133)、Jog_TurnL/R (432-433, 442-443)
+4. 停止动画：Walk_Stop (300-303)、Run_Stop (600-603)、Sprint_Stop (1402-1403)
+5. 速度降级过渡：Sprint_To_Idle/Jog/Run (1510-1512)
+
+### 2.2 BlendSpace 设计方案
+
+基于上述资源分析，Locomotion **不适合使用单一 2D BlendSpace 覆盖所有 Tier**，因为：
+
+- Jog 和 Sprint 缺少后向/侧向动画，单一 2D BS 会产生空洞
+- 每个 Tier 的方向数不一致，强行统一会浪费采样点或产生无效插值
+
+最佳方案是 **每个 Tier 一个独立的 1D Direction BlendSpace**，GroundMoveSM 保留 5 状态机架构：
+
+```
+GroundMoveSM (状态机)
+│
+├── Idle ──── Speed < 30 ──── SequencePlayer(Anim_Sekiro_a000_000000)
+│                             仅单方向原地待机
+│
+├── Walk ──── Speed 30~250 ── 1D BlendSpace(BS_Walk_Direction)
+│                             轴：Direction (-180°~180°)
+│                             采样：0°=Fwd, 90°=R, -90°=L, 180°=Bwd
+│                             资源：200 Fwd, 201 Bwd, 202 L, 203 R (WalkAlt 循环)
+│                                    100-103 是 Idle_ToWalk 起步过渡，不在 BS 内
+│
+├── Jog ───── Speed 250~450 ── 1D BlendSpace(BS_Jog_Direction)
+│                             轴：Direction (-180°~180°)
+│                             采样：0°=Fwd, -45°=Fwd_L, 45°=Fwd_R
+│                             资源：400 Fwd, 401 Fwd_L, 402 Fwd_R
+│                             缺少后向/侧向：回退方案 → 后向用 Fwd 镜像或 StateMachine 禁止后向 Jog
+│
+├── Run ───── Speed 450~600 ── 1D BlendSpace(BS_Run_Direction)
+│                             轴：Direction (-180°~180°)
+│                             采样：0°=Fwd, 90°=R, -90°=L, 180°=Bwd
+│                             资源：500 Fwd, 501 Bwd, 502 L, 503 R
+│
+└── Sprint ─ Speed 600+ ──── 1D BlendSpace(BS_Sprint_Direction)
+                             轴：Direction (-180°~180°)
+                             采样：0°=Fwd + Loop, -45°=Fwd_L, 45°=Fwd_R
+                             资源：1151 Fwd, 1152 Fwd_L, 1153 Fwd_R, 1200 Loop
+                             注意：Sprint_Loop(1200) 可能是循环态 → 可以作为主播放序列
+                                   1151-1154 作为起跑过渡
+                             缺少后向/侧向：Sprint 状态下禁止后向/侧向移动，强制转向
+```
+
+#### 为什么用 1D Direction BS 而不是 2D Speed×Direction
+
+| 方案 | 资产数 | ABP状态数 | 空洞问题 | 维护复杂度 |
+|:----:|:------:|:---------:|:--------:|:---------:|
+| 1个 2D BS (Speed×Direction) | 1 | 1 | ⚠️ Jog/Sprint 方向不全产生空洞 | 低 |
+| 4个 1D Direction BS + 5状态 | 4 | 5 | ✅ 每个 BS 只放实际有的方向 | 中 |
+| 2个 2D BS（Walk/Run一组，Jog/Sprint一组） | 2 | 2 | ⚠️ 仍需处理方向缺失 | 中 |
+
+**结论**：4个 1D Direction BS + 5 状态机，因为：
+1. 每个 BS 只放实际存在的动画样本点，不会产生空洞
+2. Idle 单独用 Sequence Player，性能更好
+3. 每个 Tier 的 Transition Rule 独立控制，灵活调整
+4. 后期加入 Crouch/Hang/Swim 等状态时，架构一致
+
+### 2.3 整体 ABP 层级架构
 
 ```
 ABP_Sekiro (AnimGraph)
 │
-├── [Layer 0]  Locomotion ─── 始终运行，优先级 0
-│   ├── GroundMoveSM  ──── 地面移动（站立 + Crouch）
-│   ├── AirSM  ──────────── 空中（Jump / FreeFall / Land）
-│   ├── HangSM ──────────── 悬挂
-│   ├── SwimSM ──────────── 游泳
-│   └── WallSM ──────────── 贴墙
+├── [Layer 0]  Locomotion ─── 优先级 0，始终运行，通过 Blend Poses by Bool 切换
+│   │
+│   ├── bIsInAir=true → AirSM
+│   │   ├── JumpStart ── 起跳（触发式，播完过渡到 FreeFall）
+│   │   ├── FreeFall ─── 空中循环
+│   │   └── Land ─────── 落地（触发式，播完回 GroundSM）
+│   │
+│   ├── bIsCrouching=true → CrouchSM
+│   │   ├── CrouchIdle ── Crouch_Idle(5000)
+│   │   ├── CrouchWalk ── 1D BS (CrouchWalk_* 5200-5203)
+│   │   └── CrouchRun ─── 1D BS (CrouchRun_* 5500-5503)
+│   │
+│   └── else → GroundMoveSM（主要状态机）
+│       ├── Idle
+│       ├── Walk ─── 1D BS: BS_Walk_Direction
+│       ├── Jog ──── 1D BS: BS_Jog_Direction
+│       ├── Run ──── 1D BS: BS_Run_Direction
+│       └── Sprint ─ 1D BS: BS_Sprint_Direction
 │
-├── [Layer 1]  UpperBody ── 腰以上覆盖，优先级 2
-│   ├── Guard / Deflect
-│   ├── Attack
-│   ├── Prosthetic
-│   ├── CombatArt
-│   └── ItemUse
+├── [Layer 1]  UpperBody ─── Slot: UBSlot, Blend Per Bone (Spine+)
+│   ├── Guard ──── Montage (a050)
+│   ├── Deflect ── Montage (a050)
+│   ├── Attack ─── Montage (a050/a100)
+│   ├── Prosthetic ─ Montage (a070)
+│   ├── CombatArt ── Montage (a100-110)
+│   └── ItemUse ──── Montage (250000)
 │
-├── [Layer 2]  FullBody ─── 全身覆盖，优先级 5
-│   ├── Dodge / Quickstep / StepDodge
-│   ├── SprintAttack
-│   ├── Hit
-│   └── Roll
+├── [Layer 2]  FullBody ──── Slot: FBSlot, 全身覆盖
+│   ├── Dodge ───── Montage
+│   ├── Hit ─────── Montage (100000/190000)
+│   └── Roll ────── Montage (206000)
 │
-└── [Layer 3]  Cinematic ── 完全覆盖，优先级 8
-    ├── Death / Resurrection
-    ├── Deathblow
-    ├── Interact
-    └── Eavesdrop
+└── [Layer 3]  Cinematic ─── Slot: CineSlot, 完全覆盖
+    ├── Death ─────── Montage (110000)
+    ├── Resurrection ─ Montage
+    ├── Deathblow ──── Montage (a200)
+    └── Interact ───── Montage (700000)
 ```
 
-### 2.2 C++ 接口
+### 2.4 C++ 接口
 
-`USKAnimInstance` 已暴露以下变量直接给 ABP 蓝图读取：
+已完成，无需修改。
 
-| UPROPERTY | 类型 | 说明 |
-|-----------|------|------|
-| Speed | float | Velocity.Size2D() |
-| Angle | float | -180°~180° 移动方向角 |
-| MovementTier | ESKMovementTier | Idle / Walk / Jog / Run / Sprint / Crouch |
-| Direction | ESKLocomotionDirection | 8 方向：Fwd, Fwd_L, L, Bwd_L, Bwd, Bwd_R, R, Fwd_R |
-| bIsInAir | bool | IsFalling() |
-| bIsCrouching | bool | bIsCrouched |
-| bIsDodging | bool | 闪避中 |
-| DodgeDirection | float | 闪避角度 |
-| InputIntent | FName | 当前输入意图 |
+`USKAnimInstance` 已暴露给 ABP 蓝图：
 
-`USKAnimationController` 提供运行时状态机 + 优先级系统（已实现，不改）。
+| UPROPERTY | 类型 | 来源 | 用途 |
+|-----------|------|------|------|
+| Speed | float | Velocity.Size2D() | BlendSpace 状态切换 |
+| Angle | float | -180°~180° | 方向混合 |
+| MovementTier | ESKMovementTier | Idle/Walk/Jog/Run/Sprint/Crouch | 状态选择 |
+| Direction | ESKLocomotionDirection | 8 方向枚举 | 蓝图逻辑 |
+| bIsInAir | bool | MovementComponent->IsFalling() | 空中/地面切换 |
+| bIsCrouching | bool | Character->bIsCrouched | 蹲姿/站立切换 |
+| InputIntent | FName | 当前输入意图 | 触发动作 |
 
-### 2.3 Phase 1：站立 Locomotion 详细设计
+### 2.5 GroundMoveSM 详细设计
 
-#### 子状态机
+#### 2.5.1 Idle 变体
 
-```
-GroundMoveSM (bIsCrouching=false)
-│
-├── Idle ──── Speed < 30 ──── SequencePlayer(Idle_Default)
-│
-├── Walk ──── Speed 30~250 ── 2D BlendSpace
-│   ├── X: Speed (±50, 中心 150)
-│   └── Y: Direction (-180°~180°)
-│       0°=Walk_Fwd, 180°=Walk_Bwd, -90°=Walk_L, 90°=Walk_R
-│
-├── Jog ───── Speed 250~450 ── 2D BlendSpace
-│   ├── X: Speed (±50, 中心 350)
-│   └── Y: Direction (-180°~180°)
-│       0°=Jog_Fwd, -45°=Jog_Fwd_L, 45°=Jog_Fwd_R
-│
-├── Run ───── Speed 450~600 ── 2D BlendSpace
-│   ├── X: Speed (±50, 中心 500)
-│   └── Y: Direction (-180°~180°)
-│       0°=Run_Fwd, 180°=Run_Bwd, -90°=Run_L, 90°=Run_R
-│
-└── Sprint ── Speed 600+ ──── 2D BlendSpace
-    ├── X: Speed (±50, 中心 600)
-    └── Y: Direction (-180°~180°)
-        0°=Sprint_Fwd, -45°=Sprint_Fwd_L, 45°=Sprint_Fwd_R
-```
+| 变体 | 动画资源 | 切换方式 |
+|:----:|:---------|:---------|
+| 默认 | `Anim_Sekiro_a000_000000` | 常规待机 |
+| 拔刀 | 需确认是否有独立动画 | C++ InputIntent 或战斗标志 |
+| 战斗态 | 同上 | bIsLockedOn 或 bInCombat |
 
-#### 状态过渡
+#### 2.5.2 Speed 阈值与 Transition Rule
 
-| 切换 | 条件 | 方式 |
-|------|------|------|
-| Idle↔Walk | Speed 30 / 20 | InertialBlend 0.2s |
-| Walk↔Jog | Speed 250 / 200 | InertialBlend 0.25s |
-| Jog↔Run | Speed 450 / 400 | InertialBlend 0.3s |
-| Run↔Sprint | Speed 600 / 400 | InertialBlend 0.2s |
-| Walk→Idle 停止 | Speed < 20 | Transition（播对应方向 Stop） |
-| Run→Idle 停止 | Speed < 20 | Transition（播对应方向 Stop） |
-| Sprint→Idle 停止 | Speed < 20 | Transition（播对应方向 Stop） |
-| 降级过渡（Run→Jog 等） | Speed 低于阈值 | Transition（播过渡动画） |
+状态切换统一用 Rule Evaluator，基于 Speed 比较。
 
-#### Idle 变体
+Phase 1 默认与当前 C++ 运行时 `USKAnimationController::EvaluateLocomotionState` 对齐：Idle `<10`、Walk `<200`、Jog `<400`、Run `<600`、Sprint `>=600`。如后续要调手感，应同步调整 C++、ABP Transition Rule 与 PIE 验证脚本。
 
-| 条件 | 动画 | 说明 |
-|------|------|------|
-| 非战斗 | `Idle_Default` | 默认站立待机 |
-| 拔刀 | `Idle_WeaponOut` | 含 _L/_R/_Shift 重心偏移变体 |
-| 战斗态 | `Idle_Combat` | 含 _L/_R/_Shift 变体 |
-| 收刀 | `Idle_WeaponSheathe` | 单次过渡，播完回 Default |
+| 过渡 | 条件（Speed） | 过渡方式 |
+|:----:|:-------------:|:--------:|
+| Idle → Walk | Speed >= 10 | 过渡动画(Idle_ToWalk_Fwd/Bwd/L/R, 100-103) 0.15s |
+| Walk → Idle | Speed < 10 | 过渡动画(Walk_Stop) 0.15s |
+| Walk → Jog | Speed >= 200 | InertialBlend 0.25s |
+| Jog → Walk | Speed < 200 | InertialBlend 0.25s |
+| Jog → Run | Speed >= 400 | InertialBlend 0.3s |
+| Run → Jog | Speed < 400 | InertialBlend 0.3s |
+| Run → Sprint | Speed >= 600 | InertialBlend 0.2s |
+| Sprint → Run | Speed < 600 | 过渡动画(Sprint_To_Run) 0.2s |
+| Sprint → Idle(direct) | Speed < 10 | 过渡动画(Sprint_To_Idle) 0.2s |
+| Run → Idle(direct) | Speed < 10 | 过渡动画(Run_Stop) 0.15s |
+| Walk → Idle(direct) | Speed < 10 | 过渡动画(Walk_Stop) 0.15s |
 
-#### 过渡动画映射
+#### 2.5.3 过渡动画映射
 
-| 方向 | Walk→Stop | Run→Stop | Sprint→Stop |
-|------|-----------|----------|-------------|
-| Fwd | `Walk_Fwd_Stop` | `Run_Fwd_Stop` | `Sprint_Fwd_Stop` |
-| Bwd | `Walk_Bwd_Stop` | `Run_Bwd_Stop` | `Sprint_Bwd_Stop` |
-| L | `Walk_L_Stop` | `Run_L_Stop` | — |
-| R | `Walk_R_Stop` | `Run_R_Stop` | — |
+过渡动画：
 
-| 降级 | 动画 |
-|------|------|
-| Sprint→Run | `Sprint_To_Run` |
-| Sprint→Jog | `Sprint_To_Jog` |
-| Sprint→Idle | `Sprint_To_Idle` |
-| Run→Jog | `Run_To_Jog` |
-| Run→Walk | `Run_To_Walk` |
-| Run→Idle | `Run_To_Idle` |
-| Walk→Idle(急停转身) | `Walk_Stop_Turn` |
+| 场景 | 前向 | 后向 | 左 | 右 |
+|:----:|:----:|:----:|:--:|:--:|
+| Idle→Walk 起步 | Idle_ToWalk_Fwd (100) | Idle_ToWalk_Bwd (101) | Idle_ToWalk_L (102) | Idle_ToWalk_R (103) |
+| Walk→Idle 停止 | Walk_Fwd_Stop (300) | Walk_Bwd_Stop (303) | Walk_L_Stop (302) | Walk_R_Stop (301) |
+| Run→Idle 停止 | Run_Fwd_Stop (600) | Run_Bwd_Stop (603) | Run_L_Stop (602) | Run_R_Stop (601) |
+| Sprint→Idle 停止 | Sprint_Fwd_Stop (1402) | Sprint_Bwd_Stop (1403) | — | — |
 
-#### 转向
+降级过渡（Sprint → 低速状态）：
+
+| 过渡 | 动画 |
+|:----:|:----|
+| Sprint → Idle | `Sprint_To_Idle` (1510) |
+| Sprint → Jog | `Sprint_To_Jog` (1511) |
+| Sprint → Run | `Sprint_To_Run` (1512) |
+
+#### 2.5.4 转向层
 
 | 当前状态 | 左转 | 右转 | 触发条件 |
-|---------|------|------|---------|
-| Walk | `Walk_TurnL` | `Walk_TurnR` | Angle 突变 > 90° |
-| Jog | `Jog_TurnL` | `Jog_TurnR` | Angle 突变 > 90° |
+|:--------:|:----:|:----:|:--------:|
+| Walk | Walk_TurnL (132) | Walk_TurnR (133) | Angle 突变 > 90° |
+| Jog | Jog_TurnL (432) / (442) | Jog_TurnR (433) / (443) | Angle 突变 > 90° |
 
-转向动画与 BlendSpace 交叉淡化 0.15s。
+转向动画通过 `Transition Node` 与当前 BlendSpace 交叉淡化 0.15s。
 
-### 2.4 Phase 2：过渡 + 转向（Phase 1 子集）
+### 2.6 AirSM 详细设计
 
-同 Phase 1 过渡规则实现，以过渡动画和 Transition Node 替代 InertialBlend。
+| 状态 | 动画资源 | 备注 |
+|:----:|:---------|:----:|
+| JumpStart | `Anim_Sekiro_Jump_*` (200000开头) | 起跳，播完切 FreeFall |
+| FreeFall | `Anim_Sekiro_Airborne_*` (200000开头) | 空中循环 |
+| Land | `Anim_Sekiro_Land_*` (200000开头) | 落地，播完回 GroundMoveSM |
 
-### 2.5 Phase 3：Jump / Air / Land
+### 2.7 CrouchSM 详细设计
 
-```
-AirSM (bIsInAir=true)
-│
-├── JumpStart ──── Jump_*(起跳)
-├── FreeFall ───── Airborne_*(空中)
-└── Land ───────── Land_*(落地)
-```
+| 状态 | BlendSpace | 动画资源 |
+|:----:|:----------:|:---------|
+| CrouchIdle | 无（单动画） | Crouch_Idle (5000) |
+| CrouchWalk | 1D Direction BS | CrouchWalk_Fwd/Bwd/L/R (5200-5203) |
+| CrouchRun | 1D Direction BS | CrouchRun_Fwd/Bwd/L/R (5500-5503) |
 
-- `bIsInAir` 上升沿：进入 AirSM，播 JumpStart
-- `bIsInAir` 为 true 且非上升沿：FreeFall 循环
-- `bIsInAir` 下降沿：播 Land，完成后回 GroundMoveSM
+Crouch 过渡动画：Crouch_ToWalk (5010-5013)、Crouch_WalkStart (5100-5103)、Crouch_WalkToIdle (5300-5303)、Crouch_RunStart (5400-5403)、Crouch_Turn (5600-5603)
 
-### 2.6 Phase 4：Crouch
+### 2.8 Combat Layer（Phase 2+ 范围）
 
-```
-CrouchSM (bIsCrouching=true)
-│
-├── CrouchIdle ──── Idle 变体 → Crouch_Idle(5000)
-├── CrouchWalk ──── 2D BlendSpace(Crouch_WalkLoop_Fwd/Bwd/L/R)
-├── CrouchRun ───── 2D BlendSpace(Crouch_RunLoop_Fwd/Bwd/L/R)
-├── 过渡 ────────── Crouch_ToWalk_* / Crouch_WalkStart_* / Crouch_RunStart_*
-└── 停止 ────────── Crouch_WalkToIdle_*
-```
+所有 Combat 动作通过 `Slot + AnimMontage` 系统播放，`USKAnimationController::TryPlayAction` 触发 Montage。
 
-bIsCrouching 变化时 Transition 0.15s，各方向 4 方向 BlendSpace。
+Layer 1 UpperBody（腰以上覆盖）：
+- **Guard**: 防御姿态 Hold，`Anim_Sekiro_Guard_*` (a050 0开头)
+- **Deflect**: 弹刀，`Anim_Sekiro_Deflect_*` (a050 2开头)
+- **Attack**: 连段攻击，`Anim_Sekiro_AttackPose_*` (a050 3开头)
+- **Prosthetic**: 忍义手动画（a070 开头，含多种类）
+- **CombatArt**: 战技动画（a100-110，11种）
+- **ItemUse**: 使用道具（250000开头）
 
-### 2.7 Phase 5：Combat
+Layer 2 FullBody（全身覆盖）：
+- **Dodge**: 垫步闪避
+- **Hit**: 受击反馈 `Anim_Sekiro_Hit_*`
+- **Roll**: 翻滚 `Anim_Sekiro_Roll`
 
-```
-Layer 1 (UpperBody) — Slot: UpperBodySlot, BlendPerBone(Spine+)
-│
-├── Guard ──── Hold 防御，使用 Guard_*
-├── Deflect ── 弹刀窗口内触发，使用 Deflect_*
-├── Attack ─── 连段攻击，使用 AttackPose_*
-│
-Layer 2 (FullBody)
-├── Dodge ──── Quickstep_Fwd/Bwd/L/R + StepDodge_Fwd/Bwd/L/R/Dash
-└── SprintAttack ── Sprint_R1 / Sprint_Thrust
-```
-
-动作通过 `USKAnimationController::TryPlayAction` 触发 Montage，由 `Montage_Play` 播放在对应 Slot。
-
-### 2.8 Phase 6~10 概要
-
-后续各阶段复用 Layer 结构，优先级叠层机制一致：
-- **Prosthetic / CombatArt** → UpperBody Slot
-- **Hit / Roll** → FullBody Slot
-- **Death / Deathblow / Interact** → Cinematic Slot
-- **Hang / Swim / Wall** → 替代 Locomotion 层整层
+Layer 3 Cinematic（完全覆盖）：
+- **Death**: 死亡动画 `Anim_Sekiro_Death_*`
+- **Resurrection**: 回生动画
+- **Deathblow**: 忍杀 `Anim_Sekiro_Deathblow_*`
+- **Interact**: 交互 `Anim_Sekiro_Interact_*`
 
 ### 2.9 数据流总图
 
 ```
-每帧 NativeUpdateAnimation():
+NativeUpdateAnimation() (C++ 每帧更新):
   Speed = Velocity.Size2D()
   Angle = CalculateDirection(Velocity, ActorRotation)
-  Direction = 量化 8 方向 (基于移动输入)
+  Direction = 量化 8 方向
   MovementTier = MovementComponent->CurrentMovementTier
   bIsInAir = MovementComponent->IsFalling()
   bIsCrouching = Character->bIsCrouched
           │
           ▼
 ABP AnimGraph:
-  1. StateMachine 选择子状态（Idle/Walk/Jog/Run/Sprint/Crouch/Air）
-  2. BlendSpace 根据 Speed + Direction 插值
-  3. Transition 处理停止/转向/速度变化
-  4. Slot 系统处理上层覆盖（Combat/Action/Cinematic）
+  1. bIsInAir → AirSM | bIsCrouching → CrouchSM | else → GroundMoveSM
+  2. GroundMoveSM: Speed 阈值选 Idle/Walk/Jog/Run/Sprint 状态
+  3. 每个状态内: 1D BlendSpace(Direction) 混合方向
+  4. Transition: 停止/转向/降级过渡播过渡动画
+  5. Slot系统: UpperBody/FullBody/Cinematic 叠层覆盖
           │
           ▼
-  Final Pose → Mesh
+  Final Pose → SkeletalMesh
 ```
 
 ---
 
 ## 第三部分：实施计划
 
-### 3.1 Phase 1 实施子任务
+### 3.1 分阶段路线
 
-| # | 任务 | 预计工作量 |
-|---|------|-----------|
-| 1.1 | 在 ABP_Sekiro 中创建 GroundMoveSM 5 个子状态 | 蓝图 1h |
-| 1.2 | 创建 5 个 2D BlendSpace 资产（Walk/Jog/Run/Sprint/Idle） | 蓝图 1.5h |
-| 1.3 | BlendsSpace 采样点配置 + 动画绑定 | 蓝图 0.5h |
-| 1.4 | Speed 阈值 Transition Rule：Idle↔Walk↔Jog↔Run↔Sprint | 蓝图 1.5h |
-| 1.5 | 过渡动画映射：Stop 方向动画 + Speed 降级过渡 | 蓝图 1h |
-| 1.6 | 转向层：Walk_Turn / Jog_Turn | 蓝图 0.5h |
-| 1.7 | Idle 变体切换（非战斗/拔刀/战斗态） | 蓝图 0.5h |
-| 1.8 | PIE 全链路测试 | 测试 1h |
+| 阶段 | 内容 | 核心动画资源 | 状态 |
+|:----:|------|:------------:|:----:|
+| **1a** | GroundMoveSM 基础状态 | Idle/Walk/Jog/Run/Sprint 循环 | ⬜ |
+| **1b** | BlendSpace 创建 + 采样绑定 | 各方向循环动画绑定到 1D BS | ⬜ |
+| **1c** | Speed 阈值 Transition Rule | Idle↔Walk↔Jog↔Run↔Sprint | ⬜ |
+| **1d** | 停止/降级过渡动画映射 | Walk_Stop/Run_Stop/Sprint_To_* | ⬜ |
+| **1e** | 转向层 + Idle 变体 | Walk_Turn/Jog_Turn + 战斗态 Idle | ⬜ |
+| **1f** | PIE 测试 + 参数调优 | 全 speed 范围 + 过渡效果 | ⬜ |
+| **2** | AirSM (Jump/Air/Land) | Jump_*/Airborne_*/Land_* (200000) | ⏳ |
+| **3** | CrouchSM | Crouch_* (5000-5603) | ⏳ |
+| **4** | Combat Layer | Guard/Deflect/Attack (a050) | ⏳ |
+| **5** | Prosthetic + CombatArt | a070-a079, a100-a110 | ⏳ |
+| **6** | Reaction (Hit/Death/Resurrection) | Hit_*/Death_*/Resurrection_* | ⏳ |
+| **7** | Interaction (Deathblow/Interact/Eavesdrop) | a200-250 互动 | ⏳ |
+| **8** | 特殊状态 (Hang/Swim/Wall/Roll) | 独立 Locomotion 替代 | ⏳ |
 
 ### 3.2 涉及文件
 
-| 文件 | 操作 |
-|------|------|
-| `Docs/animation_annotation.md` | ✅ 已有，持续更新 |
-| `Docs/design/sekiro-anim-blueprint.md` | ✅ 本文 |
-| `Content/Characters/Sekiro/ABP_Sekiro.uasset` | ✅ 主要修改 |
-| `Content/Characters/Sekiro/SK_Locomotion_BS` | 可能需要重建为多个 2D BS |
-| `Source/Sekiro/Animation/SKAnimInstance.h/.cpp` ⬜ 无需修改 |
-| `Source/Sekiro/Movement/SKMovementComponent.h/.cpp` ⬜ 无需修改 |
+| 文件 | 操作 | 说明 |
+|:----|:----:|:-----|
+| `Content/Characters/Sekiro/ABP_Sekiro.uasset` | 修改 | 全部层级 + 状态机结构 |
+| `Content/Characters/Sekiro/Anim/Sekiro_Walk_2D.uasset` | 参考/迁移 | 旧 2D Walk BlendSpace，Phase 1 可参考采样绑定 |
+| `Content/Characters/Sekiro/Anim/Sekiro_Run_2D.uasset` | 参考/迁移 | 旧 2D Run BlendSpace，Phase 1 可参考采样绑定 |
+| `Content/Characters/Sekiro/Anim/BS_Walk_Direction` | 新建 | Walk 1D Direction BlendSpace |
+| `Content/Characters/Sekiro/Anim/BS_Jog_Direction` | 新建 | Jog 1D Direction BlendSpace |
+| `Content/Characters/Sekiro/Anim/BS_Run_Direction` | 新建 | Run 1D Direction BlendSpace |
+| `Content/Characters/Sekiro/Anim/BS_Sprint_Direction` | 新建 | Sprint 1D Direction BlendSpace |
+| `Content/Characters/Sekiro/Anim/BS_CrouchWalk_Direction` | 新建 | CrouchWalk 1D Direction BS（Phase 3） |
+| `Content/Characters/Sekiro/Anim/BS_CrouchRun_Direction` | 新建 | CrouchRun 1D Direction BS（Phase 3） |
+| `Source/Sekiro/Animation/SKAnimInstance.h/.cpp` | ⬜ 无需修改 | C++ 接口已完备 |
+| `Source/Sekiro/Animation/SKAnimationController.h/.cpp` | ⬜ 无需修改 | 状态机已完备 |
+
+### 3.3 Agent 派发
+
+所有 ABP 操作通过 `aibridge → anim_blueprint` 系列命令在 UE 编辑器中进行，不需要修改 C++ 代码。
+
+| 步骤 | 任务 | 负责 |
+|:----:|:----|:----:|
+| 1 | 创建 4 个 1D BlendSpace 资产 | aibridge asset create |
+| 2 | 逐个配置 BlendSpace 采样点和绑定动画 | aibridge blueprint |
+| 3 | ABP GroundMoveSM 扩展（添加 Jog/Run/Sprint 状态） | aibridge anim_blueprint |
+| 4 | 设置 Transition Rule（Speed 阈值） | aibridge anim_blueprint |
+| 5 | 添加停止/过渡动画 Transition | aibridge anim_blueprint |
+| 6 | 添加转向层 + Idle 变体 | aibridge anim_blueprint |
+| 7 | PIE 测试 + 参数调优 | aibridge pie |
 
 ---
 
 ## 变更记录
 
 | 日期 | 变更 |
-|------|------|
+|:----:|:-----|
 | 2026-06-28 | 创建；ALS 参考架构 + Phase 1 Locomotion 设计 |
-| 2026-06-30 | 重写；对齐最新 animation_annotation.md 动画资产清单，统一命名，10 阶段路线 |
+| 2026-06-30 | 重写 Phase 1（10阶段→8阶段）；对齐最新 animation_annotation.md |
+| 2026-06-30 | **基于动画资源重写**：4个1D Direction BS 替代 5个2D BS；完整映射实际动画 ID 到每个采样点；Locomotion 数据驱动设计；新增 AirSM/CrouchSM 资源映射 |
+| 2026-07-02 | 对齐当前仓库状态：补充旧 2D BlendSpace 资产；将 GroundMoveSM 阈值统一到现有 C++ 运行时 `10/200/400/600` |

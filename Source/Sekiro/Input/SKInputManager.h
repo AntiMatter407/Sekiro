@@ -1,16 +1,17 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "InputActionValue.h"
-#include "SKInputHandler.generated.h"
+#include "Movement/SKMovementComponent.h"
+#include "SKInputManager.generated.h"
 
 // ============================================================================
-// USKInputHandler — 输入处理组件
+// USKInputManager — 输入管理组件
 //     接收 Enhanced Input 事件，转换为动作意图
-//     供 USKAnimationController / 战斗系统 / 交互系统消费
+//     供 AnimBlueprint / 战斗系统 / 交互系统消费
 // ============================================================================
 
 class UInputMappingContext;
@@ -39,12 +40,12 @@ struct SEKIRO_API FSKBufferedInput
 };
 
 UCLASS(ClassGroup=(Input), meta=(BlueprintSpawnableComponent))
-class SEKIRO_API USKInputHandler : public UActorComponent
+class SEKIRO_API USKInputManager : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	USKInputHandler();
+	USKInputManager();
 
 	// ── 初始化 ──────────────────────────────────────────────
 
@@ -118,6 +119,9 @@ public:
 	FVector2D GetMoveIntent() const;                 // 移动方向（归一化）
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
+	float GetMoveInputAmount() const;                // 移动输入强度（0-1，保留摇杆轻推幅度）
+
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	FVector2D GetLookIntent() const;                 // 视角方向
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
@@ -128,6 +132,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	bool IsDodgeHeld() const;                        // 闪避键按住
+
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	bool IsDodgeActive() const;                      // 闪避动作窗口是否有效
+
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	bool IsWalkHeld() const;                         // 步行修饰键按住
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	float GetAttackHoldTime() const;                 // 攻击长按时间（秒）
@@ -142,17 +152,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	float GetTimeSinceLastAttack() const;            // 距上次攻击时间
-
-	// ── 视角配置（从 ASKCharacter 迁移）─────────────────────
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity")
-	float LookSensitivityYaw = 1.0f;                  // 视角 Yaw 灵敏度
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity")
-	float LookSensitivityPitch = 1.0f;                // 视角 Pitch 灵敏度
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity")
-	bool bInvertPitch = false;                        // Pitch 反转
 
 protected:
 	virtual void BeginPlay() override;
@@ -175,9 +174,14 @@ protected:
 	// ── 闪避/冲刺回调 ──────────────────────────────────────
 
 	UFUNCTION()
-	void OnDodgeStarted(const FInputActionValue& Value);   // 闪避按下 → 垫步 + 冲刺
+	void OnDodgeStarted(const FInputActionValue& Value);   // 闪避键按下开始计时
 	UFUNCTION()
-	void OnDodgeCompleted(const FInputActionValue& Value); // 闪避松开
+	void OnDodgeCompleted(const FInputActionValue& Value); // 闪避键松开，短按生成闪避
+
+	UFUNCTION()
+	void OnWalkModifierStarted(const FInputActionValue& Value); // 步行修饰按下
+	UFUNCTION()
+	void OnWalkModifierCompleted(const FInputActionValue& Value); // 步行修饰松开
 
 	// ── 蹲下回调 ────────────────────────────────────────────
 
@@ -224,6 +228,12 @@ protected:
 	void OnMenuStarted(const FInputActionValue& Value);  // 菜单
 
 private:
+	// ── 移动档位解析 ──────────────────────────────────────────
+
+	ESKMovementTier ResolveMovementTierFromInput(float InputMagnitude) const; // 根据按键/摇杆推力解析目标移动档位
+	void ApplyDesiredMovementTier(float InputMagnitude);                      // 将目标移动档位写入移动组件
+	void QueueDodgePressed();                                                 // 短按闪避键时生成一次闪避输入
+
 	// ── InputAction 引用（17 个，从 ASKCharacter 迁移）─────
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
@@ -243,6 +253,9 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> DodgeAction;                // 闪避
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> WalkModifierAction;         // 步行修饰
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputAction> InteractAction;             // 交互
@@ -302,11 +315,33 @@ private:
 	// ── 持续型意图 ──────────────────────────────────────────
 
 	FVector2D MoveIntent = FVector2D::ZeroVector;    // 移动方向（归一化，X=右, Y=前）
+	float MoveInputAmount = 0.f;                     // 移动输入强度（0-1，摇杆轻推用于 Walk/Run 迟滞）
+	float MoveInputReleaseBufferRemaining = 0.f;     // 移动输入释放缓冲剩余时间（过滤 Enhanced Input 的瞬时 0 值）
 	FVector2D LookIntent = FVector2D::ZeroVector;    // 视角方向（原始值）
 	bool bAttackHeld = false;                        // 攻击键按住
 	bool bGuardHeld = false;                         // 防御键按住
 	bool bDodgeHeld = false;                         // 闪避键按住（冲刺用）
+	bool bDodgeActive = false;                       // 闪避动作窗口有效
+	bool bWalkHeld = false;                          // 步行修饰键按住
 	bool bProstheticHeld = false;                    // 义手键按住
+
+	float DodgeHoldTime = 0.f;                       // 闪避键按住时长（短按=闪避，长按=冲刺）
+	float DodgeActiveTimeRemaining = 0.f;            // 闪避动作窗口剩余时间
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
+	float SprintHoldThreshold = 0.18f;               // 加速键按住超过该时间才进入 Sprint
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
+	float DodgeActiveDuration = 0.35f;               // 短按闪避后保持闪避状态的默认时长
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
+	float MoveInputReleaseBufferDuration = 0.08f;    // 移动输入释放缓冲时长（防止 Alt+方向键等组合导致动画输入跳变）
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
+	float AnalogWalkEnterThreshold = 0.50f;          // 从 Run 回到 Walk 的轻推阈值（低于该值才降档）
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
+	float AnalogRunEnterThreshold = 0.62f;           // 从 Walk 进入 Run 的正常推动阈值（高于该值才升档）
 
 	// ── 长按计时 ────────────────────────────────────────────
 

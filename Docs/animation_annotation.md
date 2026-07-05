@@ -10,25 +10,25 @@
 |------|-----|---------|-----------------|
 | a000 | 0 | idle | `Anim_Sekiro_Idle_Default` |
 |  | 10~13 | 似乎是走路停止 | `Anim_Sekiro_Walk_Stop_*` |
-|  | 100-103 | 前后左右的走路 | `Anim_Sekiro_Walk_Fwd` / `_Bwd` / `_L` / `_R` |
+|  | 100-103 | idle 起步到走路的过渡 | `Anim_Sekiro_Idle_ToWalk_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 110-113 | 深蹲到前后左右的走路 | `Anim_Sekiro_CrouchWalk_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 120-123 | 浅蹲到前后左右的走路 | `Anim_Sekiro_ShortCrouchWalk_Fwd` / `_Bwd` / `_L` / `_R` |
-|  | 132-133 | 左右转向前面的过渡动画 | `Anim_Sekiro_Walk_TurnL` / `_TurnR` |
+|  | 132-133 | 站立状态左右转向起步动画，不是 Walk 循环中的转向动画 | `Anim_Sekiro_Stand_TurnStart_L` / `_R` |
 |  | 200-203 | 前后左右的走路动画,和100-103差不多 | `Anim_Sekiro_WalkAlt_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 300-303 | 前后左右的走路到停止站立 | `Anim_Sekiro_Walk_Fwd_Stop` / `_Bwd_Stop` / `_L_Stop` / `_R_Stop` |
-|  | 400-403 | 站立到前后左右加速小跑 | `Anim_Sekiro_Jog_Fwd` / `_Fwd_L` / `_Fwd_R` |
-|  | 410-413 | 深蹲到前后左右的加速小跑 | `Anim_Sekiro_CrouchJog_Fwd` / `_Bwd` / `_L` / `_R` |
-|  | 420-423 | 浅蹲到前后左右的加速小跑 | `Anim_Sekiro_ShortCrouchJog_Fwd` / `_Bwd` / `_L` / `_R` |
-|  | 432-433 | 左右转向前面小跑的过渡动画 | `Anim_Sekiro_Jog_TurnL` / `_TurnR` |
-|  | 442-443 | 和432-433类似 | `Anim_Sekiro_Jog_TurnL2` / `_TurnR2` |
-|  | 500-503 | 前后左右小跑 | `Anim_Sekiro_Run_Fwd` / `_Bwd` / `_L` / `_R` |
-|  | 600-603 | 前后左右小跑到停止 | `Anim_Sekiro_Run_Fwd_Stop` / `_Bwd_Stop` / `_L_Stop` / `_R_Stop` |
+|  | 400-403 | 站立到前后左右跑步的起步过渡，不是循环动画 | `Anim_Sekiro_Stand_ToRun_Fwd` / `_Bwd` / `_L` / `_R` |
+|  | 410-413 | 深蹲到前后左右跑步的起步过渡 | `Anim_Sekiro_Crouch_ToRun_Fwd` / `_Bwd` / `_L` / `_R` |
+|  | 420-423 | 浅蹲到前后左右跑步的起步过渡 | `Anim_Sekiro_ShortCrouch_ToRun_Fwd` / `_Bwd` / `_L` / `_R` |
+|  | 432-433 | 站立状态左右转向到前向 Run 的起步过渡，不是 Run 循环中的转向动画 | `Anim_Sekiro_Stand_TurnToRun_L` / `_R` |
+|  | 442-443 | 从后向按左/右方向转到前向 Run 的起步过渡，不是 Run 循环中的转向动画 | `Anim_Sekiro_Back_TurnToRun_L` / `_R` |
+|  | 500-503 | 前后左右跑步循环 | `Anim_Sekiro_Run_Fwd` / `_Bwd` / `_L` / `_R` |
+|  | 600-603 | 前后左右跑步到停止 | `Anim_Sekiro_Run_Fwd_Stop` / `_Bwd_Stop` / `_L_Stop` / `_R_Stop` |
 |  | 1151-1154 | 不同方向开始朝前冲刺 | `Anim_Sekiro_Sprint_Fwd` / `_Fwd_L` / `_Fwd_R` / `_Fwd_Bwd` |
 |  | 1200 | 冲刺动画 | `Anim_Sekiro_Sprint_Loop` |
 |  | 1402-1403 | 左右急停 | `Anim_Sekiro_Sprint_Fwd_Stop` / `_Bwd_Stop` |
 |  | 1410 | 冲刺动画（只有几帧） | `Anim_Sekiro_Sprint_Burst` |
 |  | 1500 | 未知 | — |
-|  | 1510-1512 | 不同方向急停到站立 | `Anim_Sekiro_Sprint_To_Idle` / `_To_Jog` / `_To_Run` |
+|  | 1510-1512 | 冲刺降速/急停过渡 | `Anim_Sekiro_Sprint_To_Idle` / `_Transition_1511` / `_To_Run` |
 |  | 5000 | 蹲 | `Anim_Sekiro_Crouch_Idle` |
 |  | 5010-5013 | 不同方向的蹲到蹲走 | `Anim_Sekiro_Crouch_ToWalk_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 5100-5103 | 不同方向的开始蹲走 | `Anim_Sekiro_Crouch_WalkStart_Fwd` / `_Bwd` / `_L` / `_R` |
@@ -60,6 +60,7 @@
 |  | 205000开头 | 贴墙偷听 | `Anim_Sekiro_Wall_Eavesdrop` |
 |  | 206000开头 | 翻滚 | `Anim_Sekiro_Roll` |
 |  | 210000开头 | 这种类型的都有，不好分类 | `Anim_Sekiro_Misc_*` |
+|  | 213301-213304 | 前后左右垫步/闪避动画，不是下段跳跃 | `Anim_Sekiro_StepDodge_Alt_Fwd` / `_L` / `_R` / `_Bwd` |
 |  | 220000开头 | 这种状态的窃听的动作 | `Anim_Sekiro_Eavesdrop_*` |
 |  | 226000开头 | 杵刀的动作 | `Anim_Sekiro_StaffLean_*` |
 |  | 250000开头 | 使用各种道具的动作 | `Anim_Sekiro_ItemUse_*` |

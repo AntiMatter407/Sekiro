@@ -1,9 +1,9 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SKCharacter.h"
 #include "Weapon/SKWeaponComponent.h"
-#include "Input/SKInputHandler.h"
-#include "Animation/SKAnimationController.h"
+#include "Input/SKInputManager.h"
+#include "Camera/SKCameraManagerComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
@@ -48,8 +48,8 @@ ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	FollowCamera->bUsePawnControlRotation = false;
 
 	WeaponComponent = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
-	InputHandler = CreateDefaultSubobject<USKInputHandler>(TEXT("InputHandler"));
-	AnimController = CreateDefaultSubobject<USKAnimationController>(TEXT("AnimController"));
+	InputManager = CreateDefaultSubobject<USKInputManager>(TEXT("InputManager"));
+	CameraManager = CreateDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
 }
 
 void ASKCharacter::BeginPlay()
@@ -68,9 +68,9 @@ void ASKCharacter::PossessedBy(AController* NewController)
 
 	if (APlayerController* PC = Cast<APlayerController>(NewController))
 	{
-		if (InputHandler)
+		if (InputManager)
 		{
-			InputHandler->AddMappingContext(PC);
+			InputManager->AddMappingContext(PC);
 		}
 	}
 }
@@ -79,10 +79,10 @@ void ASKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 {
 	UEnhancedInputComponent* Input = CastChecked<UEnhancedInputComponent>(PlayerInputComponent);
 
-	// InputHandler 内部绑定全部 InputAction（Move/Look/Jump/Attack/Guard/Dodge 等）
-	if (InputHandler)
+	// InputManager 内部绑定全部 InputAction（Move/Look/Jump/Attack/Guard/Dodge 等）
+	if (InputManager)
 	{
-		InputHandler->SetupInput(Input);
+		InputManager->SetupInput(Input);
 	}
 }
 

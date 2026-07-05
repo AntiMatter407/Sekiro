@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -9,7 +9,6 @@ enum class ESKMovementTier : uint8
 {
 	Idle,                                                           // 静止
 	Walk,                                                           // 步行
-	Jog,                                                            // 慢跑
 	Run,                                                            // 奔跑
 	Sprint,                                                         // 冲刺
 	Crouch                                                          // 蹲行
@@ -25,9 +24,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed")
 	float WalkSpeed = 150.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed")
-	float JogSpeed = 350.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed")
 	float RunSpeed = 500.f;

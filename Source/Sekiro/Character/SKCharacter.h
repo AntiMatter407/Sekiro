@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -8,15 +8,15 @@
 
 // ============================================================================
 // ASKCharacter — 只狼玩家角色
-//     输入处理委托给 USKInputHandler 组件
-//     动画控制委托给 USKAnimationController 组件
+//     输入状态委托给 USKInputManager 组件
+//     动画参数由 USKAnimInstance 读取并交给 AnimBlueprint 编排
 // ============================================================================
 
 class USpringArmComponent;
 class UCameraComponent;
 class USKWeaponComponent;
-class USKInputHandler;
-class USKAnimationController;
+class USKInputManager;
+class USKCameraManagerComponent;
 
 UCLASS(config=Game)
 class SEKIRO_API ASKCharacter : public ACharacter
@@ -32,11 +32,11 @@ public:
 
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
-	FORCEINLINE USKInputHandler* GetInputHandler() const { return InputHandler; }
-	FORCEINLINE USKAnimationController* GetAnimController() const { return AnimController; }
+	FORCEINLINE USKInputManager* GetInputManager() const { return InputManager; }
+	FORCEINLINE USKCameraManagerComponent* GetCameraManager() const { return CameraManager; }
 	FORCEINLINE USKWeaponComponent* GetWeaponComponent() const { return WeaponComponent; }
 
-	// ── 闪避状态接口（由 USKInputHandler 调用）────────────
+	// ── 闪避状态接口（由 USKInputManager 调用）────────────
 
 	bool IsDodging() const { return bIsDodging; }        // 闪避状态查询
 	bool CanAirDodge() const { return bAllowAirDodge; }    // 空中闪避许可
@@ -60,10 +60,10 @@ protected:
 	TObjectPtr<USKWeaponComponent> WeaponComponent;       // 武器组件
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<USKInputHandler> InputHandler;             // 输入处理组件
+	TObjectPtr<USKInputManager> InputManager;             // 输入处理组件
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<USKAnimationController> AnimController;    // 动画控制组件
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USKCameraManagerComponent> CameraManager;  // 摄像机与朝向管理组件
 
 	// ── 闪避状态（供 USKAnimInstance 查询）───────────────
 
@@ -79,14 +79,4 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Dodge", meta = (AllowPrivateAccess = "true"))
 	uint32 bAllowAirDodge : 1;                            // 允许空中闪避
 
-	// ── 视角灵敏度 ────────────────────────────────────────
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity", meta = (AllowPrivateAccess = "true"))
-	float LookSensitivityYaw = 1.0f;                      // 水平灵敏度
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity", meta = (AllowPrivateAccess = "true"))
-	float LookSensitivityPitch = 1.0f;                    // 俯仰灵敏度
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity", meta = (AllowPrivateAccess = "true"))
-	uint32 bInvertPitch : 1;                              // 俯仰反转
 };

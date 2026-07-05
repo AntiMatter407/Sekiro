@@ -19,13 +19,13 @@
 | Sprint Transition | 2 | 冲刺过渡 |
 | Turn | 12 | 转身（45°/90°/135°/180°） |
 | Walk/Run Transition | 6 | 步伐切换过渡 |
-| Dodge/Quickstep | 9 | 闪避/垫步 |
+| Dodge/Quickstep | 13 | 闪避/垫步 |
 | Jump | 14 | 跳跃（中立/方向/落地/蹬墙） |
 | Attack | 41 | 攻击（R1连段/突刺/蓄力/跳劈/蹲攻） |
 | CombatArt | 30 | 流派招式（旋风斩/一文字/不死斩等） |
 | Guard/Parry/Deflect/Mikiri | 47 | 防御/弹反/识破 |
 | PostureBreak | 7 | 架势崩坏 |
-| Sweep | 6 | 下段危—踩踏反击 |
+| Sweep | 2 | 下段危—踩踏反击 |
 | Grab | 4 | 擒拿—被擒/挣脱 |
 | Deathblow | 13 | 忍杀（正面/背后/空中/落下/攀爬/暗杀） |
 | Hit | 24 | 受击（轻/中/重/击退/硬直） |
@@ -140,7 +140,7 @@
 | `Sekiro_a000_024200` | `Sekiro_Sprint_To_Run` | 冲刺→奔跑 |
 | `Sekiro_a000_024300` | `Sekiro_Sprint_To_Jog` | 冲刺→慢跑 |
 
-### Dodge/Quickstep (8)
+### Dodge/Quickstep (13)
 
 | 动画ID | UE资产名 | 描述 |
 |--------|----------|------|
@@ -153,6 +153,10 @@
 | `Sekiro_a000_031410` | `Sekiro_Quickstep_L` | 垫步-左 |
 | `Sekiro_a000_031420` | `Sekiro_Quickstep_R` | 垫步-右 |
 | `Sekiro_a000_031430` | `Sekiro_Quickstep_Bwd` | 垫步-后 |
+| `Sekiro_a000_213301` | `Sekiro_StepDodge_Alt_Fwd` | 垫步/闪避-前 |
+| `Sekiro_a000_213302` | `Sekiro_StepDodge_Alt_L` | 垫步/闪避-左 |
+| `Sekiro_a000_213303` | `Sekiro_StepDodge_Alt_R` | 垫步/闪避-右 |
+| `Sekiro_a000_213304` | `Sekiro_StepDodge_Alt_Bwd` | 垫步/闪避-后 |
 
 ### Jump (13)
 
@@ -318,16 +322,12 @@
 | `Sekiro_a000_210100` | `Sekiro_PostureBreak_KnockDown` | 架势崩坏-击倒 |
 | `Sekiro_a000_210150` | `Sekiro_PostureBreak_KnockDown_Recover` | 架势崩坏-击倒恢复 |
 
-### Sweep (6)
+### Sweep (2)
 
 | 动画ID | UE资产名 | 描述 |
 |--------|----------|------|
 | `Sekiro_a000_213100` | `Sekiro_Sweep_JumpKick` | 下段踩踏 |
 | `Sekiro_a000_213110` | `Sekiro_Sweep_JumpKick_L` | 下段踩踏-左 |
-| `Sekiro_a000_213301` | `Sekiro_Sweep_Jump` | 下段跳跃 |
-| `Sekiro_a000_213302` | `Sekiro_Sweep_Jump_L` | 下段跳跃-左 |
-| `Sekiro_a000_213303` | `Sekiro_Sweep_Jump_R` | 下段跳跃-右 |
-| `Sekiro_a000_213304` | `Sekiro_Sweep_Jump_Bwd` | 下段跳跃-后 |
 
 ### Grab (4)
 
