@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "Animation/AnimInstance.h"
+#include "SekiroAnimBlueprintInstance.h"
 #include "Movement/SKMovementComponent.h"
 #include "Animation/SKAnimDataTypes.h"
 #include "Camera/SKCameraManagerComponent.h"
@@ -18,7 +18,7 @@ class USKInputManager;
 // ============================================================================
 
 UCLASS()
-class SEKIRO_API USKAnimInstance : public UAnimInstance
+class SEKIRO_API USKAnimInstance : public USekiroAnimBlueprintInstance
 {
     GENERATED_BODY()
 
