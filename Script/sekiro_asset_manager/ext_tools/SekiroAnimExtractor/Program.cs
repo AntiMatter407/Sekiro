@@ -204,8 +204,10 @@ foreach (var animPath in animFiles)
         float frameDuration = animData.FrameDuration;
 
         bool isAdditive = animData.IsAdditiveBlend;
+        bool hasRootMotion = animData.RootMotion != null && animData.RootMotion.Frames.Length > 0;
 
         var frames = new List<object>();
+        var rootMotionFrames = new List<object>();
         for (int s = 0; s < totalSamples; s++)
         {
             float time = (s * duration) / (totalSamples - 1);
@@ -240,6 +242,16 @@ foreach (var animPath in animFiles)
             }
 
             frames.Add(new { BoneTransforms = boneTransforms });
+
+            if (hasRootMotion)
+            {
+                var rootMotion = animData.RootMotion.GetSampleClamped(time);
+                rootMotionFrames.Add(new
+                {
+                    P = new[] { MathF.Round(rootMotion.X, 6), MathF.Round(rootMotion.Y, 6), MathF.Round(rootMotion.Z, 6) },
+                    Yaw = MathF.Round(rootMotion.W, 6),
+                });
+            }
         }
 
         animationsOut.Add(new
@@ -249,6 +261,8 @@ foreach (var animPath in animFiles)
             FrameCount = totalSamples,
             SampleRate = sampleRate,
             IsAdditiveBlend = isAdditive,
+            HasRootMotion = hasRootMotion,
+            RootMotionFrames = rootMotionFrames,
             Frames = frames,
         });
 

@@ -2,9 +2,12 @@
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimSequenceHelpers.h"
 #include "Animation/BlendSpace.h"
 #include "Animation/BlendSpace1D.h"
 #include "Animation/AnimData/IAnimationDataController.h"
+#include "Animation/AnimData/IAnimationDataModel.h"
+#include "Animation/AnimData/CurveIdentifier.h"
 #include "Animation/AnimCurveTypes.h"
 #include "Animation/Skeleton.h"
 #include "AnimGraphNode_StateMachine.h"
@@ -42,6 +45,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
@@ -109,6 +113,147 @@ static T* LoadAssetHelper(const FString& AssetPath)
     return nullptr;
 }
 
+static void AppendUtf8Needle(const FString& Text, TArray<uint8>& OutNeedle)
+{
+    FTCHARToUTF8 ConvertedText(*Text);
+    OutNeedle.Append(reinterpret_cast<const uint8*>(ConvertedText.Get()), ConvertedText.Length());
+}
+
+static void AppendUtf16LeNeedle(const FString& Text, TArray<uint8>& OutNeedle)
+{
+    for (int32 CharIndex = 0; CharIndex < Text.Len(); ++CharIndex)
+    {
+        const uint16 Character = static_cast<uint16>(Text[CharIndex]);
+        OutNeedle.Add(static_cast<uint8>(Character & 0xFF));
+        OutNeedle.Add(static_cast<uint8>((Character >> 8) & 0xFF));
+    }
+}
+
+static bool ByteArrayContainsNeedle(const TArray<uint8>& Data, const TArray<uint8>& Needle)
+{
+    if (Needle.Num() <= 0 || Data.Num() < Needle.Num()) return false;
+
+    const int32 LastStartIndex = Data.Num() - Needle.Num();
+    for (int32 DataIndex = 0; DataIndex <= LastStartIndex; ++DataIndex)
+    {
+        bool bMatched = true;
+        for (int32 NeedleIndex = 0; NeedleIndex < Needle.Num(); ++NeedleIndex)
+        {
+            if (Data[DataIndex + NeedleIndex] != Needle[NeedleIndex])
+            {
+                bMatched = false;
+                break;
+            }
+        }
+
+        if (bMatched) return true;
+    }
+
+    return false;
+}
+
+static void BuildCurveNameNeedles(const TArray<FName>& CurveNames, TArray<TArray<uint8>>& OutNeedles)
+{
+    OutNeedles.Reset();
+    for (const FName& CurveName : CurveNames)
+    {
+        const FString CurveNameText = CurveName.ToString();
+
+        TArray<uint8> Utf8Needle;
+        AppendUtf8Needle(CurveNameText, Utf8Needle);
+        OutNeedles.Add(Utf8Needle);
+
+        TArray<uint8> Utf16Needle;
+        AppendUtf16LeNeedle(CurveNameText, Utf16Needle);
+        OutNeedles.Add(Utf16Needle);
+    }
+}
+
+static bool FileContainsAnyNeedle(const FString& Filename, const TArray<TArray<uint8>>& Needles)
+{
+    TArray<uint8> FileBytes;
+    if (!FFileHelper::LoadFileToArray(FileBytes, *Filename)) return false;
+
+    for (const TArray<uint8>& Needle : Needles)
+    {
+        if (ByteArrayContainsNeedle(FileBytes, Needle))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void FindCurveCandidatePackages(const TArray<FName>& CurveNames, TSet<FName>& OutPackageNames)
+{
+    OutPackageNames.Reset();
+
+    TArray<TArray<uint8>> Needles;
+    BuildCurveNameNeedles(CurveNames, Needles);
+
+    TArray<FString> AssetFiles;
+    IFileManager::Get().FindFilesRecursive(
+        AssetFiles,
+        *FPaths::ProjectContentDir(),
+        TEXT("*.uasset"),
+        true,
+        false);
+
+    for (const FString& AssetFile : AssetFiles)
+    {
+        if (!FileContainsAnyNeedle(AssetFile, Needles)) continue;
+
+        FString PackageName;
+        if (FPackageName::TryConvertFilenameToLongPackageName(AssetFile, PackageName))
+        {
+            OutPackageNames.Add(FName(*PackageName));
+        }
+    }
+}
+
+static bool ResolveFloatCurveIdentifier(const UAnimSequence* AnimSequence, FName CurveName, FAnimationCurveIdentifier& OutCurveId)
+{
+    if (!AnimSequence || CurveName.IsNone()) return false;
+
+    const USkeleton* Skeleton = AnimSequence->GetSkeleton();
+    if (!Skeleton) return false;
+
+    FSmartName SmartName;
+    if (!Skeleton->GetSmartNameByName(USkeleton::AnimCurveMappingName, CurveName, SmartName))
+    {
+        return false;
+    }
+
+    OutCurveId = FAnimationCurveIdentifier(SmartName, ERawCurveTrackTypes::RCT_Float);
+    return AnimSequence->GetDataModel() && AnimSequence->GetDataModel()->FindCurve(OutCurveId) != nullptr;
+}
+
+static bool ReadFloatCurveKeysFromJson(const TArray<TSharedPtr<FJsonValue>>& KeyValues, ERichCurveInterpMode InterpMode, TArray<FRichCurveKey>& OutKeys)
+{
+    OutKeys.Reset();
+
+    for (const TSharedPtr<FJsonValue>& KeyValue : KeyValues)
+    {
+        const TSharedPtr<FJsonObject>* KeyObject = nullptr;
+        if (!KeyValue.IsValid() || !KeyValue->TryGetObject(KeyObject)) continue;
+
+        if (!(*KeyObject)->HasTypedField<EJson::Number>(TEXT("time")) ||
+            !(*KeyObject)->HasTypedField<EJson::Number>(TEXT("value")))
+        {
+            continue;
+        }
+
+        FRichCurveKey Key;
+        Key.Time = static_cast<float>((*KeyObject)->GetNumberField(TEXT("time")));
+        Key.Value = static_cast<float>((*KeyObject)->GetNumberField(TEXT("value")));
+        Key.InterpMode = InterpMode;
+        OutKeys.Add(Key);
+    }
+
+    return OutKeys.Num() > 0;
+}
+
 FString USKAnimBlueprintTool::GetToolDescription() const
 {
     return TEXT("动画蓝图操作（通用接口）：创建/编译AnimBP（支持自定义parent_class）、管理状态机（状态/转换）、添加动画节点（SequencePlayer/BlendSpacePlayer/Slot）、设置AnimGraph根节点、创建BlendSpace资产、查询结构。");
@@ -119,7 +264,7 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
     return TEXT("{"
         "\"type\":\"object\","
         "\"properties\":{"
-            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"add_curve\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"add_curve\",\"set_anim_curves\",\"batch_tae_curves\",\"remove_anim_curves\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
             "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
             "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
             "\"parent_class\":{\"type\":\"string\",\"description\":\"可选：AnimInstance父类脚本路径，如/Script/ModuleName.ClassName\"},"
@@ -140,7 +285,14 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
             "\"samples\":{\"type\":\"array\",\"description\":\"create_blend_space: 样本 [{anim_path,x,y}]\",\"items\":{\"type\":\"object\",\"properties\":{\"anim_path\":{\"type\":\"string\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}},"
             "\"character_bp_path\":{\"type\":\"string\",\"description\":\"set_anim_class: 角色Blueprint路径\"},"
             "\"anim_bp_path\":{\"type\":\"string\",\"description\":\"set_anim_class: AnimBlueprint路径（或直接用path参数）\"},"
-            "\"mesh_component_name\":{\"type\":\"string\",\"description\":\"set_anim_class: Mesh组件变量名，默认Mesh\",\"default\":\"Mesh\"}"
+            "\"mesh_component_name\":{\"type\":\"string\",\"description\":\"set_anim_class: Mesh组件变量名，默认Mesh\",\"default\":\"Mesh\"},"
+            "\"curve_names\":{\"type\":\"array\",\"description\":\"remove_anim_curves: 要删除的曲线名\"},"
+            "\"animations\":{\"type\":\"array\",\"description\":\"set_anim_curves: 动画曲线批量写入 [{path,curves:[{name,curve_type,keys:[{time,value}]}]}]\"},"
+            "\"candidate_scan\":{\"type\":\"boolean\",\"description\":\"remove_anim_curves: 是否先按uasset文件内容筛选候选包\",\"default\":true},"
+            "\"dry_run\":{\"type\":\"boolean\",\"description\":\"remove_anim_curves: 只统计不保存\",\"default\":false},"
+            "\"save\":{\"type\":\"boolean\",\"description\":\"remove_anim_curves: 是否保存修改资产\",\"default\":true},"
+            "\"batch_size\":{\"type\":\"integer\",\"description\":\"remove_anim_curves: 批大小\"},"
+            "\"batch_index\":{\"type\":\"integer\",\"description\":\"remove_anim_curves: 批索引\"}"
         "},"
         "\"required\":[\"action\",\"path\"]"
     "}");
@@ -190,7 +342,9 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("rename_node"))         return HandleRenameNode(ArgsObj, OutError);
     if (Action == TEXT("add_slot"))            return HandleAddSlotNode(ArgsObj, OutError);
     if (Action == TEXT("add_curve"))           return HandleAddCurve(ArgsObj, OutError);
+    if (Action == TEXT("set_anim_curves"))     return HandleSetAnimCurves(ArgsObj, OutError);
     if (Action == TEXT("batch_tae_curves"))     return HandleBatchTaeCurves(ArgsObj, OutError);
+    if (Action == TEXT("remove_anim_curves"))  return HandleRemoveAnimCurves(ArgsObj, OutError);
 
     OutError = FString::Printf(TEXT("未知操作: %s"), *Action);
     return FString();
@@ -2208,6 +2362,366 @@ FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args
     FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
     return Output;
 }
+
+FString USKAnimBlueprintTool::HandleSetAnimCurves(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    const TArray<TSharedPtr<FJsonValue>>* AnimationValues = nullptr;
+    if (!Args->TryGetArrayField(TEXT("animations"), AnimationValues))
+    {
+        OutError = TEXT("缺少 animations 参数");
+        return FString();
+    }
+
+    bool bDryRun = false;
+    Args->TryGetBoolField(TEXT("dry_run"), bDryRun);
+
+    bool bSave = true;
+    Args->TryGetBoolField(TEXT("save"), bSave);
+
+    int32 AnimationCount = 0;
+    int32 MissingAnimations = 0;
+    int32 CurvesRequested = 0;
+    int32 CurvesWritten = 0;
+    int32 CurvesSkipped = 0;
+    int32 ModifiedAssets = 0;
+    int32 SavedAssets = 0;
+
+    for (const TSharedPtr<FJsonValue>& AnimationValue : *AnimationValues)
+    {
+        const TSharedPtr<FJsonObject>* AnimationObject = nullptr;
+        if (!AnimationValue.IsValid() || !AnimationValue->TryGetObject(AnimationObject))
+        {
+            continue;
+        }
+
+        FString AssetPath;
+        if (!(*AnimationObject)->TryGetStringField(TEXT("path"), AssetPath))
+        {
+            ++MissingAnimations;
+            continue;
+        }
+
+        UAnimSequence* AnimSequence = LoadAssetHelper<UAnimSequence>(AssetPath);
+        if (!AnimSequence)
+        {
+            ++MissingAnimations;
+            UE_LOG(LogTemp, Warning, TEXT("[SetAnimCurves] 动画未找到: %s"), *AssetPath);
+            continue;
+        }
+
+        USkeleton* Skeleton = AnimSequence->GetSkeleton();
+        if (!Skeleton)
+        {
+            ++MissingAnimations;
+            UE_LOG(LogTemp, Warning, TEXT("[SetAnimCurves] 动画没有关联骨骼: %s"), *AssetPath);
+            continue;
+        }
+
+        const TArray<TSharedPtr<FJsonValue>>* CurveValues = nullptr;
+        if (!(*AnimationObject)->TryGetArrayField(TEXT("curves"), CurveValues))
+        {
+            ++CurvesSkipped;
+            continue;
+        }
+
+        ++AnimationCount;
+        bool bModified = false;
+        bool bBracketOpened = false;
+        TUniquePtr<UE::Anim::Compression::FScopedCompressionGuard> CompressionGuard;
+        IAnimationDataController& Controller = AnimSequence->GetController();
+
+        for (const TSharedPtr<FJsonValue>& CurveValue : *CurveValues)
+        {
+            const TSharedPtr<FJsonObject>* CurveObject = nullptr;
+            if (!CurveValue.IsValid() || !CurveValue->TryGetObject(CurveObject))
+            {
+                ++CurvesSkipped;
+                continue;
+            }
+
+            FString CurveNameText;
+            if (!(*CurveObject)->TryGetStringField(TEXT("name"), CurveNameText) || CurveNameText.IsEmpty())
+            {
+                ++CurvesSkipped;
+                continue;
+            }
+
+            ++CurvesRequested;
+
+            FString CurveType;
+            (*CurveObject)->TryGetStringField(TEXT("curve_type"), CurveType);
+            const bool bIntegerCurve = CurveType.Equals(TEXT("int"), ESearchCase::IgnoreCase);
+            const ERichCurveInterpMode InterpMode = bIntegerCurve ? RCIM_Constant : RCIM_Linear;
+
+            const TArray<TSharedPtr<FJsonValue>>* KeyValues = nullptr;
+            if (!(*CurveObject)->TryGetArrayField(TEXT("keys"), KeyValues))
+            {
+                ++CurvesSkipped;
+                continue;
+            }
+
+            TArray<FRichCurveKey> Keys;
+            if (!ReadFloatCurveKeysFromJson(*KeyValues, InterpMode, Keys))
+            {
+                ++CurvesSkipped;
+                continue;
+            }
+
+            if (bDryRun)
+            {
+                ++CurvesWritten;
+                bModified = true;
+                continue;
+            }
+
+            if (!CompressionGuard.IsValid())
+            {
+                CompressionGuard = MakeUnique<UE::Anim::Compression::FScopedCompressionGuard>(AnimSequence);
+            }
+
+            FSmartName SmartName;
+            Skeleton->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName(*CurveNameText), SmartName);
+            FAnimationCurveIdentifier CurveId(SmartName, ERawCurveTrackTypes::RCT_Float);
+            if (!CurveId.IsValid())
+            {
+                ++CurvesSkipped;
+                continue;
+            }
+
+            if (!bBracketOpened)
+            {
+                Controller.OpenBracket(NSLOCTEXT("SekiroAIBridge", "SetAnimCurves", "批量写入动画曲线"), false);
+                bBracketOpened = true;
+            }
+
+            if (!Controller.AddCurve(CurveId))
+            {
+                Controller.SetCurveKeys(CurveId, TArray<FRichCurveKey>());
+            }
+            Controller.SetCurveKeys(CurveId, Keys);
+            ++CurvesWritten;
+            bModified = true;
+        }
+
+        if (bBracketOpened)
+        {
+            Controller.CloseBracket(false);
+        }
+
+        if (!bModified) continue;
+
+        ++ModifiedAssets;
+        if (bDryRun) continue;
+
+        AnimSequence->MarkPackageDirty();
+
+        if (bSave)
+        {
+            TArray<UPackage*> PackagesToSave;
+            PackagesToSave.Add(AnimSequence->GetPackage());
+            if (UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, true))
+            {
+                ++SavedAssets;
+            }
+        }
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetBoolField(TEXT("success"), true);
+    ResultObj->SetBoolField(TEXT("dry_run"), bDryRun);
+    ResultObj->SetNumberField(TEXT("animations"), AnimationCount);
+    ResultObj->SetNumberField(TEXT("missing_animations"), MissingAnimations);
+    ResultObj->SetNumberField(TEXT("curves_requested"), CurvesRequested);
+    ResultObj->SetNumberField(TEXT("curves_written"), CurvesWritten);
+    ResultObj->SetNumberField(TEXT("curves_skipped"), CurvesSkipped);
+    ResultObj->SetNumberField(TEXT("modified_assets"), ModifiedAssets);
+    ResultObj->SetNumberField(TEXT("saved_assets"), SavedAssets);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+FString USKAnimBlueprintTool::HandleRemoveAnimCurves(const TSharedPtr<FJsonObject>& Args, FString& OutError)
+{
+    FString SearchPath;
+    if (!Args->TryGetStringField(TEXT("path"), SearchPath))
+    {
+        SearchPath = TEXT("/Game");
+    }
+
+    TArray<FName> CurveNames;
+    const TArray<TSharedPtr<FJsonValue>>* CurveNameValues = nullptr;
+    if (Args->TryGetArrayField(TEXT("curve_names"), CurveNameValues))
+    {
+        for (const TSharedPtr<FJsonValue>& CurveNameValue : *CurveNameValues)
+        {
+            const FString CurveNameText = CurveNameValue.IsValid() ? CurveNameValue->AsString() : FString();
+            if (!CurveNameText.IsEmpty())
+            {
+                CurveNames.Add(FName(*CurveNameText));
+            }
+        }
+    }
+
+    if (CurveNames.Num() <= 0)
+    {
+        CurveNames.Add(FName(TEXT("FrameFlags")));
+        CurveNames.Add(FName(TEXT("CancelActions")));
+        CurveNames.Add(FName(TEXT("AttackHitbox")));
+    }
+
+    bool bCandidateScan = true;
+    Args->TryGetBoolField(TEXT("candidate_scan"), bCandidateScan);
+
+    bool bDryRun = false;
+    Args->TryGetBoolField(TEXT("dry_run"), bDryRun);
+
+    bool bSave = true;
+    Args->TryGetBoolField(TEXT("save"), bSave);
+
+    int32 BatchSize = 0;
+    int32 BatchIndex = 0;
+    if (Args->HasTypedField<EJson::Number>(TEXT("batch_size")))
+    {
+        BatchSize = static_cast<int32>(Args->GetNumberField(TEXT("batch_size")));
+    }
+    if (Args->HasTypedField<EJson::Number>(TEXT("batch_index")))
+    {
+        BatchIndex = static_cast<int32>(Args->GetNumberField(TEXT("batch_index")));
+    }
+
+    TSet<FName> CandidatePackages;
+    if (bCandidateScan)
+    {
+        FindCurveCandidatePackages(CurveNames, CandidatePackages);
+    }
+
+    FARFilter Filter;
+    Filter.PackagePaths.Add(FName(*SearchPath));
+    Filter.ClassPaths.Add(UAnimSequence::StaticClass()->GetClassPathName());
+    Filter.bRecursivePaths = true;
+
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+    TArray<FAssetData> AssetDataList;
+    AssetRegistryModule.Get().GetAssets(Filter, AssetDataList);
+    AssetDataList.Sort([](const FAssetData& Left, const FAssetData& Right)
+    {
+        return Left.PackageName.LexicalLess(Right.PackageName);
+    });
+
+    TArray<FAssetData> FilteredAssetDataList;
+    for (const FAssetData& AssetData : AssetDataList)
+    {
+        if (bCandidateScan && !CandidatePackages.Contains(AssetData.PackageName))
+        {
+            continue;
+        }
+
+        FilteredAssetDataList.Add(AssetData);
+    }
+
+    const int32 TotalCandidates = FilteredAssetDataList.Num();
+    int32 StartIndex = 0;
+    int32 EndIndex = TotalCandidates;
+    if (BatchSize > 0)
+    {
+        StartIndex = FMath::Clamp(BatchIndex, 0, FMath::Max(0, TotalCandidates)) * BatchSize;
+        EndIndex = FMath::Min(StartIndex + BatchSize, TotalCandidates);
+    }
+
+    int32 ScannedAssets = 0;
+    int32 ModifiedAssets = 0;
+    int32 RemovedCurves = 0;
+    int32 SavedAssets = 0;
+
+    for (int32 AssetIndex = StartIndex; AssetIndex < EndIndex; ++AssetIndex)
+    {
+        UAnimSequence* AnimSequence = Cast<UAnimSequence>(FilteredAssetDataList[AssetIndex].GetAsset());
+        if (!AnimSequence) continue;
+
+        ++ScannedAssets;
+        if (ScannedAssets == 1 || ScannedAssets % 25 == 0)
+        {
+            UE_LOG(LogTemp, Display, TEXT("[RemoveAnimCurves] Progress %d/%d: %s"),
+                ScannedAssets,
+                EndIndex - StartIndex,
+                *AnimSequence->GetPathName());
+        }
+
+        TArray<FAnimationCurveIdentifier> CurveIdsToRemove;
+        for (const FName& CurveName : CurveNames)
+        {
+            FAnimationCurveIdentifier CurveId;
+            if (ResolveFloatCurveIdentifier(AnimSequence, CurveName, CurveId))
+            {
+                CurveIdsToRemove.Add(CurveId);
+            }
+        }
+
+        if (CurveIdsToRemove.Num() <= 0) continue;
+
+        RemovedCurves += CurveIdsToRemove.Num();
+        if (bDryRun)
+        {
+            ++ModifiedAssets;
+            continue;
+        }
+
+        TUniquePtr<UE::Anim::Compression::FScopedCompressionGuard> CompressionGuard =
+            MakeUnique<UE::Anim::Compression::FScopedCompressionGuard>(AnimSequence);
+        IAnimationDataController& Controller = AnimSequence->GetController();
+
+        bool bModified = false;
+        Controller.OpenBracket(NSLOCTEXT("SekiroAIBridge", "RemoveAnimCurves", "删除动画旧曲线"), false);
+        for (const FAnimationCurveIdentifier& CurveId : CurveIdsToRemove)
+        {
+            if (Controller.RemoveCurve(CurveId, false))
+            {
+                bModified = true;
+            }
+        }
+        Controller.CloseBracket(false);
+
+        if (!bModified) continue;
+
+        ++ModifiedAssets;
+        AnimSequence->MarkPackageDirty();
+
+        if (bSave)
+        {
+            TArray<UPackage*> PackagesToSave;
+            PackagesToSave.Add(AnimSequence->GetPackage());
+            if (UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, true))
+            {
+                ++SavedAssets;
+            }
+        }
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetBoolField(TEXT("success"), true);
+    ResultObj->SetStringField(TEXT("path"), SearchPath);
+    ResultObj->SetBoolField(TEXT("candidate_scan"), bCandidateScan);
+    ResultObj->SetBoolField(TEXT("dry_run"), bDryRun);
+    ResultObj->SetNumberField(TEXT("total_anim_sequences"), AssetDataList.Num());
+    ResultObj->SetNumberField(TEXT("candidate_anim_sequences"), TotalCandidates);
+    ResultObj->SetNumberField(TEXT("scanned_assets"), ScannedAssets);
+    ResultObj->SetNumberField(TEXT("modified_assets"), ModifiedAssets);
+    ResultObj->SetNumberField(TEXT("removed_curves"), RemovedCurves);
+    ResultObj->SetNumberField(TEXT("saved_assets"), SavedAssets);
+    ResultObj->SetNumberField(TEXT("batch_start"), StartIndex);
+    ResultObj->SetNumberField(TEXT("batch_end"), EndIndex);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
 // ============================================================================
 // AnimBlueprintToJson — 序列化 AnimBlueprint 结构
 // ============================================================================

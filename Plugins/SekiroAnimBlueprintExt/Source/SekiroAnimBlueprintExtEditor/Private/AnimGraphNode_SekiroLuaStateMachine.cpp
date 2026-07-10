@@ -4,12 +4,12 @@
 
 FText UAnimGraphNode_SekiroLuaStateMachine::GetNodeTitle(ENodeTitleType::Type TitleType) const
 {
-    return LOCTEXT("NodeTitle", "Sekiro Lua State Machine");
+    return LOCTEXT("NodeTitle", "Sekiro Lua Anim Blueprint Host");
 }
 
 FText UAnimGraphNode_SekiroLuaStateMachine::GetTooltipText() const
 {
-    return LOCTEXT("NodeTooltip", "Evaluates animation states from a Lua-driven Sekiro animation snapshot.");
+    return LOCTEXT("NodeTooltip", "Hosts a Lua-authored animation blueprint flow and evaluates the resulting Sekiro animation snapshot.");
 }
 
 FLinearColor UAnimGraphNode_SekiroLuaStateMachine::GetNodeTitleColor() const

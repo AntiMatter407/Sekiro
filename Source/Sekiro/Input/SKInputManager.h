@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "InputActionValue.h"
 #include "Movement/SKMovementComponent.h"
+#include "UnLuaInterface.h"
 #include "SKInputManager.generated.h"
 
 // ============================================================================
@@ -40,7 +41,7 @@ struct SEKIRO_API FSKBufferedInput
 };
 
 UCLASS(ClassGroup=(Input), meta=(BlueprintSpawnableComponent))
-class SEKIRO_API USKInputManager : public UActorComponent
+class SEKIRO_API USKInputManager : public UActorComponent, public IUnLuaInterface
 {
 	GENERATED_BODY()
 
@@ -131,6 +132,9 @@ public:
 	bool IsGuardHeld() const;                        // 防御键按住
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
+	bool IsProstheticHeld() const;                   // 义手键按住
+
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	bool IsDodgeHeld() const;                        // 闪避键按住
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
@@ -152,6 +156,139 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	float GetTimeSinceLastAttack() const;            // 距上次攻击时间
+
+	// ── Lua 输入宿主 ─────────────────────────────────────────
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetUseLuaInputLogic(bool bNewUseLuaInputLogic); // 设置是否由 Lua 接管输入逻辑
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool IsUsingLuaInputLogic() const;                // 是否启用 Lua 输入逻辑
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetLuaInputModuleName(const FString& ModuleName); // 设置 Lua 输入模块名
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	FString GetLuaInputModuleName() const;            // 获取 Lua 输入模块名
+
+	virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetSprintHoldThreshold() const;             // 获取冲刺长按阈值
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetDodgeActiveDuration() const;             // 获取闪避有效时长
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetMoveInputReleaseBufferDuration() const;  // 获取移动释放缓冲时长
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetMoveInputReleaseBufferRemaining() const; // 获取移动释放缓冲剩余时长
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetMoveInputReleaseBufferRemaining(float RemainingTime); // 设置移动释放缓冲剩余时长
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetAnalogWalkEnterThreshold() const;        // 获取摇杆进入步行阈值
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetAnalogRunEnterThreshold() const;         // 获取摇杆进入跑步阈值
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetDodgeHoldTime() const;                   // 获取闪避键长按时间
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetDodgeHoldTime(float NewDodgeHoldTime);    // 设置闪避键长按时间
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetDodgeActiveTimeRemaining() const;        // 获取闪避窗口剩余时间
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetDodgeActiveState(bool bNewDodgeActive, float ActiveTimeRemaining); // 设置闪避窗口状态
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetAttackHoldTime(float NewAttackHoldTime);  // 设置攻击长按时间
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetProstheticHoldTime(float NewProstheticHoldTime); // 设置义手长按时间
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetComboState(int32 NewComboIndex, float NewTimeSinceLastAttack); // 设置连段状态
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	float GetWorldTimeSecondsForScript() const;       // 获取世界时间
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining); // 写入移动意图
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void ClearMoveIntentForScript();                  // 清空移动意图
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetLookIntentForScript(float InputX, float InputY); // 写入视角意图
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool AddMovementInputFromScreen(float InputX, float InputY); // 按控制器朝向添加屏幕空间移动
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool AddMovementImpulseFromScreen(float InputX, float InputY, float VelocityChange); // 按控制器朝向给角色添加水平速度冲量
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool AddLookInputToCamera(float InputX, float InputY); // 将视角输入转发给相机组件
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool IsOwnerFalling() const;                     // 所属角色是否离地
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool IsOwnerCrouched() const;                    // 所属角色是否蹲伏
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool IsOwnerDodging() const;                     // 所属角色是否处于闪避
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool CanOwnerAirDodge() const;                   // 所属角色是否可以空中闪避
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void JumpOwner();                                // 让所属角色跳跃
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void StopJumpingOwner();                         // 让所属角色停止跳跃
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void CrouchOwner();                              // 让所属角色蹲伏
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void UnCrouchOwner();                            // 让所属角色取消蹲伏
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetOwnerDodging(bool bNewDodging);          // 设置所属角色闪避状态
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetOwnerDodgeDirection(float ForwardAmount, float LateralAmount); // 设置所属角色闪避方向
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	FName GetMovementTierName() const;               // 获取移动档位名
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetMovementTierByName(FName TierName);      // 通过名称设置移动档位
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetPressedFlag(FName ActionName, bool bPressed); // 设置一次性输入标记
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetHeldFlag(FName ActionName, bool bHeld);  // 设置持续输入标记
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void AddBufferedInput(FName Action, int32 Priority, float Lifetime); // 添加输入缓冲
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void PruneInputBufferForScript();                // 清理超时输入缓冲
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void ClearPressedFlagsForScript();               // 清理一次性输入标记
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool ToggleLockTargetInViewForScript();          // 切换视野内锁定目标
 
 protected:
 	virtual void BeginPlay() override;
@@ -228,11 +365,20 @@ protected:
 	void OnMenuStarted(const FInputActionValue& Value);  // 菜单
 
 private:
+	// ── Lua 调用 ─────────────────────────────────────────────
+
+	bool TryCallLuaInputEvent(FName FunctionName);   // 调用 Lua 无参数输入事件
+	bool TryCallLuaInputAxisEvent(FName FunctionName, const FVector2D& AxisValue); // 调用 Lua 轴输入事件
+	bool TryCallLuaInputTick(float DeltaTime);       // 调用 Lua Tick
+	FString ResolveLuaInputModuleName() const;       // 解析 UnLua 接口模块名
+
 	// ── 移动档位解析 ──────────────────────────────────────────
 
 	ESKMovementTier ResolveMovementTierFromInput(float InputMagnitude) const; // 根据按键/摇杆推力解析目标移动档位
 	void ApplyDesiredMovementTier(float InputMagnitude);                      // 将目标移动档位写入移动组件
 	void QueueDodgePressed();                                                 // 短按闪避键时生成一次闪避输入
+
+	ESKMovementTier ResolveMovementTierByName(FName TierName) const;          // 根据名称解析移动档位
 
 	// ── InputAction 引用（17 个，从 ASKCharacter 迁移）─────
 
@@ -294,6 +440,14 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInputMappingContext> DefaultMappingContext; // 默认映射上下文
+
+	// ── Lua 输入配置 ─────────────────────────────────────────
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Lua", meta = (AllowPrivateAccess = "true"))
+	bool bUseLuaInputLogic = true;                  // 是否由 Lua 接管输入逻辑
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Lua", meta = (AllowPrivateAccess = "true"))
+	FString LuaInputModuleName = TEXT("Gameplay.Sekiro.Input.SKInputManager"); // Lua 输入模块名
 
 	// ── 消费型意图标记（帧末清零）───────────────────────────
 

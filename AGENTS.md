@@ -44,11 +44,13 @@ Tools/                  # 外部工具（Yabber, FlverToFbx, texconv）
 ## 编码规范
 
 @.codex/rules/code-style.md
+@Docs/lua-code-style.md
 @.codex/rules/cpp-workflow.md
 @.codex/rules/aibridge-workflow.md
 @.codex/rules/bug-fix-workflow.md
 
 **核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层负责编排具体工作流。
+**新增或修改 `Content/Script/**/*.lua` 时，必须先读取并遵守 `Docs/lua-code-style.md`，并补齐必要中文注释。**
 **需要修改 `.h` / `.cpp` 时，必须先读取 cpp-workflow.md 然后按规则执行。**
 **操作 UE 编辑器时，必须先读取 aibridge-workflow.md 然后按规则执行。**
 **分析未知的 Bug/问题/错误时，必须先读取 bug-fix-workflow.md 然后按规则执行。**
@@ -58,6 +60,7 @@ Tools/                  # 外部工具（Yabber, FlverToFbx, texconv）
 - `Plugins/` 使用 `Sekiro` 全称前缀（USekiroImportLibrary）
 - UPROPERTY 宏独占一行，变量下一行，同行中文注释
 - 所有 Python 脚本使用 UTF-8 编码
+- 所有项目 Lua 脚本使用 UTF-8 编码，4 空格缩进，详细中文注释
 - 统一使用 4 空格缩进
 - 禁止单字母下划线前缀
 - 临时脚本写入 `Script/temp/`

@@ -17,6 +17,7 @@ class UCameraComponent;
 class USKWeaponComponent;
 class USKInputManager;
 class USKCameraManagerComponent;
+class USKLockOnIndicatorComponent;
 
 UCLASS(config=Game)
 class SEKIRO_API ASKCharacter : public ACharacter
@@ -34,6 +35,7 @@ public:
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	FORCEINLINE USKInputManager* GetInputManager() const { return InputManager; }
 	FORCEINLINE USKCameraManagerComponent* GetCameraManager() const { return CameraManager; }
+	FORCEINLINE USKLockOnIndicatorComponent* GetLockOnIndicator() const { return LockOnIndicator; }
 	FORCEINLINE USKWeaponComponent* GetWeaponComponent() const { return WeaponComponent; }
 
 	// ── 闪避状态接口（由 USKInputManager 调用）────────────
@@ -64,6 +66,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USKCameraManagerComponent> CameraManager;  // 摄像机与朝向管理组件
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USKLockOnIndicatorComponent> LockOnIndicator; // 锁定目标 UI 组件
 
 	// ── 闪避状态（供 USKAnimInstance 查询）───────────────
 

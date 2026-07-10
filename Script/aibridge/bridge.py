@@ -1029,6 +1029,7 @@ async def cmd_editor_stop(args):
     import subprocess
     import os
     import re
+    import json
 
     project_uproject = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "Sekiro.uproject")
@@ -1041,26 +1042,67 @@ async def cmd_editor_stop(args):
         "UnrealTraceServer.exe",
         "UnrealCEFSubProcess.exe",
     ]
+    editor_processes = [
+        "UnrealEditor.exe",
+        "UnrealEditor-Cmd.exe",
+        "UnrealEditor-Win64-DebugGame.exe",
+        "UnrealEditor-Win64-DebugGame-Cmd.exe",
+    ]
 
     def find_editor_pids():
         """通过 wmic 查找属于本项目的 UE 编辑器 PID"""
         pids = []
-        try:
-            result = subprocess.run(
-                ["wmic", "process", "where", "name='UnrealEditor.exe'", "get", "ProcessId,CommandLine", "/format:csv"],
-                capture_output=True, text=True, timeout=10
-            )
-            for line in result.stdout.strip().split("\n")[1:]:
-                if not line.strip():
-                    continue
-                parts = line.split(",")
-                if len(parts) >= 3:
-                    cmdline = parts[1] if len(parts) >= 2 else ""
-                    pid_str = parts[2] if len(parts) >= 3 else parts[1]
+        for process_name in editor_processes:
+            try:
+                result = subprocess.run(
+                    ["wmic", "process", "where", f"name='{process_name}'", "get", "ProcessId,CommandLine", "/format:csv"],
+                    capture_output=True, text=True, timeout=10
+                )
+                for line in result.stdout.strip().split("\n")[1:]:
+                    if not line.strip():
+                        continue
+                    parts = line.rsplit(",", 1)
+                    if len(parts) < 2:
+                        continue
+
+                    cmdline = parts[0]
+                    pid_str = parts[1]
                     if project_uproject.replace("/", "\\") in cmdline or project_uproject.replace("\\", "/") in cmdline:
                         try:
                             pids.append(int(pid_str.strip()))
                         except ValueError:
+                            pass
+            except Exception:
+                pass
+        if pids:
+            return pids
+
+        try:
+            powershell_script = (
+                "$names=@("
+                + ",".join([f"'{process_name}'" for process_name in editor_processes])
+                + "); "
+                "Get-CimInstance Win32_Process | "
+                "Where-Object { $names -contains $_.Name } | "
+                "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", powershell_script],
+                capture_output=True, text=True, timeout=10
+            )
+            output = result.stdout.strip()
+            if output:
+                process_items = json.loads(output)
+                if isinstance(process_items, dict):
+                    process_items = [process_items]
+
+                for process_item in process_items:
+                    cmdline = str(process_item.get("CommandLine", ""))
+                    pid_value = process_item.get("ProcessId")
+                    if project_uproject.replace("/", "\\") in cmdline or project_uproject.replace("\\", "/") in cmdline:
+                        try:
+                            pids.append(int(pid_value))
+                        except (TypeError, ValueError):
                             pass
         except Exception:
             pass
@@ -1078,7 +1120,7 @@ async def cmd_editor_stop(args):
                     capture_output=True, text=True, timeout=10
                 )
                 if result.returncode == 0:
-                    killed.append(f"UnrealEditor.exe (PID:{pid})")
+                    killed.append(f"UnrealEditor (PID:{pid})")
             except Exception:
                 pass
     else:

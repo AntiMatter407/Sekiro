@@ -17,6 +17,7 @@ public class SekiroAnimBlueprintExtEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(new string[] {
             "UnrealEd",
             "BlueprintGraph",
+            "UnLua",
         });
     }
 }

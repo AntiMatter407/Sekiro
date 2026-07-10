@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "SekiroAnimBlueprintInstance.h"
+#include "SekiroLuaAnimInstance.h"
 #include "Movement/SKMovementComponent.h"
 #include "Animation/SKAnimDataTypes.h"
 #include "Camera/SKCameraManagerComponent.h"
@@ -18,11 +18,13 @@ class USKInputManager;
 // ============================================================================
 
 UCLASS()
-class SEKIRO_API USKAnimInstance : public USekiroAnimBlueprintInstance
+class SEKIRO_API USKAnimInstance : public USekiroLuaAnimInstance
 {
     GENERATED_BODY()
 
 public:
+    USKAnimInstance();
+
     virtual void NativeInitializeAnimation() override;
     virtual void NativeUpdateAnimation(float DeltaSeconds) override;
 
@@ -72,6 +74,12 @@ public:
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     float MovementInputAmount = 0.f;              // 当前移动输入强度（0-1，保留摇杆轻推幅度）
+
+    UPROPERTY(BlueprintReadOnly, Category = "Input")
+    float MoveInputX = 0.f;                       // 屏幕横向移动输入（-1=左，1=右）
+
+    UPROPERTY(BlueprintReadOnly, Category = "Input")
+    float MoveInputY = 0.f;                       // 屏幕纵向移动输入（-1=后，1=前）
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     float AimYawDelta = 0.f;                      // 控制器朝向相对角色朝向的 Yaw 差

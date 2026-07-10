@@ -4,9 +4,16 @@ paths:
   - "Source/Sekiro/**/*.cpp"
   - "Plugins/**/*.h"
   - "Plugins/**/*.cpp"
+  - "Content/Script/**/*.lua"
 ---
 
 # 代码风格规则
+
+## Lua 脚本规则
+
+`Content/Script/**/*.lua` 的完整规范见 `Docs/lua-code-style.md`。以后新增或修改项目 Lua 时，必须按该文档检查模块结构、命名、详细中文注释、UnLua 类方法绑定、C++ 桥接边界和动画状态机约定。
+
+`Plugins/UnLua*`、`Plugins/UnLuaExtensions*` 下的插件/第三方 Lua 不套用项目业务 Lua 风格，除非明确是在项目侧扩展。
 
 ## 0. 命名前缀（最高准则）
 

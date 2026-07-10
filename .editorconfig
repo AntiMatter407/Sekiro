@@ -15,6 +15,11 @@ charset = utf-8-bom
 [*.py]
 charset = utf-8
 
+[*.lua]
+charset = utf-8
+indent_style = space
+indent_size = 4
+
 [*.{ps1,psm1}]
 charset = utf-8-bom
 

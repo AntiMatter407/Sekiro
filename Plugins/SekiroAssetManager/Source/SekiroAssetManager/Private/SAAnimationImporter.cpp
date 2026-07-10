@@ -1,4 +1,5 @@
 ﻿#include "SAAnimationImporter.h"
+#include "Animation/AnimEnums.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "Animation/Skeleton.h"
@@ -74,6 +75,45 @@ FSAAnimBoneTransform SAAnimationImporter::ParseTransform(const TSharedPtr<FJsonO
     return Result;
 }
 
+static FSAAnimRootMotionFrame ParseRootMotionFrame(const TSharedPtr<FJsonObject>& JsonObj)
+{
+    FSAAnimRootMotionFrame Result;
+    if (!JsonObj.IsValid()) return Result;
+
+    const TArray<TSharedPtr<FJsonValue>>* P = nullptr;
+    if (JsonObj->TryGetArrayField(TEXT("P"), P) && P && P->Num() >= 3)
+    {
+        Result.Translation.X = (float)(*P)[0]->AsNumber();
+        Result.Translation.Y = (float)(*P)[1]->AsNumber();
+        Result.Translation.Z = (float)(*P)[2]->AsNumber();
+    }
+
+    double Yaw = 0.0;
+    if (JsonObj->TryGetNumberField(TEXT("Yaw"), Yaw))
+    {
+        Result.Yaw = (float)Yaw;
+    }
+    else if (JsonObj->TryGetNumberField(TEXT("W"), Yaw))
+    {
+        Result.Yaw = (float)Yaw;
+    }
+
+    return Result;
+}
+
+static FTransform BuildRootMotionTransformUE(const FSAAnimRootMotionFrame& RootMotionFrame, const FQuat& OrientQ)
+{
+    const FQuat RootMotionRotationHKX(FVector(0.0f, 1.0f, 0.0f), RootMotionFrame.Yaw);
+    FQuat RootMotionRotationUE = OrientQ * RootMotionRotationHKX * OrientQ.Inverse();
+    RootMotionRotationUE.Normalize();
+
+    FTransform RootMotionTransform;
+    RootMotionTransform.SetTranslation(OrientQ.RotateVector(RootMotionFrame.Translation));
+    RootMotionTransform.SetRotation(RootMotionRotationUE);
+    RootMotionTransform.SetScale3D(FVector::OneVector);
+    return RootMotionTransform;
+}
+
 bool SAAnimationImporter::ParseFromFile(const FString& JsonPath, FSAAnimData& OutData)
 {
     FString JsonString;
@@ -128,6 +168,12 @@ bool SAAnimationImporter::ParseFromFile(const FString& JsonPath, FSAAnimData& Ou
             Clip.SampleRate = (float)(*ClipObj)->GetNumberField(TEXT("SampleRate"));
             Clip.FrameCount = (*ClipObj)->GetIntegerField(TEXT("FrameCount"));
             Clip.BoneNames = OutData.BoneNames;  // Use global bone name order for this clip
+            bool bJsonHasRootMotion = false;
+            if ((*ClipObj)->TryGetBoolField(TEXT("HasRootMotion"), bJsonHasRootMotion))
+            {
+                Clip.bHasRootMotion = bJsonHasRootMotion;
+            }
+
             const TArray<TSharedPtr<FJsonValue>>* FramesArr = nullptr;
             if ((*ClipObj)->TryGetArrayField(TEXT("Frames"), FramesArr))
             {
@@ -151,6 +197,19 @@ bool SAAnimationImporter::ParseFromFile(const FString& JsonPath, FSAAnimData& Ou
                     Clip.FrameData.Add(MoveTemp(Frame));
                 }
             }
+            const TArray<TSharedPtr<FJsonValue>>* RootMotionFramesArr = nullptr;
+            if ((*ClipObj)->TryGetArrayField(TEXT("RootMotionFrames"), RootMotionFramesArr))
+            {
+                for (const TSharedPtr<FJsonValue>& RootMotionVal : *RootMotionFramesArr)
+                {
+                    const TSharedPtr<FJsonObject>* RootMotionObj = nullptr;
+                    if (RootMotionVal->TryGetObject(RootMotionObj) && RootMotionObj)
+                    {
+                        Clip.RootMotionFrames.Add(ParseRootMotionFrame(*RootMotionObj));
+                    }
+                }
+            }
+            Clip.bHasRootMotion = Clip.bHasRootMotion || Clip.RootMotionFrames.Num() > 0;
             OutData.Clips.Add(Clip);
         }
     }
@@ -209,6 +268,10 @@ UAnimSequence* SAAnimationImporter::Build(const FSAAnimClip& Clip, USkeleton* Sk
     }
 
     AnimSeq->SetSkeleton(Skeleton);
+    AnimSeq->bEnableRootMotion = false;
+    AnimSeq->RootMotionRootLock = ERootMotionRootLock::AnimFirstFrame;
+    AnimSeq->bForceRootLock = false;
+
     // Debug: sample first frame, first anim bone transform
     if (Clip.FrameData.Num() > 0 && Clip.FrameData[0].Num() > 0)
     {
@@ -222,6 +285,11 @@ UAnimSequence* SAAnimationImporter::Build(const FSAAnimClip& Clip, USkeleton* Sk
 
     const int32 NumFrames = Clip.FrameData.Num();
     const FFrameRate FrameRate(FMath::RoundToInt(Clip.SampleRate), 1);
+    if (Clip.bHasRootMotion && Clip.RootMotionFrames.Num() != NumFrames)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Clip '%s' RootMotionFrames mismatch: %d root frames vs %d pose frames"),
+            *Clip.Name, Clip.RootMotionFrames.Num(), NumFrames);
+    }
 
     // Build bone name → anim bone index lookup (name-based matching, not index)
     TMap<FName, int32> BoneNameToAnimIdx;
@@ -337,6 +405,12 @@ const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr)
                 LocalUE = WorldUE[BoneIdx];
             }
 
+            if (ParentIdx < 0 && Clip.RootMotionFrames.IsValidIndex(Frame))
+            {
+                const FTransform RootMotionUE = BuildRootMotionTransformUE(Clip.RootMotionFrames[Frame], OrientQ);
+                LocalUE = LocalUE * RootMotionUE;
+            }
+
             AllPosKeys[BoneIdx].Add(LocalUE.GetTranslation() * SekiroToUEScale);
             AllRotKeys[BoneIdx].Add(LocalUE.GetRotation());
             AllScaleKeys[BoneIdx].Add(LocalUE.GetScale3D());
@@ -437,4 +511,3 @@ TArray<UAnimSequence*> SAAnimationImporter::BuildBatch(const FSAAnimData& AnimDa
     UE_LOG(LogTemp, Display, TEXT("SAAnimationImporter: Batch done %d/%d"), Results.Num(), AnimData.Clips.Num());
     return Results;
 }
-

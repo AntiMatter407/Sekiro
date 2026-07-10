@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimNodeBase.h"
-#include "SekiroLuaAnimGraphAsset.h"
+#include "SekiroLuaAnimTypes.h"
 #include "AnimNode_SekiroLuaStateMachine.generated.h"
 
 USTRUCT(BlueprintInternalUseOnly)
@@ -12,10 +12,7 @@ struct SEKIROANIMBLUEPRINTEXT_API FAnimNode_SekiroLuaStateMachine : public FAnim
 
 public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
-    FName LayerName = NAME_None;          // Lua 动画层名称
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
-    TObjectPtr<USekiroLuaAnimGraphAsset> GraphAsset = nullptr; // Lua 动画图覆盖
+    FName LayerName = NAME_None;          // Lua 动画层名称，留空时读取 Lua AnimBlueprint 默认输出
 
     virtual void Initialize_AnyThread(const FAnimationInitializeContext& Context) override;
     virtual void Update_AnyThread(const FAnimationUpdateContext& Context) override;
@@ -24,5 +21,8 @@ public:
 
 protected:
     FSekiroLuaAnimSnapshot CachedSnapshot; // 线程评估快照
-    USekiroLuaAnimGraphAsset* CachedGraphAsset = nullptr; // 线程评估资产
+
+    FSekiroLuaAnimSnapshot PreviousRootMotionSnapshot; // 上一帧根运动快照
+
+    bool bHasPreviousRootMotionSnapshot = false; // 是否已有上一帧根运动快照
 };

@@ -16,7 +16,7 @@
         },
         {
             "Name": "SekiroAnimBlueprintExtEditor",
-            "Type": "Editor",
+            "Type": "UncookedOnly",
             "LoadingPhase": "Default"
         }
     ],

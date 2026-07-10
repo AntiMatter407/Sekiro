@@ -9,6 +9,73 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "UnLua.h"
+#include "UnLuaModule.h"
+
+namespace
+{
+	static UnLua::FLuaRetValues RequireSKInputLuaModule(UnLua::FLuaEnv* LuaEnv, const FString& LuaModuleName, bool& bOutSucceeded)
+	{
+		bOutSucceeded = false;
+		if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
+
+		lua_State* LuaState = LuaEnv->GetMainState();
+		if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
+
+		const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
+		UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
+		if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SKInputManager Lua require failed. Module=%s"), *LuaModuleName);
+			return ReturnValues;
+		}
+
+		if (ReturnValues[0].GetType() != LUA_TTABLE)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SKInputManager Lua module must return a table. Module=%s"), *LuaModuleName);
+			return ReturnValues;
+		}
+
+		bOutSucceeded = true;
+		return ReturnValues;
+	}
+
+	static bool ReadSKInputLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName, FName FunctionName)
+	{
+		if (!ReturnValues.IsValid()) return false;
+		if (ReturnValues.Num() == 0) return false;
+		if (ReturnValues[0].GetType() == LUA_TNIL) return false;
+
+		if (ReturnValues[0].GetType() == LUA_TBOOLEAN)
+		{
+			return ReturnValues[0].Value<bool>();
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("SKInputManager Lua function should return boolean. Module=%s Function=%s"),
+			*LuaModuleName,
+			*FunctionName.ToString());
+		return false;
+	}
+
+	static bool ResolveSKScreenInputWorldDirection(const ACharacter* Owner, float InputX, float InputY, FVector& OutDirection)
+	{
+		OutDirection = FVector::ZeroVector;
+		if (!Owner) return false;
+
+		const AController* Controller = Owner->GetController();
+		if (!Controller) return false;
+
+		const FVector2D Input(InputX, InputY);
+		if (Input.IsNearlyZero()) return false;
+
+		const FVector2D Normalized = Input.GetSafeNormal();
+		const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+		const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+		const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+		OutDirection = (Forward * Normalized.Y + Right * Normalized.X).GetSafeNormal2D();
+		return !OutDirection.IsNearlyZero();
+	}
+}
 
 //////////////////////////////////////////////////////////////////////////
 // USKInputManager
@@ -270,6 +337,11 @@ bool USKInputManager::IsGuardHeld() const
 	return bGuardHeld;
 }
 
+bool USKInputManager::IsProstheticHeld() const
+{
+	return bProstheticHeld;
+}
+
 bool USKInputManager::IsDodgeHeld() const
 {
 	return bDodgeHeld;
@@ -309,6 +381,377 @@ float USKInputManager::GetTimeSinceLastAttack() const
 }
 
 //////////////////////////////////////////////////////////////////////////
+// Lua 输入宿主
+
+void USKInputManager::SetUseLuaInputLogic(bool bNewUseLuaInputLogic)
+{
+	bUseLuaInputLogic = bNewUseLuaInputLogic;
+}
+
+bool USKInputManager::IsUsingLuaInputLogic() const
+{
+	return bUseLuaInputLogic;
+}
+
+void USKInputManager::SetLuaInputModuleName(const FString& ModuleName)
+{
+	LuaInputModuleName = ModuleName;
+}
+
+FString USKInputManager::GetLuaInputModuleName() const
+{
+	return LuaInputModuleName;
+}
+
+FString USKInputManager::GetModuleName_Implementation() const
+{
+	return LuaInputModuleName;
+}
+
+float USKInputManager::GetSprintHoldThreshold() const
+{
+	return SprintHoldThreshold;
+}
+
+float USKInputManager::GetDodgeActiveDuration() const
+{
+	return DodgeActiveDuration;
+}
+
+float USKInputManager::GetMoveInputReleaseBufferDuration() const
+{
+	return MoveInputReleaseBufferDuration;
+}
+
+float USKInputManager::GetMoveInputReleaseBufferRemaining() const
+{
+	return MoveInputReleaseBufferRemaining;
+}
+
+void USKInputManager::SetMoveInputReleaseBufferRemaining(float RemainingTime)
+{
+	MoveInputReleaseBufferRemaining = FMath::Max(0.f, RemainingTime);
+}
+
+float USKInputManager::GetAnalogWalkEnterThreshold() const
+{
+	return AnalogWalkEnterThreshold;
+}
+
+float USKInputManager::GetAnalogRunEnterThreshold() const
+{
+	return AnalogRunEnterThreshold;
+}
+
+float USKInputManager::GetDodgeHoldTime() const
+{
+	return DodgeHoldTime;
+}
+
+void USKInputManager::SetDodgeHoldTime(float NewDodgeHoldTime)
+{
+	DodgeHoldTime = FMath::Max(0.f, NewDodgeHoldTime);
+}
+
+float USKInputManager::GetDodgeActiveTimeRemaining() const
+{
+	return DodgeActiveTimeRemaining;
+}
+
+void USKInputManager::SetDodgeActiveState(bool bNewDodgeActive, float ActiveTimeRemaining)
+{
+	bDodgeActive = bNewDodgeActive;
+	DodgeActiveTimeRemaining = FMath::Max(0.f, ActiveTimeRemaining);
+}
+
+void USKInputManager::SetAttackHoldTime(float NewAttackHoldTime)
+{
+	AttackHoldTime = FMath::Max(0.f, NewAttackHoldTime);
+}
+
+void USKInputManager::SetProstheticHoldTime(float NewProstheticHoldTime)
+{
+	ProstheticHoldTime = FMath::Max(0.f, NewProstheticHoldTime);
+}
+
+void USKInputManager::SetComboState(int32 NewComboIndex, float NewTimeSinceLastAttack)
+{
+	ComboIndex = FMath::Max(0, NewComboIndex);
+	TimeSinceLastAttack = FMath::Max(0.f, NewTimeSinceLastAttack);
+}
+
+float USKInputManager::GetWorldTimeSecondsForScript() const
+{
+	return GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+}
+
+void USKInputManager::SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining)
+{
+	MoveIntent = FVector2D(InputX, InputY);
+	MoveInputAmount = FMath::Clamp(InputAmount, 0.f, 1.f);
+	MoveInputReleaseBufferRemaining = FMath::Max(0.f, ReleaseBufferRemaining);
+}
+
+void USKInputManager::ClearMoveIntentForScript()
+{
+	MoveIntent = FVector2D::ZeroVector;
+	MoveInputAmount = 0.f;
+	MoveInputReleaseBufferRemaining = 0.f;
+}
+
+void USKInputManager::SetLookIntentForScript(float InputX, float InputY)
+{
+	LookIntent = FVector2D(InputX, InputY);
+}
+
+bool USKInputManager::AddMovementInputFromScreen(float InputX, float InputY)
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return false;
+
+	const AController* Controller = Owner->GetController();
+	if (!Controller) return false;
+
+	const FVector2D Input(InputX, InputY);
+	if (Input.IsNearlyZero()) return false;
+
+	const FVector2D Normalized = Input.GetSafeNormal();
+	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+	const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+	const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+	Owner->AddMovementInput(Forward, Normalized.Y);
+	Owner->AddMovementInput(Right, Normalized.X);
+	return true;
+}
+
+bool USKInputManager::AddMovementImpulseFromScreen(float InputX, float InputY, float VelocityChange)
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return false;
+
+	UCharacterMovementComponent* Movement = Owner->GetCharacterMovement();
+	if (!Movement) return false;
+
+	FVector WorldDirection = FVector::ZeroVector;
+	if (!ResolveSKScreenInputWorldDirection(Owner, InputX, InputY, WorldDirection)) return false;
+
+	const float SafeVelocityChange = FMath::Max(0.f, VelocityChange);
+	if (SafeVelocityChange <= UE_KINDA_SMALL_NUMBER) return false;
+
+	Movement->AddImpulse(WorldDirection * SafeVelocityChange, true);
+	return true;
+}
+
+bool USKInputManager::AddLookInputToCamera(float InputX, float InputY)
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return false;
+
+	const FVector2D LookAxis(InputX, InputY);
+	if (USKCameraManagerComponent* CameraManager = Owner->FindComponentByClass<USKCameraManagerComponent>())
+	{
+		CameraManager->AddLookInput(LookAxis);
+		return true;
+	}
+
+	Owner->AddControllerYawInput(LookAxis.X);
+	Owner->AddControllerPitchInput(LookAxis.Y);
+	return true;
+}
+
+bool USKInputManager::IsOwnerFalling() const
+{
+	const ACharacter* Owner = OwnerCharacter.Get();
+	return Owner && Owner->GetCharacterMovement() && Owner->GetCharacterMovement()->IsFalling();
+}
+
+bool USKInputManager::IsOwnerCrouched() const
+{
+	const ACharacter* Owner = OwnerCharacter.Get();
+	return Owner && Owner->bIsCrouched;
+}
+
+bool USKInputManager::IsOwnerDodging() const
+{
+	const ASKCharacter* SekiroOwner = Cast<ASKCharacter>(OwnerCharacter.Get());
+	return SekiroOwner && SekiroOwner->IsDodging();
+}
+
+bool USKInputManager::CanOwnerAirDodge() const
+{
+	const ASKCharacter* SekiroOwner = Cast<ASKCharacter>(OwnerCharacter.Get());
+	return SekiroOwner && SekiroOwner->CanAirDodge();
+}
+
+void USKInputManager::JumpOwner()
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (Owner)
+	{
+		Owner->Jump();
+	}
+}
+
+void USKInputManager::StopJumpingOwner()
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (Owner)
+	{
+		Owner->StopJumping();
+	}
+}
+
+void USKInputManager::CrouchOwner()
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (Owner)
+	{
+		Owner->Crouch();
+	}
+}
+
+void USKInputManager::UnCrouchOwner()
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (Owner)
+	{
+		Owner->UnCrouch();
+	}
+}
+
+void USKInputManager::SetOwnerDodging(bool bNewDodging)
+{
+	ASKCharacter* SekiroOwner = Cast<ASKCharacter>(OwnerCharacter.Get());
+	if (SekiroOwner)
+	{
+		SekiroOwner->SetDodging(bNewDodging);
+	}
+}
+
+void USKInputManager::SetOwnerDodgeDirection(float ForwardAmount, float LateralAmount)
+{
+	ASKCharacter* SekiroOwner = Cast<ASKCharacter>(OwnerCharacter.Get());
+	if (SekiroOwner)
+	{
+		SekiroOwner->SetDodgeDirection(ForwardAmount, LateralAmount);
+	}
+}
+
+FName USKInputManager::GetMovementTierName() const
+{
+	const ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return FName(TEXT("Run"));
+
+	const USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
+	if (!MoveComp) return FName(TEXT("Run"));
+
+	switch (MoveComp->CurrentMovementTier)
+	{
+	case ESKMovementTier::Idle:
+		return FName(TEXT("Idle"));
+	case ESKMovementTier::Walk:
+		return FName(TEXT("Walk"));
+	case ESKMovementTier::Run:
+		return FName(TEXT("Run"));
+	case ESKMovementTier::Sprint:
+		return FName(TEXT("Sprint"));
+	case ESKMovementTier::Crouch:
+		return FName(TEXT("Crouch"));
+	default:
+		return FName(TEXT("Run"));
+	}
+}
+
+void USKInputManager::SetMovementTierByName(FName TierName)
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return;
+
+	USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
+	if (!MoveComp) return;
+
+	MoveComp->CurrentMovementTier = ResolveMovementTierByName(TierName);
+}
+
+void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
+{
+	const FString NormalizedName = ActionName.ToString().ToLower();
+	if (NormalizedName == TEXT("attack")) bAttackPressed = bPressed;
+	else if (NormalizedName == TEXT("jump")) bJumpPressed = bPressed;
+	else if (NormalizedName == TEXT("dodge")) bDodgePressed = bPressed;
+	else if (NormalizedName == TEXT("interact")) bInteractPressed = bPressed;
+	else if (NormalizedName == TEXT("useitem") || NormalizedName == TEXT("item")) bUseItemPressed = bPressed;
+	else if (NormalizedName == TEXT("healinggourd")) bHealingGourdPressed = bPressed;
+	else if (NormalizedName == TEXT("grapple")) bGrapplePressed = bPressed;
+	else if (NormalizedName == TEXT("prosthetic")) bProstheticPressed = bPressed;
+	else if (NormalizedName == TEXT("lockon")) bLockOnPressed = bPressed;
+	else if (NormalizedName == TEXT("crouch")) bCrouchToggled = bPressed;
+	else if (NormalizedName == TEXT("cycleitemnext")) bCycleItemNext = bPressed;
+	else if (NormalizedName == TEXT("cycleitemprev")) bCycleItemPrev = bPressed;
+	else if (NormalizedName == TEXT("pause")) bPausePressed = bPressed;
+	else if (NormalizedName == TEXT("menu")) bMenuPressed = bPressed;
+}
+
+void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
+{
+	const FString NormalizedName = ActionName.ToString().ToLower();
+	if (NormalizedName == TEXT("attack")) bAttackHeld = bHeld;
+	else if (NormalizedName == TEXT("guard")) bGuardHeld = bHeld;
+	else if (NormalizedName == TEXT("dodge")) bDodgeHeld = bHeld;
+	else if (NormalizedName == TEXT("walk")) bWalkHeld = bHeld;
+	else if (NormalizedName == TEXT("prosthetic")) bProstheticHeld = bHeld;
+}
+
+void USKInputManager::AddBufferedInput(FName Action, int32 Priority, float Lifetime)
+{
+	FSKBufferedInput Entry;
+	Entry.Action = Action;
+	Entry.Priority = Priority;
+	Entry.Timestamp = GetWorldTimeSecondsForScript();
+	Entry.Lifetime = FMath::Max(0.f, Lifetime);
+	InputBuffer.Add(Entry);
+}
+
+void USKInputManager::PruneInputBufferForScript()
+{
+	const float Now = GetWorldTimeSecondsForScript();
+	InputBuffer.RemoveAll([Now](const FSKBufferedInput& Entry) {
+		return (Now - Entry.Timestamp) > Entry.Lifetime;
+	});
+	while (InputBuffer.Num() > 6)
+	{
+		InputBuffer.RemoveAt(0);
+	}
+}
+
+void USKInputManager::ClearPressedFlagsForScript()
+{
+	bAttackPressed = false;
+	bJumpPressed = false;
+	bDodgePressed = false;
+	bInteractPressed = false;
+	bUseItemPressed = false;
+	bHealingGourdPressed = false;
+	bGrapplePressed = false;
+	bProstheticPressed = false;
+	bLockOnPressed = false;
+	bCycleItemNext = false;
+	bCycleItemPrev = false;
+	bPausePressed = false;
+	bMenuPressed = false;
+	bCrouchToggled = false;
+}
+
+bool USKInputManager::ToggleLockTargetInViewForScript()
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return false;
+
+	USKCameraManagerComponent* CameraManager = Owner->FindComponentByClass<USKCameraManagerComponent>();
+	return CameraManager && CameraManager->ToggleLockTargetInView();
+}
+
+//////////////////////////////////////////////////////////////////////////
 // 生命周期
 
 void USKInputManager::BeginPlay()
@@ -324,6 +767,8 @@ void USKInputManager::BeginPlay()
 void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (TryCallLuaInputTick(DeltaTime)) return;
 
 	// ── 长按计时 ──
 	if (bAttackHeld)
@@ -425,10 +870,13 @@ void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 
 void USKInputManager::OnMove(const FInputActionValue& Value)
 {
+	const FVector2D LuaInput = Value.Get<FVector2D>();
+	if (TryCallLuaInputAxisEvent(TEXT("OnMove"), LuaInput)) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
 
-	const FVector2D Input = Value.Get<FVector2D>();
+	const FVector2D Input = LuaInput;
 	const float RawInputAmount = FMath::Clamp(Input.Size(), 0.f, 1.f);
 	const bool bHasRawMoveInput = RawInputAmount > 0.1f;
 	if (bHasRawMoveInput)
@@ -485,10 +933,13 @@ void USKInputManager::OnMove(const FInputActionValue& Value)
 
 void USKInputManager::OnLook(const FInputActionValue& Value)
 {
+	const FVector2D LuaInput = Value.Get<FVector2D>();
+	if (TryCallLuaInputAxisEvent(TEXT("OnLook"), LuaInput)) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
 
-	FVector2D LookAxis = Value.Get<FVector2D>();
+	FVector2D LookAxis = LuaInput;
 	LookIntent = LookAxis;
 
 	USKCameraManagerComponent* CameraManager = Owner->FindComponentByClass<USKCameraManagerComponent>();
@@ -507,6 +958,8 @@ void USKInputManager::OnLook(const FInputActionValue& Value)
 
 void USKInputManager::OnJumpStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnJumpStarted"))) return;
+
 	bJumpPressed = true;
 
 	// 入队到输入缓冲
@@ -526,6 +979,8 @@ void USKInputManager::OnJumpStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnJumpCompleted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnJumpCompleted"))) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (Owner)
 	{
@@ -538,6 +993,8 @@ void USKInputManager::OnJumpCompleted(const FInputActionValue& Value)
 
 void USKInputManager::OnDodgeStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnDodgeStarted"))) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
 
@@ -553,6 +1010,8 @@ void USKInputManager::OnDodgeStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnDodgeCompleted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnDodgeCompleted"))) return;
+
 	const bool bWasShortPress = DodgeHoldTime < SprintHoldThreshold;
 	bDodgeHeld = false;
 
@@ -574,6 +1033,8 @@ void USKInputManager::OnDodgeCompleted(const FInputActionValue& Value)
 
 void USKInputManager::OnWalkModifierStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnWalkModifierStarted"))) return;
+
 	bWalkHeld = true;
 
 	ACharacter* Owner = OwnerCharacter.Get();
@@ -590,6 +1051,8 @@ void USKInputManager::OnWalkModifierStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnWalkModifierCompleted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnWalkModifierCompleted"))) return;
+
 	bWalkHeld = false;
 
 	ACharacter* Owner = OwnerCharacter.Get();
@@ -609,6 +1072,8 @@ void USKInputManager::OnWalkModifierCompleted(const FInputActionValue& Value)
 
 void USKInputManager::OnCrouchStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnCrouchStarted"))) return;
+
 	bCrouchToggled = true;
 
 	ACharacter* Owner = OwnerCharacter.Get();
@@ -637,6 +1102,8 @@ void USKInputManager::OnCrouchStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnAttackStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnAttackStarted"))) return;
+
 	bAttackPressed = true;
 	bAttackHeld = true;
 	AttackHoldTime = 0.f;
@@ -664,12 +1131,16 @@ void USKInputManager::OnAttackStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnAttackCompleted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnAttackCompleted"))) return;
+
 	bAttackHeld = false;
 	AttackHoldTime = 0.f;
 }
 
 void USKInputManager::OnGuardStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnGuardStarted"))) return;
+
 	bGuardHeld = true;
 
 	// Guard 也入缓冲，但消费方优先使用 IsGuardHeld 持续状态
@@ -683,11 +1154,15 @@ void USKInputManager::OnGuardStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnGuardCompleted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnGuardCompleted"))) return;
+
 	bGuardHeld = false;
 }
 
 void USKInputManager::OnLockOnStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnLockOnStarted"))) return;
+
 	bLockOnPressed = true;
 
 	ACharacter* Owner = OwnerCharacter.Get();
@@ -701,6 +1176,8 @@ void USKInputManager::OnLockOnStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnProstheticStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnProstheticStarted"))) return;
+
 	bProstheticPressed = true;
 	bProstheticHeld = true;
 	ProstheticHoldTime = 0.f;
@@ -716,12 +1193,16 @@ void USKInputManager::OnProstheticStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnProstheticCompleted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnProstheticCompleted"))) return;
+
 	bProstheticHeld = false;
 	ProstheticHoldTime = 0.f;
 }
 
 void USKInputManager::OnGrappleStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnGrappleStarted"))) return;
+
 	bGrapplePressed = true;
 
 	// 入队到输入缓冲
@@ -738,6 +1219,8 @@ void USKInputManager::OnGrappleStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnInteractStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnInteractStarted"))) return;
+
 	bInteractPressed = true;
 
 	// 入队到输入缓冲
@@ -751,6 +1234,8 @@ void USKInputManager::OnInteractStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnUseItemStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnUseItemStarted"))) return;
+
 	bUseItemPressed = true;
 
 	// 入队到输入缓冲
@@ -764,6 +1249,8 @@ void USKInputManager::OnUseItemStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnHealingGourdStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnHealingGourdStarted"))) return;
+
 	bHealingGourdPressed = true;
 
 	// 入队到输入缓冲
@@ -777,11 +1264,15 @@ void USKInputManager::OnHealingGourdStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnCycleItemNextStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnCycleItemNextStarted"))) return;
+
 	bCycleItemNext = true;
 }
 
 void USKInputManager::OnCycleItemPrevStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnCycleItemPrevStarted"))) return;
+
 	bCycleItemPrev = true;
 }
 
@@ -790,12 +1281,103 @@ void USKInputManager::OnCycleItemPrevStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnPauseStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnPauseStarted"))) return;
+
 	bPausePressed = true;
 }
 
 void USKInputManager::OnMenuStarted(const FInputActionValue& Value)
 {
+	if (TryCallLuaInputEvent(TEXT("OnMenuStarted"))) return;
+
 	bMenuPressed = true;
+}
+
+bool USKInputManager::TryCallLuaInputEvent(FName FunctionName)
+{
+	const FString ModuleName = ResolveLuaInputModuleName();
+	if (!bUseLuaInputLogic || ModuleName.IsEmpty()) return false;
+
+	IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
+	UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
+	if (!LuaEnv) return false;
+
+	bool bRequireSucceeded = false;
+	UnLua::FLuaRetValues RequireReturnValues = RequireSKInputLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
+	if (!bRequireSucceeded) return false;
+
+	UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
+	const FString DirectFunctionNameText = FunctionName.ToString();
+	const FTCHARToUTF8 DirectFunctionNameUtf8(*DirectFunctionNameText);
+	UnLua::FLuaValue FunctionValue = ModuleTable[DirectFunctionNameUtf8.Get()];
+	if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
+
+	UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
+	UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this);
+	const bool bHandled = ReadSKInputLuaHandled(FunctionReturnValues, ModuleName, FunctionName);
+	FunctionReturnValues.Pop();
+	return bHandled;
+}
+
+bool USKInputManager::TryCallLuaInputAxisEvent(FName FunctionName, const FVector2D& AxisValue)
+{
+	const FString ModuleName = ResolveLuaInputModuleName();
+	if (!bUseLuaInputLogic || ModuleName.IsEmpty()) return false;
+
+	IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
+	UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
+	if (!LuaEnv) return false;
+
+	bool bRequireSucceeded = false;
+	UnLua::FLuaRetValues RequireReturnValues = RequireSKInputLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
+	if (!bRequireSucceeded) return false;
+
+	UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
+	const FString DirectFunctionNameText = FunctionName.ToString();
+	const FTCHARToUTF8 DirectFunctionNameUtf8(*DirectFunctionNameText);
+	UnLua::FLuaValue FunctionValue = ModuleTable[DirectFunctionNameUtf8.Get()];
+	if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
+
+	UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
+	UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, AxisValue.X, AxisValue.Y);
+	const bool bHandled = ReadSKInputLuaHandled(FunctionReturnValues, ModuleName, FunctionName);
+	FunctionReturnValues.Pop();
+	return bHandled;
+}
+
+bool USKInputManager::TryCallLuaInputTick(float DeltaTime)
+{
+	const FString ModuleName = ResolveLuaInputModuleName();
+	if (!bUseLuaInputLogic || ModuleName.IsEmpty()) return false;
+
+	IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
+	UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
+	if (!LuaEnv) return false;
+
+	bool bRequireSucceeded = false;
+	UnLua::FLuaRetValues RequireReturnValues = RequireSKInputLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
+	if (!bRequireSucceeded) return false;
+
+	UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
+	UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
+	if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
+
+	UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
+	UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
+	const bool bHandled = ReadSKInputLuaHandled(FunctionReturnValues, ModuleName, FName(TEXT("Tick")));
+	FunctionReturnValues.Pop();
+	return bHandled;
+}
+
+FString USKInputManager::ResolveLuaInputModuleName() const
+{
+	if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
+	{
+		const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<USKInputManager*>(this));
+		if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
+	}
+
+	return LuaInputModuleName;
 }
 
 ESKMovementTier USKInputManager::ResolveMovementTierFromInput(float InputMagnitude) const
@@ -835,6 +1417,16 @@ ESKMovementTier USKInputManager::ResolveMovementTierFromInput(float InputMagnitu
 	}
 
 	return InputMagnitude <= AnalogWalkEnterThreshold ? ESKMovementTier::Walk : ESKMovementTier::Run;
+}
+
+ESKMovementTier USKInputManager::ResolveMovementTierByName(FName TierName) const
+{
+	const FString NormalizedName = TierName.ToString().ToLower();
+	if (NormalizedName == TEXT("idle")) return ESKMovementTier::Idle;
+	if (NormalizedName == TEXT("walk")) return ESKMovementTier::Walk;
+	if (NormalizedName == TEXT("sprint")) return ESKMovementTier::Sprint;
+	if (NormalizedName == TEXT("crouch")) return ESKMovementTier::Crouch;
+	return ESKMovementTier::Run;
 }
 
 void USKInputManager::ApplyDesiredMovementTier(float InputMagnitude)

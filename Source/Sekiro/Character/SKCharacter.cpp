@@ -4,6 +4,7 @@
 #include "Weapon/SKWeaponComponent.h"
 #include "Input/SKInputManager.h"
 #include "Camera/SKCameraManagerComponent.h"
+#include "UI/SKLockOnIndicatorComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
@@ -50,6 +51,7 @@ ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	WeaponComponent = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
 	InputManager = CreateDefaultSubobject<USKInputManager>(TEXT("InputManager"));
 	CameraManager = CreateDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
+	LockOnIndicator = CreateDefaultSubobject<USKLockOnIndicatorComponent>(TEXT("LockOnIndicator"));
 }
 
 void ASKCharacter::BeginPlay()

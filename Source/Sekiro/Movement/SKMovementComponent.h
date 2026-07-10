@@ -23,13 +23,13 @@ public:
 	USKMovementComponent();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed")
-	float WalkSpeed = 150.f;
+	float WalkSpeed = 140.f;                                      // Walk 循环稳健阈值
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed")
-	float RunSpeed = 500.f;
+	float RunSpeed = 407.f;                                       // Run 循环稳健阈值
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Speed")
-	float SprintSpeed = 600.f;
+	float SprintSpeed = 853.f;                                    // Sprint 循环稳健阈值
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|State")
 	ESKMovementTier CurrentMovementTier = ESKMovementTier::Run;

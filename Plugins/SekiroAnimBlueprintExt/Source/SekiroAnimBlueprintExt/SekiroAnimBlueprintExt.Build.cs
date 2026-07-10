@@ -10,11 +10,11 @@ public class SekiroAnimBlueprintExt : ModuleRules
             "Core",
             "CoreUObject",
             "Engine",
+            "UnLua",
         });
 
         PrivateDependencyModuleNames.AddRange(new string[] {
             "Lua",
-            "UnLua",
         });
     }
 }

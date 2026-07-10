@@ -108,6 +108,13 @@ struct FSAAnimBoneTransform
     FVector Scale = FVector::OneVector;           // 缩放
 };
 
+/// 单帧根运动（HKX 空间，Y-up，单位米，Yaw 为绕 HKX Y 轴弧度）
+struct FSAAnimRootMotionFrame
+{
+    FVector Translation = FVector::ZeroVector;    // 根运动位移 (m)
+    float Yaw = 0.0f;                             // 根运动水平旋转
+};
+
 /// 单个动画片段
 struct FSAAnimClip
 {
@@ -115,8 +122,10 @@ struct FSAAnimClip
     float Duration = 0.0f;            // 时长(秒)
     float SampleRate = 30.0f;         // 帧率
     int32 FrameCount = 0;             // 总帧数
+    bool bHasRootMotion = false;      // 是否包含 HKX ReferenceFrame 根运动
     TArray<FName> BoneNames;              // 骨骼名（与 FrameData 骨骼维对齐）
     TArray<TArray<FSAAnimBoneTransform>> FrameData;  // [帧][骨骼] HKX空间变换
+    TArray<FSAAnimRootMotionFrame> RootMotionFrames;  // [帧] HKX ReferenceFrame 根运动
 };
 
 /// 动画 JSON 解析结果（顶层结构）

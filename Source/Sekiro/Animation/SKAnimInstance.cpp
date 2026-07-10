@@ -2,6 +2,7 @@
 #include "Character/SKCharacter.h"
 #include "Input/SKInputManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Animation/AnimEnums.h"
 #include "KismetAnimationLibrary.h"
 #include "SekiroAnimLogicData.h"
 
@@ -42,9 +43,9 @@ float SKGetGaitReferenceSpeed(ESKAnimGait InGait, const USKMovementComponent* Mo
     {
         switch (InGait)
         {
-        case ESKAnimGait::Walk:   return 150.f;
-        case ESKAnimGait::Sprint: return 600.f;
-        case ESKAnimGait::Run:    return 500.f;
+        case ESKAnimGait::Walk:   return 140.f;
+        case ESKAnimGait::Sprint: return 853.f;
+        case ESKAnimGait::Run:    return 407.f;
         case ESKAnimGait::Idle:
         default:
             return 0.f;
@@ -62,7 +63,11 @@ float SKGetGaitReferenceSpeed(ESKAnimGait InGait, const USKMovementComponent* Mo
     }
 }
 
-float SKCalculateGaitBlendAlpha(ESKAnimGait CurrentGait, ESKAnimGait TargetGait, float CurrentSpeed, const USKMovementComponent* Movement)
+float SKCalculateGaitBlendAlpha(
+    ESKAnimGait CurrentGait,
+    ESKAnimGait TargetGait,
+    float CurrentSpeed,
+    const USKMovementComponent* Movement)
 {
     const float SourceSpeed = SKGetGaitReferenceSpeed(CurrentGait, Movement);
     const float TargetSpeed = SKGetGaitReferenceSpeed(TargetGait, Movement);
@@ -90,9 +95,17 @@ ESKLocomotionDirection SKConvertAngleToDirection(float InAngle)
 }
 }
 
+USKAnimInstance::USKAnimInstance()
+{
+    bAutoUpdateLuaDrivenAnimation = false;
+    DefaultLuaAnimModuleName = TEXT("Animation.Sekiro.ABP_Sekiro");
+    RootMotionMode = ERootMotionMode::RootMotionFromEverything;
+}
+
 void USKAnimInstance::NativeInitializeAnimation()
 {
     Super::NativeInitializeAnimation();
+    RootMotionMode = ERootMotionMode::RootMotionFromEverything;
     OwnerCharacter = Cast<ASKCharacter>(TryGetPawnOwner());
     if (OwnerCharacter)
     {
@@ -134,6 +147,9 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     Speed = Velocity.Size2D();
     Acceleration = CharacterMovement ? CharacterMovement->GetCurrentAcceleration() : FVector::ZeroVector;
     AccelerationAmount = Acceleration.Size2D();
+    const FVector2D MoveIntent = OwnerInputManager ? OwnerInputManager->GetMoveIntent() : FVector2D::ZeroVector;
+    MoveInputX = MoveIntent.X;
+    MoveInputY = MoveIntent.Y;
     MovementInputAmount = OwnerInputManager ? OwnerInputManager->GetMoveInputAmount() : 0.f;
     bIsMoving = Speed > 3.f;
     bHasMovementInput = MovementInputAmount > 0.1f;
@@ -309,4 +325,6 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
             bInvincible      = (Mask & (1 << (uint8)ESKFrameFlag::Invincible)) != 0;
         }
     }
+
+    UpdateLuaDrivenAnimation(DeltaSeconds);
 }
