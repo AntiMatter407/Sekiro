@@ -1,518 +1,649 @@
 ﻿#include "AnimNodes/AnimNode_SekiroLuaStateMachine.h"
 
 #include "Animation/AnimInstanceProxy.h"
-#include "Animation/AnimationAsset.h"
+#include "Animation/AnimNode_Inertialization.h"
 #include "Animation/AnimationPoseData.h"
-#include "Animation/AnimSequence.h"
-#include "Animation/AnimSequenceBase.h"
-#include "Animation/BlendSpace.h"
 #include "AnimationRuntime.h"
-#include "Logging/TokenizedMessage.h"
-#include "SekiroLuaAnimInstance.h"
+#include "SekiroAnimBlueprintExt.h"
+#include "SekiroLuaAnimInstanceProxy.h"
 
 namespace
 {
-    float GetSekiroLuaBlendSpaceSampleLength(const UBlendSpace* BlendSpace, const TArray<FBlendSampleData>& BlendSampleData)
-    {
-        if (!BlendSpace) return 0.0f;
+    constexpr int32 SekiroLuaMinimumTransitionCapacity = 128;
 
-        float WeightedPlayLength = 0.0f;
-        float TotalWeight = 0.0f;
-        for (int32 SampleIndex = 0; SampleIndex < BlendSampleData.Num(); ++SampleIndex)
-        {
-            const FBlendSampleData& SampleData = BlendSampleData[SampleIndex];
-            const float SampleWeight = SampleData.GetClampedWeight();
-            if (SampleWeight <= UE_KINDA_SMALL_NUMBER) continue;
-
-            const FBlendSample& BlendSample = BlendSpace->GetBlendSample(SampleData.SampleDataIndex);
-            const UAnimSequence* Sequence = BlendSample.Animation;
-            if (!Sequence) continue;
-
-            const float SampleRateScale = Sequence->RateScale * SampleData.SamplePlayRate;
-            const float SafeRateScale = FMath::IsNearlyZero(SampleRateScale) ? 1.0f : FMath::Abs(SampleRateScale);
-            WeightedPlayLength += (Sequence->GetPlayLength() / SafeRateScale) * SampleWeight;
-            TotalWeight += SampleWeight;
-        }
-
-        if (TotalWeight <= UE_KINDA_SMALL_NUMBER) return 0.0f;
-        return WeightedPlayLength / TotalWeight;
-    }
-
-    float GetSekiroLuaNodeAnimationPlayLength(const UAnimationAsset* AnimationAsset, const FVector& BlendInput)
-    {
-        if (!AnimationAsset) return 0.0f;
-
-        if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(AnimationAsset))
-        {
-            TArray<FBlendSampleData> BlendSampleData;
-            int32 CachedTriangulationIndex = INDEX_NONE;
-            if (BlendSpace->GetSamplesFromBlendInput(BlendInput, BlendSampleData, CachedTriangulationIndex, true))
-            {
-                const float BlendSpaceLength = GetSekiroLuaBlendSpaceSampleLength(BlendSpace, BlendSampleData);
-                if (BlendSpaceLength > UE_KINDA_SMALL_NUMBER) return BlendSpaceLength;
-            }
-        }
-
-        return AnimationAsset->GetPlayLength();
-    }
-
-    float GetSekiroLuaWrappedDeltaTime(float PreviousTime, float CurrentTime, float PlayLength, bool bLoop)
-    {
-        float DeltaTime = CurrentTime - PreviousTime;
-        if (bLoop && PlayLength > UE_KINDA_SMALL_NUMBER && DeltaTime < 0.0f)
-        {
-            DeltaTime += PlayLength;
-        }
-
-        return DeltaTime;
-    }
-
-    float EstimateSekiroLuaPreviousTime(const UAnimationAsset* AnimationAsset, const FVector& BlendInput, float CurrentTime, float PlayRate, bool bLoop, float DeltaSeconds)
-    {
-        if (!AnimationAsset) return CurrentTime;
-
-        const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(AnimationAsset);
-        const float AssetRateScale = Sequence ? Sequence->RateScale : 1.0f;
-        const float PlayLength = GetSekiroLuaNodeAnimationPlayLength(AnimationAsset, BlendInput);
-        float PreviousTime = CurrentTime - DeltaSeconds * PlayRate * AssetRateScale;
-        if (bLoop && PlayLength > UE_KINDA_SMALL_NUMBER)
-        {
-            while (PreviousTime < 0.0f)
-            {
-                PreviousTime += PlayLength;
-            }
-
-            while (PreviousTime > PlayLength)
-            {
-                PreviousTime -= PlayLength;
-            }
-
-            return PreviousTime;
-        }
-
-        return FMath::Clamp(PreviousTime, 0.0f, PlayLength);
-    }
-
-    bool FindSekiroLuaPreviousSnapshotTime(const FSekiroLuaAnimSnapshot& Snapshot, const UAnimationAsset* AnimationAsset, float& OutTime)
-    {
-        if (!AnimationAsset) return false;
-
-        if (Snapshot.CurrentAnimationAsset.Get() == AnimationAsset)
-        {
-            OutTime = Snapshot.CurrentTime;
-            return true;
-        }
-
-        if (Snapshot.PreviousAnimationAsset.Get() == AnimationAsset)
-        {
-            OutTime = Snapshot.PreviousTime;
-            return true;
-        }
-
-        return false;
-    }
-
-    FTransform ExtractSekiroLuaSequenceRootMotion(const UAnimSequenceBase* Sequence, float PreviousTime, float CurrentTime, bool bLoop)
-    {
-        if (!Sequence) return FTransform::Identity;
-
-        const float PlayLength = Sequence->GetPlayLength();
-        const float DeltaTime = GetSekiroLuaWrappedDeltaTime(PreviousTime, CurrentTime, PlayLength, bLoop);
-        if (FMath::IsNearlyZero(DeltaTime)) return FTransform::Identity;
-
-        return Sequence->ExtractRootMotion(PreviousTime, DeltaTime, bLoop);
-    }
-
-    FRootMotionMovementParams ExtractSekiroLuaBlendSpaceRootMotion(const UBlendSpace* BlendSpace, float PreviousTime, float CurrentTime, bool bLoop, const FVector& BlendInput)
-    {
-        FRootMotionMovementParams RootMotionParams;
-        if (!BlendSpace) return RootMotionParams;
-
-        TArray<FBlendSampleData> BlendSampleData;
-        int32 CachedTriangulationIndex = INDEX_NONE;
-        if (!BlendSpace->GetSamplesFromBlendInput(BlendInput, BlendSampleData, CachedTriangulationIndex, true))
-        {
-            return RootMotionParams;
-        }
-
-        const float PlayLength = GetSekiroLuaBlendSpaceSampleLength(BlendSpace, BlendSampleData);
-        if (PlayLength <= UE_KINDA_SMALL_NUMBER) return RootMotionParams;
-
-        float PreviousNormalizedTime = FMath::Clamp(PreviousTime / PlayLength, 0.0f, 1.0f);
-        float CurrentNormalizedTime = FMath::Clamp(CurrentTime / PlayLength, 0.0f, 1.0f);
-        if (bLoop && CurrentTime < PreviousTime)
-        {
-            CurrentNormalizedTime += 1.0f;
-        }
-
-        for (int32 SampleIndex = 0; SampleIndex < BlendSampleData.Num(); ++SampleIndex)
-        {
-            const FBlendSampleData& SampleData = BlendSampleData[SampleIndex];
-            const float SampleWeight = SampleData.GetClampedWeight();
-            if (SampleWeight <= UE_KINDA_SMALL_NUMBER) continue;
-
-            const FBlendSample& BlendSample = BlendSpace->GetBlendSample(SampleData.SampleDataIndex);
-            const UAnimSequence* Sequence = BlendSample.Animation;
-            if (!Sequence) continue;
-
-            const float SampleLength = Sequence->GetPlayLength();
-            const float SamplePreviousTime = FMath::Clamp(PreviousNormalizedTime, 0.0f, 1.0f) * SampleLength;
-            float SampleCurrentTime = CurrentNormalizedTime * SampleLength;
-            if (bLoop && SampleCurrentTime > SampleLength)
-            {
-                SampleCurrentTime -= SampleLength;
-            }
-
-            RootMotionParams.AccumulateWithBlend(
-                ExtractSekiroLuaSequenceRootMotion(Sequence, SamplePreviousTime, SampleCurrentTime, bLoop),
-                SampleWeight);
-        }
-
-        return RootMotionParams;
-    }
-
-    FRootMotionMovementParams ExtractSekiroLuaAnimationRootMotion(const UAnimationAsset* AnimationAsset, float PreviousTime, float CurrentTime, bool bLoop, const FVector& BlendInput)
-    {
-        FRootMotionMovementParams RootMotionParams;
-        if (!AnimationAsset) return RootMotionParams;
-
-        if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(AnimationAsset))
-        {
-            return ExtractSekiroLuaBlendSpaceRootMotion(BlendSpace, PreviousTime, CurrentTime, bLoop, BlendInput);
-        }
-
-        if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(AnimationAsset))
-        {
-            RootMotionParams.Accumulate(ExtractSekiroLuaSequenceRootMotion(Sequence, PreviousTime, CurrentTime, bLoop));
-        }
-
-        return RootMotionParams;
-    }
-
-    void AccumulateSekiroLuaAnimationRootMotion(
-        FAnimInstanceProxy* AnimInstanceProxy,
-        const UAnimationAsset* AnimationAsset,
-        float PreviousTime,
-        float CurrentTime,
-        bool bLoop,
-        const FVector& BlendInput,
-        float Weight)
-    {
-        if (!AnimInstanceProxy || !AnimationAsset || Weight <= UE_KINDA_SMALL_NUMBER) return;
-
-        FRootMotionMovementParams RootMotionParams = ExtractSekiroLuaAnimationRootMotion(AnimationAsset, PreviousTime, CurrentTime, bLoop, BlendInput);
-        if (RootMotionParams.bHasRootMotion)
-        {
-            AnimInstanceProxy->GetExtractedRootMotion().AccumulateWithBlend(RootMotionParams, Weight);
-        }
-    }
-
-    void AccumulateSekiroLuaRootMotion(
-        const FAnimationUpdateContext& Context,
-        const FSekiroLuaAnimSnapshot* PreviousSnapshot,
-        const FSekiroLuaAnimSnapshot& CurrentSnapshot)
-    {
-        FAnimInstanceProxy* AnimInstanceProxy = Context.AnimInstanceProxy;
-        if (!AnimInstanceProxy || !AnimInstanceProxy->ShouldExtractRootMotion()) return;
-        if (!CurrentSnapshot.bHasPose || !CurrentSnapshot.CurrentAnimationAsset.Get()) return;
-
-        const float DeltaSeconds = Context.GetDeltaTime();
-        if (DeltaSeconds <= UE_KINDA_SMALL_NUMBER) return;
-
-        const float RootMotionWeight = Context.GetFinalBlendWeight() * Context.GetRootMotionWeightModifier();
-        if (RootMotionWeight <= UE_KINDA_SMALL_NUMBER) return;
-
-        const UAnimationAsset* CurrentAnimationAsset = CurrentSnapshot.CurrentAnimationAsset.Get();
-        float PreviousCurrentTime = 0.0f;
-        if (!PreviousSnapshot || !FindSekiroLuaPreviousSnapshotTime(*PreviousSnapshot, CurrentAnimationAsset, PreviousCurrentTime))
-        {
-            PreviousCurrentTime = EstimateSekiroLuaPreviousTime(
-                CurrentAnimationAsset,
-                CurrentSnapshot.CurrentBlendInput,
-                CurrentSnapshot.CurrentTime,
-                CurrentSnapshot.CurrentPlayRate,
-                CurrentSnapshot.bCurrentLoop,
-                DeltaSeconds);
-        }
-
-        const bool bIsTransitioning = CurrentSnapshot.PreviousAnimationAsset.Get() && CurrentSnapshot.BlendAlpha < 1.0f;
-        const float CurrentPoseWeight = bIsTransitioning ? FMath::Clamp(CurrentSnapshot.BlendAlpha, 0.0f, 1.0f) : 1.0f;
-        AccumulateSekiroLuaAnimationRootMotion(
-            AnimInstanceProxy,
-            CurrentAnimationAsset,
-            PreviousCurrentTime,
-            CurrentSnapshot.CurrentTime,
-            CurrentSnapshot.bCurrentLoop,
-            CurrentSnapshot.CurrentBlendInput,
-            RootMotionWeight * CurrentPoseWeight);
-
-        if (!bIsTransitioning) return;
-
-        const UAnimationAsset* PreviousAnimationAsset = CurrentSnapshot.PreviousAnimationAsset.Get();
-        const float PreviousPoseWeight = 1.0f - CurrentPoseWeight;
-        float PreviousPreviousTime = 0.0f;
-        if (!PreviousSnapshot || !FindSekiroLuaPreviousSnapshotTime(*PreviousSnapshot, PreviousAnimationAsset, PreviousPreviousTime))
-        {
-            PreviousPreviousTime = EstimateSekiroLuaPreviousTime(
-                PreviousAnimationAsset,
-                CurrentSnapshot.PreviousBlendInput,
-                CurrentSnapshot.PreviousTime,
-                CurrentSnapshot.PreviousPlayRate,
-                CurrentSnapshot.bPreviousLoop,
-                DeltaSeconds);
-        }
-
-        AccumulateSekiroLuaAnimationRootMotion(
-            AnimInstanceProxy,
-            PreviousAnimationAsset,
-            PreviousPreviousTime,
-            CurrentSnapshot.PreviousTime,
-            CurrentSnapshot.bPreviousLoop,
-            CurrentSnapshot.PreviousBlendInput,
-            RootMotionWeight * PreviousPoseWeight);
-    }
-
-    void ResetSekiroLuaRootBoneForRootMotion(FPoseContext& Output)
-    {
-        if (!Output.AnimInstanceProxy || !Output.AnimInstanceProxy->ShouldExtractRootMotion()) return;
-        if (Output.Pose.GetNumBones() <= 0) return;
-
-        const FCompactPoseBoneIndex RootBoneIndex(0);
-        Output.Pose[RootBoneIndex] = Output.Pose.GetBoneContainer().GetRefPoseTransform(RootBoneIndex);
-    }
-
-    void EvaluateSekiroLuaSequencePose(const UAnimSequenceBase* Sequence, float Time, bool bLoop, FPoseContext& Output)
-    {
-        if (!Sequence)
-        {
-            Output.ResetToRefPose();
-            return;
-        }
-
-        const bool bExpectedAdditive = Output.ExpectsAdditivePose();
-        const bool bIsAdditive = Sequence->IsValidAdditive();
-        if (bExpectedAdditive && !bIsAdditive)
-        {
-            FText Message = FText::Format(
-                NSLOCTEXT("AnimNode_SekiroLuaStateMachine", "AdditiveMismatchWarning", "Trying to play a non-additive animation '{0}' into a pose that is expected to be additive."),
-                FText::FromString(Sequence->GetName()));
-            Output.LogMessage(EMessageSeverity::Warning, Message);
-        }
-
-        FAnimationPoseData AnimationPoseData(Output);
-        Sequence->GetAnimationPose(AnimationPoseData, FAnimExtractContext(static_cast<double>(Time), Output.AnimInstanceProxy->ShouldExtractRootMotion(), FDeltaTimeRecord(), bLoop));
-        ResetSekiroLuaRootBoneForRootMotion(Output);
-    }
-
-    void EvaluateSekiroLuaBlendSpacePose(const UBlendSpace* BlendSpace, float Time, bool bLoop, const FVector& BlendInput, FPoseContext& Output)
-    {
-        if (!BlendSpace)
-        {
-            Output.ResetToRefPose();
-            return;
-        }
-
-        const bool bExpectedAdditive = Output.ExpectsAdditivePose();
-        const bool bIsAdditive = BlendSpace->IsValidAdditive();
-        if (bExpectedAdditive && !bIsAdditive)
-        {
-            FText Message = FText::Format(
-                NSLOCTEXT("AnimNode_SekiroLuaStateMachine", "AdditiveMismatchWarning", "Trying to play a non-additive animation '{0}' into a pose that is expected to be additive."),
-                FText::FromString(BlendSpace->GetName()));
-            Output.LogMessage(EMessageSeverity::Warning, Message);
-        }
-
-        TArray<FBlendSampleData> BlendSampleData;
-        int32 CachedTriangulationIndex = INDEX_NONE;
-        if (!BlendSpace->GetSamplesFromBlendInput(BlendInput, BlendSampleData, CachedTriangulationIndex, true))
-        {
-            Output.ResetToRefPose();
-            return;
-        }
-
-        const float PlayLength = GetSekiroLuaBlendSpaceSampleLength(BlendSpace, BlendSampleData);
-        const float NormalizedTime = PlayLength > UE_KINDA_SMALL_NUMBER ? FMath::Clamp(Time / PlayLength, 0.0f, 1.0f) : 0.0f;
-        for (int32 SampleIndex = 0; SampleIndex < BlendSampleData.Num(); ++SampleIndex)
-        {
-            FBlendSampleData& SampleData = BlendSampleData[SampleIndex];
-            const FBlendSample& BlendSample = BlendSpace->GetBlendSample(SampleData.SampleDataIndex);
-            SampleData.Animation = BlendSample.Animation;
-            if (BlendSample.Animation)
-            {
-                SampleData.Time = NormalizedTime * BlendSample.Animation->GetPlayLength();
-            }
-        }
-
-        FAnimationPoseData AnimationPoseData(Output);
-        BlendSpace->GetAnimationPose(BlendSampleData, FAnimExtractContext(static_cast<double>(Time), Output.AnimInstanceProxy->ShouldExtractRootMotion(), FDeltaTimeRecord(), bLoop), AnimationPoseData);
-        ResetSekiroLuaRootBoneForRootMotion(Output);
-    }
-
-    void EvaluateSekiroLuaAnimationPose(const UAnimationAsset* AnimationAsset, float Time, bool bLoop, const FVector& BlendInput, FPoseContext& Output)
-    {
-        if (!AnimationAsset || !AnimationAsset->GetSkeleton())
-        {
-            Output.ResetToRefPose();
-            return;
-        }
-
-        if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(AnimationAsset))
-        {
-            EvaluateSekiroLuaBlendSpacePose(BlendSpace, Time, bLoop, BlendInput, Output);
-            return;
-        }
-
-        if (const UAnimSequenceBase* Sequence = Cast<UAnimSequenceBase>(AnimationAsset))
-        {
-            EvaluateSekiroLuaSequencePose(Sequence, Time, bLoop, Output);
-            return;
-        }
-
-        Output.ResetToRefPose();
-    }
-
-    FString GetSekiroLuaAnimDebugAssetName(const UAnimationAsset* AnimationAsset)
-    {
-        return AnimationAsset ? AnimationAsset->GetName() : FString(TEXT("None"));
-    }
-
+    /** 作用：生成包含 Lua 别名的调试资产标签。@param AnimationAsset const UAnimationAsset*，动画资产。@param AnimationName FName，Lua 别名。@return FString，调试标签。 */
     FString GetSekiroLuaAnimDebugAssetLabel(const UAnimationAsset* AnimationAsset, FName AnimationName)
     {
-        const FString AssetName = GetSekiroLuaAnimDebugAssetName(AnimationAsset);
-        if (AnimationName.IsNone()) return AssetName;
-
-        return FString::Printf(TEXT("%s [%s]"), *AssetName, *AnimationName.ToString());
+        const FString AssetName = AnimationAsset ? AnimationAsset->GetName() : FString(TEXT("None"));
+        return AnimationName.IsNone() ? AssetName : FString::Printf(TEXT("%s [%s]"), *AssetName, *AnimationName.ToString());
     }
+}
 
-    void AddSekiroLuaBlendSpaceSampleDebugData(FNodeDebugData& DebugData, const UAnimationAsset* AnimationAsset, const FVector& BlendInput)
-    {
-        const UBlendSpace* BlendSpace = Cast<UBlendSpace>(AnimationAsset);
-        if (!BlendSpace) return;
+void FSekiroLuaSequencePlayerNode_Standalone::ResetPlayback(float StartTime)
+{
+    SetStartPosition(StartTime);
+    SetAccumulatedTime(StartTime);
+    MarkerTickRecord.Reset();
+    DeltaTimeRecord = FDeltaTimeRecord();
+    BlendWeight = 0.0f;
+    bHasBeenFullWeight = false;
+    PlayRateScaleBiasClampState.Reinitialize();
+}
 
-        TArray<FBlendSampleData> BlendSampleData;
-        int32 CachedTriangulationIndex = INDEX_NONE;
-        if (!BlendSpace->GetSamplesFromBlendInput(BlendInput, BlendSampleData, CachedTriangulationIndex, true)) return;
-
-        for (int32 SampleIndex = 0; SampleIndex < BlendSampleData.Num(); ++SampleIndex)
-        {
-            const FBlendSampleData& SampleData = BlendSampleData[SampleIndex];
-            const float SampleWeight = SampleData.GetClampedWeight();
-            if (SampleWeight <= UE_KINDA_SMALL_NUMBER) continue;
-
-            const FBlendSample& BlendSample = BlendSpace->GetBlendSample(SampleData.SampleDataIndex);
-            FNodeDebugData& SampleDebugData = DebugData.BranchFlow(SampleWeight);
-            SampleDebugData.AddDebugItem(FString::Printf(
-                TEXT("BlendSample: %s Weight: %.1f%%"),
-                *GetNameSafe(BlendSample.Animation),
-                SampleWeight * 100.0f), true);
-        }
-    }
-
-    bool ResolveSekiroLuaAnimInstanceSnapshot(FAnimInstanceProxy* AnimInstanceProxy, FName LayerName, FSekiroLuaAnimSnapshot& OutSnapshot)
-    {
-        if (!AnimInstanceProxy) return false;
-
-        UObject* AnimInstanceObject = AnimInstanceProxy->GetAnimInstanceObject();
-        const USekiroLuaAnimInstance* LuaAnimInstance = Cast<USekiroLuaAnimInstance>(AnimInstanceObject);
-        if (!LuaAnimInstance) return false;
-
-        OutSnapshot = LuaAnimInstance->GetLuaAnimLayerSnapshot(LayerName);
-        return true;
-    }
+void FSekiroLuaStateResultNode_Standalone::GatherDebugData(FNodeDebugData& DebugData)
+{
+    DebugData.AddDebugItem(FString::Printf(
+        TEXT("StateResult: %s State: %s InputNodeId: %d InputType: %s"),
+        *NodeName.ToString(),
+        *StateName.ToString(),
+        InputNode.PoseLink.NodeId,
+        *StaticEnum<ESekiroLuaPoseNodeType>()->GetNameStringByValue(static_cast<int64>(InputNode.NodeType))));
+    Result.GatherDebugData(DebugData);
 }
 
 void FAnimNode_SekiroLuaStateMachine::Initialize_AnyThread(const FAnimationInitializeContext& Context)
 {
     FAnimNode_Base::Initialize_AnyThread(Context);
 
-    CachedSnapshot = FSekiroLuaAnimSnapshot();
-    PreviousRootMotionSnapshot = FSekiroLuaAnimSnapshot();
-    bHasPreviousRootMotionSnapshot = false;
+    for (FSekiroLuaSequencePlayerNode_Standalone& PlayerNode : PoseGraphSequencePlayers)
+    {
+        PlayerNode.Initialize_AnyThread(Context);
+    }
+
+    CachedSnapshot = nullptr;
+    ResetActiveTransitions();
+    DominantRootMotionRotationMode = ESekiroLuaRootMotionRotationMode::Extract;
+    DominantRootMotionWeight = 0.0f;
+    bTopologyInitialized = true;
+    bWarnedMissingInertializationRequester = false;
+}
+
+void FAnimNode_SekiroLuaStateMachine::CacheBones_AnyThread(const FAnimationCacheBonesContext& Context)
+{
+    FAnimNode_Base::CacheBones_AnyThread(Context);
+
+    for (FSekiroLuaSequencePlayerNode_Standalone& PlayerNode : PoseGraphSequencePlayers)
+    {
+        PlayerNode.CacheBones_AnyThread(Context);
+    }
 }
 
 void FAnimNode_SekiroLuaStateMachine::Update_AnyThread(const FAnimationUpdateContext& Context)
 {
     FAnimNode_Base::Update_AnyThread(Context);
 
-    FSekiroLuaAnimSnapshot NewSnapshot;
-    if (!ResolveSekiroLuaAnimInstanceSnapshot(Context.AnimInstanceProxy, LayerName, NewSnapshot))
+    const FSekiroLuaAnimInstanceProxy* LuaAnimProxy = static_cast<const FSekiroLuaAnimInstanceProxy*>(Context.AnimInstanceProxy);
+    const FSekiroLuaAnimSnapshot* NewSnapshot = LuaAnimProxy ? LuaAnimProxy->FindLayerSnapshot(LayerName) : nullptr;
+    CachedSnapshot = NewSnapshot;
+    if (!NewSnapshot || !NewSnapshot->PoseGraph.bHasOutputPose)
     {
-        CachedSnapshot = FSekiroLuaAnimSnapshot();
-        PreviousRootMotionSnapshot = FSekiroLuaAnimSnapshot();
-        bHasPreviousRootMotionSnapshot = false;
+        ResetActiveTransitions();
+        DominantRootMotionRotationMode = ESekiroLuaRootMotionRotationMode::Extract;
+        DominantRootMotionWeight = 0.0f;
         return;
     }
 
-    AccumulateSekiroLuaRootMotion(
-        Context,
-        bHasPreviousRootMotionSnapshot ? &PreviousRootMotionSnapshot : nullptr,
-        NewSnapshot);
+    if (!DoesPoseGraphTopologyMatch(NewSnapshot->PoseGraph))
+    {
+        UE_LOG(LogSekiroAnimBlueprintExt, Error,
+            TEXT("Lua PoseGraph topology was not prepared before parallel update. Layer=%s Generation=%d TopologySerial=%d"),
+            *LayerName.ToString(),
+            NewSnapshot->PoseGraph.Generation,
+            NewSnapshot->PoseGraph.TopologySerial);
+        CachedSnapshot = nullptr;
+        return;
+    }
 
-    CachedSnapshot = NewSnapshot;
-    PreviousRootMotionSnapshot = NewSnapshot;
-    bHasPreviousRootMotionSnapshot = NewSnapshot.bHasPose;
+    const bool bOutputChanged = NewSnapshot->PoseGraph.OutputSerial != LastOutputSerial;
+    if (bOutputChanged && NewSnapshot->bUseInertialization)
+    {
+        UE::Anim::IInertializationRequester* InertializationRequester = Context.GetMessage<UE::Anim::IInertializationRequester>();
+        if (InertializationRequester)
+        {
+            InertializationRequester->RequestInertialization(NewSnapshot->InertialBlendTime);
+            InertializationRequester->AddDebugRecord(*Context.AnimInstanceProxy, Context.GetCurrentNodeId());
+            bWarnedMissingInertializationRequester = false;
+        }
+        else if (!bWarnedMissingInertializationRequester)
+        {
+            UE_LOG(LogSekiroAnimBlueprintExt, Warning,
+                TEXT("Lua animation requested inertialization without a downstream Inertialization node. Layer=%s State=%s"),
+                *LayerName.ToString(),
+                *NewSnapshot->CurrentStateName.ToString());
+            bWarnedMissingInertializationRequester = true;
+        }
+    }
+
+    for (int32 NodeIndex = 0; NodeIndex < NewSnapshot->PoseGraph.SequencePlayers.Num(); ++NodeIndex)
+    {
+        SynchronizePoseGraphNode(NodeIndex, NewSnapshot->PoseGraph.SequencePlayers[NodeIndex]);
+    }
+
+    UpdateActiveTransitions(*NewSnapshot, Context.GetDeltaTime());
+    BuildPoseGraphNodeWeights(*NewSnapshot);
+
+    // 共享叶节点按聚合权重只 Update 一次，Notify、SyncMarker 与 Root Motion 均由原生 TickRecord 处理。
+    for (int32 NodeIndex = 0; NodeIndex < PoseGraphSequencePlayers.Num(); ++NodeIndex)
+    {
+        const float NodeWeight = PoseGraphSequencePlayerWeights.IsValidIndex(NodeIndex)
+            ? PoseGraphSequencePlayerWeights[NodeIndex]
+            : 0.0f;
+        if (NodeWeight <= UE_KINDA_SMALL_NUMBER) continue;
+
+        PoseGraphSequencePlayers[NodeIndex].Update_AnyThread(Context.FractionalWeight(NodeWeight));
+    }
 }
 
 void FAnimNode_SekiroLuaStateMachine::Evaluate_AnyThread(FPoseContext& Output)
 {
-    if (!CachedSnapshot.bHasPose || !CachedSnapshot.CurrentAnimationAsset.Get())
+    if (!CachedSnapshot || !CachedSnapshot->PoseGraph.bHasOutputPose)
     {
         Output.ResetToRefPose();
         return;
     }
 
-    const bool bNeedsBlend = CachedSnapshot.PreviousAnimationAsset.Get() && CachedSnapshot.BlendAlpha < 1.0f;
-    if (!bNeedsBlend)
+    const int32 CurrentStateResultIndex = FindPoseGraphStateResultIndex(CachedSnapshot->PoseGraph.CurrentPose);
+    if (!StatePoseLinks.IsValidIndex(CurrentStateResultIndex))
     {
-        EvaluateSekiroLuaAnimationPose(CachedSnapshot.CurrentAnimationAsset.Get(), CachedSnapshot.CurrentTime, CachedSnapshot.bCurrentLoop, CachedSnapshot.CurrentBlendInput, Output);
+        Output.ResetToRefPose();
         return;
     }
 
-    FPoseContext PreviousPose(Output);
-    FPoseContext CurrentPose(Output);
-    EvaluateSekiroLuaAnimationPose(CachedSnapshot.PreviousAnimationAsset.Get(), CachedSnapshot.PreviousTime, CachedSnapshot.bPreviousLoop, CachedSnapshot.PreviousBlendInput, PreviousPose);
-    EvaluateSekiroLuaAnimationPose(CachedSnapshot.CurrentAnimationAsset.Get(), CachedSnapshot.CurrentTime, CachedSnapshot.bCurrentLoop, CachedSnapshot.CurrentBlendInput, CurrentPose);
+    if (ActiveTransitionCount <= 0)
+    {
+        StatePoseLinks[CurrentStateResultIndex].Evaluate(Output);
+        return;
+    }
 
-    const FAnimationPoseData PreviousPoseData(PreviousPose);
-    const FAnimationPoseData CurrentPoseData(CurrentPose);
-    FAnimationPoseData OutputPoseData(Output);
-    FAnimationRuntime::BlendTwoPosesTogether(PreviousPoseData, CurrentPoseData, 1.0f - CachedSnapshot.BlendAlpha, OutputPoseData);
+    const FSekiroLuaActiveTransition& FirstTransition = ActiveTransitionSlots[0];
+    const int32 FirstSourceIndex = FindPoseGraphStateResultIndex(FirstTransition.PreviousPose);
+    if (!StatePoseLinks.IsValidIndex(FirstSourceIndex))
+    {
+        StatePoseLinks[CurrentStateResultIndex].Evaluate(Output);
+        return;
+    }
+
+    // 两个固定栈上下文覆盖任意长度过渡链，避免按活动状态 MakeUnique。
+    FPoseContext AccumulatedPose(Output);
+    FPoseContext NextPose(Output);
+    StatePoseLinks[FirstSourceIndex].Evaluate(AccumulatedPose);
+
+    for (int32 TransitionIndex = 0; TransitionIndex < ActiveTransitionCount; ++TransitionIndex)
+    {
+        const FSekiroLuaActiveTransition& Transition = ActiveTransitionSlots[TransitionIndex];
+        const int32 NextStateResultIndex = FindPoseGraphStateResultIndex(Transition.NextPose);
+        if (!StatePoseLinks.IsValidIndex(NextStateResultIndex)) continue;
+
+        StatePoseLinks[NextStateResultIndex].Evaluate(NextPose);
+        const FAnimationPoseData AccumulatedPoseData(AccumulatedPose);
+        const FAnimationPoseData NextPoseData(NextPose);
+        FAnimationPoseData OutputPoseData(Output);
+        FAnimationRuntime::BlendTwoPosesTogether(
+            AccumulatedPoseData,
+            NextPoseData,
+            1.0f - FMath::Clamp(Transition.Alpha, 0.0f, 1.0f),
+            OutputPoseData);
+
+        if (TransitionIndex + 1 < ActiveTransitionCount)
+        {
+            AccumulatedPose = Output;
+        }
+    }
+
+    Output.Pose.NormalizeRotations();
 }
 
 void FAnimNode_SekiroLuaStateMachine::GatherDebugData(FNodeDebugData& DebugData)
 {
-    FString DebugLine = DebugData.GetNodeName(this);
-    const UAnimationAsset* CurrentAnimationAsset = CachedSnapshot.CurrentAnimationAsset.Get();
-    const UAnimationAsset* PreviousAnimationAsset = CachedSnapshot.PreviousAnimationAsset.Get();
-    const bool bIsTransitioning = PreviousAnimationAsset && CachedSnapshot.BlendAlpha < 1.0f;
-    const float CurrentPoseWeight = bIsTransitioning ? FMath::Clamp(CachedSnapshot.BlendAlpha, 0.0f, 1.0f) : 1.0f;
-    const float PreviousPoseWeight = bIsTransitioning ? 1.0f - CurrentPoseWeight : 0.0f;
-
-    DebugLine += FString::Printf(TEXT("(Layer: %s, State: %s, Current: %.1f%%, Previous: %.1f%%, BlendTime: %.2f, BlendElapsed: %.2f)"),
-        *LayerName.ToString(),
-        *CachedSnapshot.CurrentStateName.ToString(),
-        CurrentPoseWeight * 100.0f,
-        PreviousPoseWeight * 100.0f,
-        CachedSnapshot.BlendTime,
-        CachedSnapshot.BlendElapsedTime);
+    const FString DebugLine = CachedSnapshot
+        ? FString::Printf(
+            TEXT("Sekiro Lua PoseGraph Layer=%s Generation=%d Topology=%d Output=%d ActiveTransitions=%d"),
+            *LayerName.ToString(),
+            PoseGraphGeneration,
+            PoseGraphTopologySerial,
+            LastOutputSerial,
+            ActiveTransitionCount)
+        : FString::Printf(TEXT("Sekiro Lua PoseGraph Layer=%s NoSnapshot"), *LayerName.ToString());
     DebugData.AddDebugItem(DebugLine);
 
-    if (PreviousPoseWeight > UE_KINDA_SMALL_NUMBER)
+    for (int32 StateResultIndex = 0; StateResultIndex < PoseGraphStateResults.Num(); ++StateResultIndex)
     {
-        FNodeDebugData& PreviousDebugData = DebugData.BranchFlow(PreviousPoseWeight, TEXT("Previous"));
-        PreviousDebugData.AddDebugItem(FString::Printf(
-            TEXT("Previous Anim: %s Time: %.2f BlendInput: %s"),
-            *GetSekiroLuaAnimDebugAssetLabel(PreviousAnimationAsset, CachedSnapshot.PreviousAnimationName),
-            CachedSnapshot.PreviousTime,
-            *CachedSnapshot.PreviousBlendInput.ToCompactString()), true);
-        AddSekiroLuaBlendSpaceSampleDebugData(PreviousDebugData, PreviousAnimationAsset, CachedSnapshot.PreviousBlendInput);
+        const float StateWeight = PoseGraphStateResultWeights.IsValidIndex(StateResultIndex)
+            ? PoseGraphStateResultWeights[StateResultIndex]
+            : 0.0f;
+        if (StateWeight <= UE_KINDA_SMALL_NUMBER || !StatePoseLinks.IsValidIndex(StateResultIndex)) continue;
+
+        StatePoseLinks[StateResultIndex].GatherDebugData(DebugData.BranchFlow(StateWeight));
     }
 
-    FNodeDebugData& CurrentDebugData = DebugData.BranchFlow(CurrentPoseWeight, TEXT("Current"));
-    CurrentDebugData.AddDebugItem(FString::Printf(
-        TEXT("Current Anim: %s Time: %.2f BlendInput: %s"),
-        *GetSekiroLuaAnimDebugAssetLabel(CurrentAnimationAsset, CachedSnapshot.CurrentAnimationName),
-        CachedSnapshot.CurrentTime,
-        *CachedSnapshot.CurrentBlendInput.ToCompactString()), true);
-    AddSekiroLuaBlendSpaceSampleDebugData(CurrentDebugData, CurrentAnimationAsset, CachedSnapshot.CurrentBlendInput);
+    for (int32 NodeIndex = 0; NodeIndex < PoseGraphSequencePlayers.Num(); ++NodeIndex)
+    {
+        const float NodeWeight = PoseGraphSequencePlayerWeights.IsValidIndex(NodeIndex)
+            ? PoseGraphSequencePlayerWeights[NodeIndex]
+            : 0.0f;
+        if (NodeWeight <= UE_KINDA_SMALL_NUMBER) continue;
+
+        const UAnimSequenceBase* Sequence = PoseGraphSequencePlayers[NodeIndex].GetSequence();
+        const FName AnimationName = CachedSnapshot && CachedSnapshot->PoseGraph.SequencePlayers.IsValidIndex(NodeIndex)
+            ? CachedSnapshot->PoseGraph.SequencePlayers[NodeIndex].AnimationName
+            : NAME_None;
+        DebugData.AddDebugItem(FString::Printf(
+            TEXT("SequencePlayer NodeId=%d Asset=%s Time=%.3f Weight=%.1f%%"),
+            PoseGraphSequencePlayerNodeIds[NodeIndex],
+            *GetSekiroLuaAnimDebugAssetLabel(Sequence, AnimationName),
+            PoseGraphSequencePlayers[NodeIndex].GetAccumulatedTime(),
+            NodeWeight * 100.0f));
+    }
+}
+
+void FAnimNode_SekiroLuaStateMachine::PreparePoseGraphTopology(
+    FAnimInstanceProxy* AnimInstanceProxy,
+    const FSekiroLuaPoseGraphSnapshot& PoseGraph)
+{
+    if (DoesPoseGraphTopologyMatch(PoseGraph)) return;
+
+    const bool bGenerationChanged = PoseGraphGeneration != PoseGraph.Generation;
+    TArray<FSekiroLuaSequencePlayerNode_Standalone> PreviousPlayers = MoveTemp(PoseGraphSequencePlayers);
+    TArray<int32> PreviousPlayerNodeIds = MoveTemp(PoseGraphSequencePlayerNodeIds);
+    TArray<int32> PreviousResetSerials = MoveTemp(PoseGraphResetSerials);
+
+    PoseGraphSequencePlayers.Reset(PoseGraph.SequencePlayers.Num());
+    PoseGraphSequencePlayerNodeIds.Reset(PoseGraph.SequencePlayers.Num());
+    PoseGraphResetSerials.Reset(PoseGraph.SequencePlayers.Num());
+    TArray<bool> NewPlayerFlags;
+    NewPlayerFlags.Init(false, PoseGraph.SequencePlayers.Num());
+
+    for (int32 NodeIndex = 0; NodeIndex < PoseGraph.SequencePlayers.Num(); ++NodeIndex)
+    {
+        const FSekiroLuaSequencePlayerSnapshot& NodeSnapshot = PoseGraph.SequencePlayers[NodeIndex];
+        const int32 PreviousNodeIndex = bGenerationChanged
+            ? INDEX_NONE
+            : PreviousPlayerNodeIds.Find(NodeSnapshot.PoseLink.NodeId);
+        if (PreviousPlayers.IsValidIndex(PreviousNodeIndex))
+        {
+            PoseGraphSequencePlayers.Add(MoveTemp(PreviousPlayers[PreviousNodeIndex]));
+            PoseGraphResetSerials.Add(PreviousResetSerials.IsValidIndex(PreviousNodeIndex)
+                ? PreviousResetSerials[PreviousNodeIndex]
+                : INDEX_NONE);
+        }
+        else
+        {
+            FSekiroLuaSequencePlayerNode_Standalone& NewPlayer = PoseGraphSequencePlayers.AddDefaulted_GetRef();
+            NewPlayer.SetSequence(NodeSnapshot.Sequence.Get());
+            NewPlayer.SetLoopAnimation(NodeSnapshot.bLoop);
+            NewPlayer.SetStartPosition(NodeSnapshot.PlaybackTargetTime);
+            NewPlayer.SetPlayRate(NodeSnapshot.PlayRate);
+            PoseGraphResetSerials.Add(NodeSnapshot.PlaybackResetSerial);
+            NewPlayerFlags[NodeIndex] = true;
+        }
+        PoseGraphSequencePlayerNodeIds.Add(NodeSnapshot.PoseLink.NodeId);
+    }
+
+    PoseGraphStateResults.Reset(PoseGraph.StateResults.Num());
+    StatePoseLinks.Reset(PoseGraph.StateResults.Num());
+    PoseGraphStateResultNodeIds.Reset(PoseGraph.StateResults.Num());
+    PoseGraphStateResultInputs.Reset(PoseGraph.StateResults.Num());
+    for (const FSekiroLuaStateResultSnapshot& StateResultSnapshot : PoseGraph.StateResults)
+    {
+        FSekiroLuaStateResultNode_Standalone& StateResultNode = PoseGraphStateResults.AddDefaulted_GetRef();
+        StateResultNode.NodeName = StateResultSnapshot.NodeName;
+        StateResultNode.StateName = StateResultSnapshot.StateName;
+        StateResultNode.InputNode = StateResultSnapshot.InputNode;
+        StatePoseLinks.AddDefaulted();
+        PoseGraphStateResultNodeIds.Add(StateResultSnapshot.PoseLink.NodeId);
+        PoseGraphStateResultInputs.Add(StateResultSnapshot.InputNode);
+    }
+
+    PoseGraphGeneration = PoseGraph.Generation;
+    PoseGraphTopologySerial = PoseGraph.TopologySerial;
+    RebuildPoseGraphLinks();
+
+    const int32 StateResultCount = PoseGraphStateResults.Num();
+    const int32 SequencePlayerCount = PoseGraphSequencePlayers.Num();
+    const int32 TransitionCapacity = FMath::Max(SekiroLuaMinimumTransitionCapacity, StateResultCount * 4);
+    if (ActiveTransitionSlots.Num() < TransitionCapacity)
+    {
+        ActiveTransitionSlots.SetNum(TransitionCapacity);
+    }
+    PoseGraphStateResultWeights.SetNumZeroed(StateResultCount);
+    PoseGraphStateResultRootMotionRotationModes.SetNum(StateResultCount);
+    PoseGraphSequencePlayerWeights.SetNumZeroed(SequencePlayerCount);
+    PoseGraphSequencePlayerRootMotionRotationModes.SetNum(SequencePlayerCount);
+    DominantStateResultWeights.SetNumZeroed(SequencePlayerCount);
+
+    if (bGenerationChanged)
+    {
+        ResetActiveTransitions();
+        LastOutputSerial = PoseGraph.OutputSerial;
+        LastPublishedCurrentPose = PoseGraph.CurrentPose;
+    }
+
+    if (bTopologyInitialized && AnimInstanceProxy)
+    {
+        FAnimationInitializeContext InitializeContext(AnimInstanceProxy);
+        FAnimationCacheBonesContext CacheBonesContext(AnimInstanceProxy);
+        const bool bCacheBones = AnimInstanceProxy->GetCachedBonesCounter().HasEverBeenUpdated();
+        for (int32 NodeIndex = 0; NodeIndex < PoseGraphSequencePlayers.Num(); ++NodeIndex)
+        {
+            if (!NewPlayerFlags[NodeIndex]) continue;
+
+            PoseGraphSequencePlayers[NodeIndex].Initialize_AnyThread(InitializeContext);
+            if (bCacheBones)
+            {
+                PoseGraphSequencePlayers[NodeIndex].CacheBones_AnyThread(CacheBonesContext);
+            }
+        }
+    }
+}
+
+void FAnimNode_SekiroLuaStateMachine::CollectRuntimeState(FSekiroLuaPoseGraphRuntimeState& OutRuntimeState) const
+{
+    OutRuntimeState = FSekiroLuaPoseGraphRuntimeState();
+    OutRuntimeState.LayerName = LayerName;
+    OutRuntimeState.Generation = PoseGraphGeneration;
+    OutRuntimeState.DominantRootMotionRotationMode = DominantRootMotionRotationMode;
+    OutRuntimeState.DominantRootMotionWeight = DominantRootMotionWeight;
+
+    OutRuntimeState.SequencePlayers.Reserve(PoseGraphSequencePlayers.Num());
+    for (int32 NodeIndex = 0; NodeIndex < PoseGraphSequencePlayers.Num(); ++NodeIndex)
+    {
+        FSekiroLuaSequencePlayerRuntimeState& PlayerState = OutRuntimeState.SequencePlayers.AddDefaulted_GetRef();
+        PlayerState.PoseLink.NodeId = PoseGraphSequencePlayerNodeIds[NodeIndex];
+        PlayerState.PoseLink.Generation = PoseGraphGeneration;
+        PlayerState.CurrentTime = PoseGraphSequencePlayers[NodeIndex].GetAccumulatedTime();
+
+        const float NodeWeight = PoseGraphSequencePlayerWeights.IsValidIndex(NodeIndex)
+            ? PoseGraphSequencePlayerWeights[NodeIndex]
+            : 0.0f;
+        if (NodeWeight > UE_KINDA_SMALL_NUMBER)
+        {
+            OutRuntimeState.ActiveNodeIds.AddUnique(PlayerState.PoseLink.NodeId);
+        }
+    }
+
+    for (int32 StateResultIndex = 0; StateResultIndex < PoseGraphStateResults.Num(); ++StateResultIndex)
+    {
+        const float StateWeight = PoseGraphStateResultWeights.IsValidIndex(StateResultIndex)
+            ? PoseGraphStateResultWeights[StateResultIndex]
+            : 0.0f;
+        if (StateWeight > UE_KINDA_SMALL_NUMBER)
+        {
+            OutRuntimeState.ActiveNodeIds.AddUnique(PoseGraphStateResultNodeIds[StateResultIndex]);
+        }
+    }
+
+    if (ActiveTransitionCount > 0)
+    {
+        const FSekiroLuaActiveTransition& LatestTransition = ActiveTransitionSlots[ActiveTransitionCount - 1];
+        OutRuntimeState.PreviousPose = LatestTransition.PreviousPose;
+        OutRuntimeState.TransitionTime = LatestTransition.CrossfadeDuration;
+        OutRuntimeState.TransitionElapsedTime = LatestTransition.ElapsedTime;
+        OutRuntimeState.TransitionAlpha = LatestTransition.Alpha;
+    }
+}
+
+bool FAnimNode_SekiroLuaStateMachine::DoesPoseGraphTopologyMatch(const FSekiroLuaPoseGraphSnapshot& PoseGraph) const
+{
+    if (PoseGraphGeneration != PoseGraph.Generation
+        || PoseGraphTopologySerial != PoseGraph.TopologySerial
+        || PoseGraphSequencePlayers.Num() != PoseGraph.SequencePlayers.Num()
+        || PoseGraphStateResults.Num() != PoseGraph.StateResults.Num())
+    {
+        return false;
+    }
+
+    for (int32 NodeIndex = 0; NodeIndex < PoseGraph.SequencePlayers.Num(); ++NodeIndex)
+    {
+        if (!PoseGraphSequencePlayerNodeIds.IsValidIndex(NodeIndex)
+            || PoseGraphSequencePlayerNodeIds[NodeIndex] != PoseGraph.SequencePlayers[NodeIndex].PoseLink.NodeId)
+        {
+            return false;
+        }
+    }
+
+    for (int32 StateResultIndex = 0; StateResultIndex < PoseGraph.StateResults.Num(); ++StateResultIndex)
+    {
+        const FSekiroLuaStateResultSnapshot& StateResultSnapshot = PoseGraph.StateResults[StateResultIndex];
+        if (!PoseGraphStateResultNodeIds.IsValidIndex(StateResultIndex)
+            || !PoseGraphStateResultInputs.IsValidIndex(StateResultIndex)
+            || PoseGraphStateResultNodeIds[StateResultIndex] != StateResultSnapshot.PoseLink.NodeId
+            || PoseGraphStateResultInputs[StateResultIndex].PoseLink != StateResultSnapshot.InputNode.PoseLink
+            || PoseGraphStateResultInputs[StateResultIndex].NodeType != StateResultSnapshot.InputNode.NodeType
+            || PoseGraphStateResults[StateResultIndex].NodeName != StateResultSnapshot.NodeName
+            || PoseGraphStateResults[StateResultIndex].StateName != StateResultSnapshot.StateName)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void FAnimNode_SekiroLuaStateMachine::RebuildPoseGraphLinks()
+{
+    for (int32 StateResultIndex = 0; StateResultIndex < PoseGraphStateResults.Num(); ++StateResultIndex)
+    {
+        FSekiroLuaStateResultNode_Standalone& StateResultNode = PoseGraphStateResults[StateResultIndex];
+        const FSekiroLuaPoseNodeReference& InputNode = PoseGraphStateResultInputs[StateResultIndex];
+        if (InputNode.NodeType == ESekiroLuaPoseNodeType::SequencePlayer)
+        {
+            const int32 SequencePlayerIndex = FindPoseGraphSequencePlayerIndex(InputNode.PoseLink);
+            if (PoseGraphSequencePlayers.IsValidIndex(SequencePlayerIndex))
+            {
+                StateResultNode.Result.SetLinkNode(&PoseGraphSequencePlayers[SequencePlayerIndex]);
+            }
+        }
+        StatePoseLinks[StateResultIndex].SetLinkNode(&StateResultNode);
+    }
+}
+
+void FAnimNode_SekiroLuaStateMachine::SynchronizePoseGraphNode(
+    int32 NodeIndex,
+    const FSekiroLuaSequencePlayerSnapshot& Snapshot)
+{
+    if (!PoseGraphSequencePlayers.IsValidIndex(NodeIndex)
+        || !PoseGraphResetSerials.IsValidIndex(NodeIndex))
+    {
+        return;
+    }
+
+    FSekiroLuaSequencePlayerNode_Standalone& PlayerNode = PoseGraphSequencePlayers[NodeIndex];
+    UAnimSequenceBase* SequenceAsset = Snapshot.Sequence.Get();
+    const bool bAssetChanged = PlayerNode.GetSequence() != SequenceAsset;
+    const bool bPlaybackReset = PoseGraphResetSerials[NodeIndex] != Snapshot.PlaybackResetSerial;
+    PlayerNode.SetSequence(SequenceAsset);
+    PlayerNode.SetLoopAnimation(Snapshot.bLoop);
+    PlayerNode.SetPlayRate(Snapshot.PlayRate);
+    if (bAssetChanged || bPlaybackReset)
+    {
+        PlayerNode.ResetPlayback(Snapshot.PlaybackTargetTime);
+        PoseGraphResetSerials[NodeIndex] = Snapshot.PlaybackResetSerial;
+    }
+}
+
+void FAnimNode_SekiroLuaStateMachine::UpdateActiveTransitions(
+    const FSekiroLuaAnimSnapshot& NewSnapshot,
+    float DeltaSeconds)
+{
+    for (int32 TransitionIndex = 0; TransitionIndex < ActiveTransitionCount; ++TransitionIndex)
+    {
+        ActiveTransitionSlots[TransitionIndex].Advance(DeltaSeconds);
+    }
+    RemoveCompletedTransitions();
+
+    const FSekiroLuaPoseGraphSnapshot& PoseGraph = NewSnapshot.PoseGraph;
+    if (PoseGraph.OutputSerial == LastOutputSerial) return;
+
+    if (NewSnapshot.bUseInertialization
+        || !PoseGraph.PreviousPose.IsValid()
+        || PoseGraph.TransitionTime <= UE_KINDA_SMALL_NUMBER)
+    {
+        ResetActiveTransitions();
+    }
+    else if (ActiveTransitionCount < ActiveTransitionSlots.Num())
+    {
+        FSekiroLuaActiveTransition& NewTransition = ActiveTransitionSlots[ActiveTransitionCount++];
+        NewTransition = FSekiroLuaActiveTransition();
+        NewTransition.PreviousPose = PoseGraph.PreviousPose;
+        NewTransition.NextPose = PoseGraph.CurrentPose;
+        NewTransition.CrossfadeDuration = FMath::Max(0.0f, PoseGraph.TransitionTime);
+        NewTransition.PreviousRootMotionRotationMode = NewSnapshot.PreviousRootMotionRotationMode;
+        NewTransition.NextRootMotionRotationMode = NewSnapshot.CurrentRootMotionRotationMode;
+        NewTransition.Alpha = 0.0f;
+    }
+    else
+    {
+        UE_LOG(LogSekiroAnimBlueprintExt, Error,
+            TEXT("Lua PoseGraph active transition capacity exceeded. Layer=%s Capacity=%d"),
+            *LayerName.ToString(),
+            ActiveTransitionSlots.Num());
+    }
+
+    LastOutputSerial = PoseGraph.OutputSerial;
+    LastPublishedCurrentPose = PoseGraph.CurrentPose;
+}
+
+void FAnimNode_SekiroLuaStateMachine::BuildPoseGraphNodeWeights(const FSekiroLuaAnimSnapshot& NewSnapshot)
+{
+    for (float& StateWeight : PoseGraphStateResultWeights)
+    {
+        StateWeight = 0.0f;
+    }
+    for (ESekiroLuaRootMotionRotationMode& RotationMode : PoseGraphStateResultRootMotionRotationModes)
+    {
+        RotationMode = ESekiroLuaRootMotionRotationMode::Extract;
+    }
+    for (float& PlayerWeight : PoseGraphSequencePlayerWeights)
+    {
+        PlayerWeight = 0.0f;
+    }
+    for (ESekiroLuaRootMotionRotationMode& RotationMode : PoseGraphSequencePlayerRootMotionRotationModes)
+    {
+        RotationMode = ESekiroLuaRootMotionRotationMode::Extract;
+    }
+    for (float& DominantWeight : DominantStateResultWeights)
+    {
+        DominantWeight = 0.0f;
+    }
+
+    if (ActiveTransitionCount == 0)
+    {
+        const int32 CurrentStateResultIndex = FindPoseGraphStateResultIndex(NewSnapshot.PoseGraph.CurrentPose);
+        if (PoseGraphStateResultWeights.IsValidIndex(CurrentStateResultIndex))
+        {
+            PoseGraphStateResultWeights[CurrentStateResultIndex] = 1.0f;
+            PoseGraphStateResultRootMotionRotationModes[CurrentStateResultIndex] = NewSnapshot.CurrentRootMotionRotationMode;
+        }
+    }
+    else
+    {
+        const FSekiroLuaActiveTransition& FirstTransition = ActiveTransitionSlots[0];
+        const int32 FirstSourceIndex = FindPoseGraphStateResultIndex(FirstTransition.PreviousPose);
+        if (PoseGraphStateResultWeights.IsValidIndex(FirstSourceIndex))
+        {
+            PoseGraphStateResultWeights[FirstSourceIndex] = 1.0f;
+            PoseGraphStateResultRootMotionRotationModes[FirstSourceIndex] = FirstTransition.PreviousRootMotionRotationMode;
+        }
+
+        for (int32 TransitionIndex = 0; TransitionIndex < ActiveTransitionCount; ++TransitionIndex)
+        {
+            const FSekiroLuaActiveTransition& Transition = ActiveTransitionSlots[TransitionIndex];
+            const float SourceWeight = 1.0f - FMath::Clamp(Transition.Alpha, 0.0f, 1.0f);
+            for (float& StateWeight : PoseGraphStateResultWeights)
+            {
+                StateWeight *= SourceWeight;
+            }
+
+            const int32 NextStateResultIndex = FindPoseGraphStateResultIndex(Transition.NextPose);
+            if (PoseGraphStateResultWeights.IsValidIndex(NextStateResultIndex))
+            {
+                PoseGraphStateResultWeights[NextStateResultIndex] += Transition.Alpha;
+                PoseGraphStateResultRootMotionRotationModes[NextStateResultIndex] = Transition.NextRootMotionRotationMode;
+            }
+        }
+    }
+
+    DominantRootMotionRotationMode = ESekiroLuaRootMotionRotationMode::Extract;
+    DominantRootMotionWeight = 0.0f;
+    for (int32 StateResultIndex = 0; StateResultIndex < PoseGraphStateResults.Num(); ++StateResultIndex)
+    {
+        const float StateResultWeight = PoseGraphStateResultWeights[StateResultIndex];
+        if (StateResultWeight <= UE_KINDA_SMALL_NUMBER) continue;
+
+        FSekiroLuaPoseLink StateResultPoseLink;
+        StateResultPoseLink.NodeId = PoseGraphStateResultNodeIds[StateResultIndex];
+        StateResultPoseLink.Generation = PoseGraphGeneration;
+        const int32 SequencePlayerIndex = FindPoseGraphStateResultInputSequencePlayerIndex(StateResultPoseLink);
+        if (!PoseGraphSequencePlayerWeights.IsValidIndex(SequencePlayerIndex)) continue;
+
+        PoseGraphSequencePlayerWeights[SequencePlayerIndex] += StateResultWeight;
+        if (StateResultWeight > DominantStateResultWeights[SequencePlayerIndex])
+        {
+            DominantStateResultWeights[SequencePlayerIndex] = StateResultWeight;
+            PoseGraphSequencePlayerRootMotionRotationModes[SequencePlayerIndex] =
+                PoseGraphStateResultRootMotionRotationModes[StateResultIndex];
+        }
+    }
+
+    for (int32 NodeIndex = 0; NodeIndex < PoseGraphSequencePlayerWeights.Num(); ++NodeIndex)
+    {
+        if (PoseGraphSequencePlayerWeights[NodeIndex] <= DominantRootMotionWeight) continue;
+
+        DominantRootMotionWeight = PoseGraphSequencePlayerWeights[NodeIndex];
+        DominantRootMotionRotationMode = PoseGraphSequencePlayerRootMotionRotationModes[NodeIndex];
+    }
+}
+
+void FAnimNode_SekiroLuaStateMachine::ResetActiveTransitions()
+{
+    ActiveTransitionCount = 0;
+    for (float& StateWeight : PoseGraphStateResultWeights)
+    {
+        StateWeight = 0.0f;
+    }
+    for (float& PlayerWeight : PoseGraphSequencePlayerWeights)
+    {
+        PlayerWeight = 0.0f;
+    }
+}
+
+void FAnimNode_SekiroLuaStateMachine::RemoveCompletedTransitions()
+{
+    int32 CompletedPrefixCount = 0;
+    while (CompletedPrefixCount < ActiveTransitionCount
+        && ActiveTransitionSlots[CompletedPrefixCount].IsComplete())
+    {
+        ++CompletedPrefixCount;
+    }
+    if (CompletedPrefixCount <= 0) return;
+
+    const int32 RemainingCount = ActiveTransitionCount - CompletedPrefixCount;
+    for (int32 TransitionIndex = 0; TransitionIndex < RemainingCount; ++TransitionIndex)
+    {
+        ActiveTransitionSlots[TransitionIndex] = ActiveTransitionSlots[TransitionIndex + CompletedPrefixCount];
+    }
+    ActiveTransitionCount = RemainingCount;
+}
+
+int32 FAnimNode_SekiroLuaStateMachine::FindPoseGraphSequencePlayerIndex(const FSekiroLuaPoseLink& PoseLink) const
+{
+    if (!PoseLink.IsValid() || PoseLink.Generation != PoseGraphGeneration) return INDEX_NONE;
+    return PoseGraphSequencePlayerNodeIds.Find(PoseLink.NodeId);
+}
+
+int32 FAnimNode_SekiroLuaStateMachine::FindPoseGraphStateResultIndex(const FSekiroLuaPoseLink& PoseLink) const
+{
+    if (!PoseLink.IsValid() || PoseLink.Generation != PoseGraphGeneration) return INDEX_NONE;
+    return PoseGraphStateResultNodeIds.Find(PoseLink.NodeId);
+}
+
+int32 FAnimNode_SekiroLuaStateMachine::FindPoseGraphStateResultInputSequencePlayerIndex(
+    const FSekiroLuaPoseLink& PoseLink) const
+{
+    const int32 StateResultIndex = FindPoseGraphStateResultIndex(PoseLink);
+    if (!PoseGraphStateResultInputs.IsValidIndex(StateResultIndex)) return INDEX_NONE;
+
+    const FSekiroLuaPoseNodeReference& InputNode = PoseGraphStateResultInputs[StateResultIndex];
+    if (InputNode.NodeType != ESekiroLuaPoseNodeType::SequencePlayer) return INDEX_NONE;
+    return FindPoseGraphSequencePlayerIndex(InputNode.PoseLink);
 }

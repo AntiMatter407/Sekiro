@@ -10,6 +10,8 @@ public class SekiroAnimBlueprintExt : ModuleRules
             "Core",
             "CoreUObject",
             "Engine",
+            "AnimGraphRuntime",
+            "AnimationWarpingRuntime",
             "UnLua",
         });
 

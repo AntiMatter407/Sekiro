@@ -11,6 +11,8 @@ public class SekiroAnimBlueprintExtEditor : ModuleRules
             "CoreUObject",
             "Engine",
             "AnimGraph",
+            "AnimGraphRuntime",
+            "AnimationWarpingRuntime",
             "SekiroAnimBlueprintExt",
         });
 

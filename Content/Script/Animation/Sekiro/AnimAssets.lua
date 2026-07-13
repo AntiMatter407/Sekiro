@@ -1,7 +1,14 @@
 local SekiroAnimations = {}
 
+-- 里面动画Forward，Left，Right，Back是相对角色朝向
+
 SekiroAnimations.Locomotion = {
     Idle = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000000.Anim_Sekiro_a000_000000",
+
+    Idle_Forward_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000010.Anim_Sekiro_a000_000010",
+    Idle_Back_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000011.Anim_Sekiro_a000_000011",
+    Idle_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000012.Anim_Sekiro_a000_000012",
+    Idle_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000013.Anim_Sekiro_a000_000013",
 
     -- Walk Animations
 
@@ -10,8 +17,14 @@ SekiroAnimations.Locomotion = {
     Walk_Left_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000102.Anim_Sekiro_a000_000102",
     Walk_Right_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000103.Anim_Sekiro_a000_000103",
 
-    Walk_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000132.Anim_Sekiro_a000_000132",
-    Walk_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000133.Anim_Sekiro_a000_000133",
+    -- Crouch to Walk
+    Crouch_Forward_Walk = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000110.Anim_Sekiro_a000_000110",
+    Crouch_Back_Walk = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000111.Anim_Sekiro_a000_000111",
+    Crouch_Left_Walk = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000112.Anim_Sekiro_a000_000112",
+    Crouch_Right_Walk = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000113.Anim_Sekiro_a000_000113",
+
+    IdleToWalk_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000132.Anim_Sekiro_a000_000132",
+    IdleToWalk_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000133.Anim_Sekiro_a000_000133",
 
     Walk_Forward_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000200.Anim_Sekiro_a000_000200",
     Walk_Back_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000201.Anim_Sekiro_a000_000201",
@@ -30,8 +43,17 @@ SekiroAnimations.Locomotion = {
     Run_Left_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000402.Anim_Sekiro_a000_000402",
     Run_Right_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000403.Anim_Sekiro_a000_000403",
 
-    Run_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000432.Anim_Sekiro_a000_000432",
-    Run_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000433.Anim_Sekiro_a000_000433",
+    -- Crouch to Run
+    Crouch_Forward_Run = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000410.Anim_Sekiro_a000_000410",
+    Crouch_Back_Run = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000411.Anim_Sekiro_a000_000411",
+    Crouch_Left_Run = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000412.Anim_Sekiro_a000_000412",
+    Crouch_Right_Run = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000413.Anim_Sekiro_a000_000413",
+
+    IdleToRun_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000432.Anim_Sekiro_a000_000432",
+    IdleToRun_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000433.Anim_Sekiro_a000_000433",
+
+    Run_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000442.Anim_Sekiro_a000_000442",
+    Run_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000443.Anim_Sekiro_a000_000443",
 
     Run_Forward_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000500.Anim_Sekiro_a000_000500",
     Run_Back_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000501.Anim_Sekiro_a000_000501",
@@ -43,21 +65,61 @@ SekiroAnimations.Locomotion = {
     Run_Left_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000602.Anim_Sekiro_a000_000602",
     Run_Right_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_000603.Anim_Sekiro_a000_000603",
 
+    -- Crouch Locomotion
+
+    Crouch_Idle = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005000.Anim_Sekiro_a000_005000",
+
+    -- Stand to Crouch
+    Stand_Crouch_Idle = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_216000.Anim_Sekiro_a000_216000",
+    -- Crouch to Stand
+    Crouch_Stand_Idle = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_216100.Anim_Sekiro_a000_216100",
+
+    Sprint_Left_Crouch = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_216020.Anim_Sekiro_a000_216020",
+    Sprint_Right_Crouch = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_216021.Anim_Sekiro_a000_216021",
+
+    Crouch_Idle_Forward_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005010.Anim_Sekiro_a000_005010",
+    Crouch_Idle_Back_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005011.Anim_Sekiro_a000_005011",
+    Crouch_Idle_Left_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005012.Anim_Sekiro_a000_005012",
+    Crouch_Idle_Right_Turn = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005013.Anim_Sekiro_a000_005013",
+
+    Crouch_Walk_Forward_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005100.Anim_Sekiro_a000_005100",
+    Crouch_Walk_Back_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005101.Anim_Sekiro_a000_005101",
+    Crouch_Walk_Left_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005102.Anim_Sekiro_a000_005102",
+    Crouch_Walk_Right_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005103.Anim_Sekiro_a000_005103",
+
+    Crouch_Walk_Forward_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005200.Anim_Sekiro_a000_005200",
+    Crouch_Walk_Back_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005201.Anim_Sekiro_a000_005201",
+    Crouch_Walk_Left_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005202.Anim_Sekiro_a000_005202",
+    Crouch_Walk_Right_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005203.Anim_Sekiro_a000_005203",
+
+    Crouch_Walk_Forward_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005300.Anim_Sekiro_a000_005300",
+    Crouch_Walk_Back_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005301.Anim_Sekiro_a000_005301",
+    Crouch_Walk_Left_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005302.Anim_Sekiro_a000_005302",
+    Crouch_Walk_Right_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005303.Anim_Sekiro_a000_005303",
+
+    Crouch_Run_Forward_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005400.Anim_Sekiro_a000_005400",
+    Crouch_Run_Back_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005401.Anim_Sekiro_a000_005401",
+    Crouch_Run_Left_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005402.Anim_Sekiro_a000_005402",
+    Crouch_Run_Right_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005403.Anim_Sekiro_a000_005403",
+
+    Crouch_Run_Forward_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005500.Anim_Sekiro_a000_005500",
+    Crouch_Run_Back_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005501.Anim_Sekiro_a000_005501",
+    Crouch_Run_Left_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005502.Anim_Sekiro_a000_005502",
+    Crouch_Run_Right_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005503.Anim_Sekiro_a000_005503",
+
+    Crouch_Run_Forward_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005600.Anim_Sekiro_a000_005600",
+    Crouch_Run_Back_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005601.Anim_Sekiro_a000_005601",
+    Crouch_Run_Left_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005602.Anim_Sekiro_a000_005602",
+    Crouch_Run_Right_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_005603.Anim_Sekiro_a000_005603",
+
     -- Step Dodge
 
     Step_Forward = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213301.Anim_Sekiro_a000_213301",
-    Step_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213302.Anim_Sekiro_a000_213302",
-    Step_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213303.Anim_Sekiro_a000_213303",
-    Step_Back = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213304.Anim_Sekiro_a000_213304",
+    Step_Back = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213302.Anim_Sekiro_a000_213302",
+    Step_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213303.Anim_Sekiro_a000_213303",
+    Step_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_213304.Anim_Sekiro_a000_213304",
 
-    -- Walk/Run Blend
-
-    Walk_Run_Blend_Forward_1D = "/Game/Characters/Sekiro/Anim/Sekiro_CycleForward1D.Sekiro_CycleForward1D",
-    Walk_Run_Blend_Back_1D = "/Game/Characters/Sekiro/Anim/Sekiro_CycleBack1D.Sekiro_CycleBack1D",
-    Walk_Run_Blend_Left_1D = "/Game/Characters/Sekiro/Anim/Sekiro_CycleLeft1D.Sekiro_CycleLeft1D",
-    Walk_Run_Blend_Right_1D = "/Game/Characters/Sekiro/Anim/Sekiro_CycleRight1D.Sekiro_CycleRight1D",
-
-    -- Sprint
+    -- Sprint Start from Stand or Crouch
 
     Sprint_Forward_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001151.Anim_Sekiro_a000_001151",
     Sprint_Back_Turn_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001152.Anim_Sekiro_a000_001152",
@@ -67,7 +129,49 @@ SekiroAnimations.Locomotion = {
     Sprint_Forward_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001200.Anim_Sekiro_a000_001200",
 
     Sprint_Forward_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001510.Anim_Sekiro_a000_001510",
-    Sprint_Forward_To_Run = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001512.Anim_Sekiro_a000_001512",
+    Sprint_Forward_Left_Turn_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001511.Anim_Sekiro_a000_001511",
+    Sprint_Forward_Right_Turn_Stop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_001512.Anim_Sekiro_a000_001512",
+
+}
+
+-- Jump 动画按“原地”和“方向”两组组织。
+-- 方向后缀相对角色朝向：锁定模式直接使用八方向资源，非锁定模式转向输入方向并使用 Forward 资源。
+SekiroAnimations.Jump = {
+    Stand_Jump_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200000.Anim_Sekiro_a000_200000",
+    Crouch_Jump_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200100.Anim_Sekiro_a000_200100",
+    Jump_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201030.Anim_Sekiro_a000_201030",
+    Jump_Light_Stand = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201040.Anim_Sekiro_a000_201040",
+    Jump_Heavy_Stand = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200021.Anim_Sekiro_a000_200021",
+    Jump_Heavy_Crouch = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200121.Anim_Sekiro_a000_200121",
+
+    -- 方向 Start/Land 原始资产包含 RootMotion；InAir 原始资产没有 RootMotion，空中轨迹由 CharacterMovement 物理计算。
+    Jump_Start_Forward = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201100.Anim_Sekiro_a000_201100",
+    Jump_Start_Back = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201101.Anim_Sekiro_a000_201101",
+    Jump_Start_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201102.Anim_Sekiro_a000_201102",
+    Jump_Start_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201103.Anim_Sekiro_a000_201103",
+    Jump_Start_ForwardLeft = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201104.Anim_Sekiro_a000_201104",
+    Jump_Start_ForwardRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201105.Anim_Sekiro_a000_201105",
+    Jump_Start_BackLeft = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201106.Anim_Sekiro_a000_201106",
+    Jump_Start_BackRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201107.Anim_Sekiro_a000_201107",
+
+    Jump_InAir_Forward = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201110.Anim_Sekiro_a000_201110",
+    Jump_InAir_Back = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201111.Anim_Sekiro_a000_201111",
+    Jump_InAir_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201112.Anim_Sekiro_a000_201112",
+    Jump_InAir_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201113.Anim_Sekiro_a000_201113",
+    Jump_InAir_ForwardLeft = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201114.Anim_Sekiro_a000_201114",
+    Jump_InAir_ForwardRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201115.Anim_Sekiro_a000_201115",
+    Jump_InAir_BackLeft = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201116.Anim_Sekiro_a000_201116",
+    Jump_InAir_BackRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201117.Anim_Sekiro_a000_201117",
+
+    Jump_Land_Forward = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201140.Anim_Sekiro_a000_201140",
+    Jump_Land_Back = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201141.Anim_Sekiro_a000_201141",
+    Jump_Land_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201142.Anim_Sekiro_a000_201142",
+    Jump_Land_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201143.Anim_Sekiro_a000_201143",
+    Jump_Land_ForwardLeft = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201144.Anim_Sekiro_a000_201144",
+    Jump_Land_ForwardRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201145.Anim_Sekiro_a000_201145",
+    Jump_Land_BackLeft = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201146.Anim_Sekiro_a000_201146",
+    Jump_Land_BackRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201147.Anim_Sekiro_a000_201147",
+
 }
 
 return SekiroAnimations

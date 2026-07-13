@@ -1,5 +1,7 @@
 ﻿#include "AnimGraphNode_SekiroLuaStateMachine.h"
 
+#include "Animation/AnimNode_Inertialization.h"
+
 #define LOCTEXT_NAMESPACE "AnimGraphNode_SekiroLuaStateMachine"
 
 FText UAnimGraphNode_SekiroLuaStateMachine::GetNodeTitle(ENodeTitleType::Type TitleType) const
@@ -25,6 +27,12 @@ FString UAnimGraphNode_SekiroLuaStateMachine::GetNodeCategory() const
 FText UAnimGraphNode_SekiroLuaStateMachine::GetMenuCategory() const
 {
     return LOCTEXT("MenuCategory", "Sekiro|Lua Animation");
+}
+
+void UAnimGraphNode_SekiroLuaStateMachine::GetOutputLinkAttributes(FNodeAttributeArray& OutAttributes) const
+{
+    Super::GetOutputLinkAttributes(OutAttributes);
+    OutAttributes.Add(UE::Anim::IInertializationRequester::Attribute);
 }
 
 #undef LOCTEXT_NAMESPACE

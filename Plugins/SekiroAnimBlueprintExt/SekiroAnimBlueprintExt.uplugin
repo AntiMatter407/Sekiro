@@ -24,6 +24,10 @@
         {
             "Name": "UnLua",
             "Enabled": true
+        },
+        {
+            "Name": "AnimationWarping",
+            "Enabled": true
         }
     ]
 }
