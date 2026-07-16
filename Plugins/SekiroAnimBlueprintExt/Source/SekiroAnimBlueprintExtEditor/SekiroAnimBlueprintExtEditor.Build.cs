@@ -6,20 +6,29 @@ public class SekiroAnimBlueprintExtEditor : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        PublicDependencyModuleNames.AddRange(new string[] {
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
             "Core",
             "CoreUObject",
             "Engine",
-            "AnimGraph",
-            "AnimGraphRuntime",
-            "AnimationWarpingRuntime",
             "SekiroAnimBlueprintExt",
         });
 
-        PrivateDependencyModuleNames.AddRange(new string[] {
-            "UnrealEd",
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+            "AnimGraph",
+            "AnimGraphRuntime",
+            "AnimationBlueprintEditor",
+            "AssetRegistry",
             "BlueprintGraph",
+            "DirectoryWatcher",
+            "Kismet",
+            "KismetCompiler",
+            "Lua",
+            "Slate",
+            "SlateCore",
             "UnLua",
+            "UnrealEd",
         });
     }
 }

@@ -1,13 +1,19 @@
 {
     "FileVersion": 3,
     "Version": 1,
-    "VersionName": "0.1.0",
-    "FriendlyName": "Sekiro Anim Blueprint Extension",
-    "Description": "Extends AnimBlueprint workflows without modifying engine source. Provides a Lua-driven animation state machine node.",
+    "VersionName": "1.0.0",
+    "FriendlyName": "Sekiro Anim Blueprint Ext",
+    "Description": "Language-neutral AnimGraph IR and editor compilation foundation.",
     "Category": "Animation",
     "CreatedBy": "Sekiro Team",
-    "EnabledByDefault": true,
     "CanContainContent": false,
+    "IsBetaVersion": true,
+    "Plugins": [
+        {
+            "Name": "UnLua",
+            "Enabled": true
+        }
+    ],
     "Modules": [
         {
             "Name": "SekiroAnimBlueprintExt",
@@ -18,16 +24,6 @@
             "Name": "SekiroAnimBlueprintExtEditor",
             "Type": "UncookedOnly",
             "LoadingPhase": "Default"
-        }
-    ],
-    "Plugins": [
-        {
-            "Name": "UnLua",
-            "Enabled": true
-        },
-        {
-            "Name": "AnimationWarping",
-            "Enabled": true
         }
     ]
 }

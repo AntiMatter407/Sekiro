@@ -6,16 +6,16 @@ public class SekiroAnimBlueprintExt : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        PublicDependencyModuleNames.AddRange(new string[] {
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
             "Core",
             "CoreUObject",
             "Engine",
-            "AnimGraphRuntime",
-            "AnimationWarpingRuntime",
             "UnLua",
         });
 
-        PrivateDependencyModuleNames.AddRange(new string[] {
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
             "Lua",
         });
     }

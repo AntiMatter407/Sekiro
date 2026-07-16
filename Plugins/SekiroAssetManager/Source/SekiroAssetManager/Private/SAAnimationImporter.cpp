@@ -268,7 +268,7 @@ UAnimSequence* SAAnimationImporter::Build(const FSAAnimClip& Clip, USkeleton* Sk
     }
 
     AnimSeq->SetSkeleton(Skeleton);
-    AnimSeq->bEnableRootMotion = false;
+    AnimSeq->bEnableRootMotion = Clip.bHasRootMotion;
     AnimSeq->RootMotionRootLock = ERootMotionRootLock::AnimFirstFrame;
     AnimSeq->bForceRootLock = false;
 
@@ -298,19 +298,36 @@ UAnimSequence* SAAnimationImporter::Build(const FSAAnimClip& Clip, USkeleton* Sk
         BoneNameToAnimIdx.Add(Clip.BoneNames[i], i);
     }
 
+    const FName IndependentRootBoneName(TEXT("Root"));
+    const int32 IndependentRootBoneIdx = RefSkel.FindBoneIndex(IndependentRootBoneName);
+    if (IndependentRootBoneIdx == INDEX_NONE || RefSkel.GetParentIndex(IndependentRootBoneIdx) != INDEX_NONE)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Clip '%s' requires an independent top-level Root bone; reimport the model skeleton first"),
+            *Clip.Name);
+        return nullptr;
+    }
+
+    const FTransform& IndependentRootReferencePose = RefSkel.GetRefBonePose()[IndependentRootBoneIdx];
+    if (!IndependentRootReferencePose.Equals(FTransform::Identity))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Clip '%s' requires the independent Root reference pose to be Identity"), *Clip.Name);
+        return nullptr;
+    }
+
     // Handle ExportRoot/Armature virtual FK (old SekiroImport approach)
     const int32* ERAnimIdx = BoneNameToAnimIdx.Find(FName(TEXT("ExportRoot")));
     const int32* ArAnimIdx = BoneNameToAnimIdx.Find(FName(TEXT("Armature")));
-        // Debug: verify bone name matching
+    // Debug: verify bone name matching. A synthesized Root track is expected to be absent from source data.
     int32 MatchedBones = 0;
     for (int32 i = 0; i < SkeletonBoneCount; ++i)
     {
         if (BoneNameToAnimIdx.Contains(RefSkel.GetBoneName(i)))
             MatchedBones++;
     }
-    UE_LOG(LogTemp, Display, TEXT("SAAnimationImporter: Bone match: %d/%d skeleton bones found in anim data"),
-        MatchedBones, SkeletonBoneCount);
-const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr);
+    const bool bRootTrackIsSynthetic = !BoneNameToAnimIdx.Contains(IndependentRootBoneName);
+    UE_LOG(LogTemp, Display, TEXT("SAAnimationImporter: Bone match: %d/%d skeleton bones found in anim data%s"),
+        MatchedBones, SkeletonBoneCount, bRootTrackIsSynthetic ? TEXT(" (Root is synthesized)") : TEXT(""));
+    const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr);
 
     const FQuat OrientQ = GetOrientQ();
 
@@ -331,6 +348,9 @@ const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr)
     TArray<FTransform> WorldUE;
     WorldUE.SetNum(SkeletonBoneCount);
 
+    TArray<FTransform> LocalUE;
+    LocalUE.SetNum(SkeletonBoneCount);
+
     for (int32 Frame = 0; Frame < NumFrames; ++Frame)
     {
         const TArray<FSAAnimBoneTransform>& FrameBones = Clip.FrameData[Frame];
@@ -350,6 +370,12 @@ const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr)
         // Pass 1+2: FK + OrientQ -> WorldUE (name-based lookup)
         for (int32 BoneIdx = 0; BoneIdx < SkeletonBoneCount; ++BoneIdx)
         {
+            if (BoneIdx == IndependentRootBoneIdx)
+            {
+                WorldUE[BoneIdx] = FTransform::Identity;
+                continue;
+            }
+
             const FName BoneName = RefSkel.GetBoneName(BoneIdx);
             const int32 ParentIdx = RefSkel.GetParentIndex(BoneIdx);
             const int32* AnimBoneIdxPtr = BoneNameToAnimIdx.Find(BoneName);
@@ -359,7 +385,24 @@ const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr)
                 LocalHKX = ToHKXTransform(FrameBones[*AnimBoneIdxPtr]);
 
             FTransform WorldHKX;
-            if (ParentIdx >= 0 && ParentIdx < SkeletonBoneCount)
+            if (ParentIdx == IndependentRootBoneIdx)
+            {
+                // Root 不参与姿势 FK；原始 Master 仍直接连接旧的虚拟 Armature。
+                if (bNeedVirtualArmature)
+                {
+                    const FQuat OrientQInv = OrientQ.Inverse();
+                    FTransform ArWorldHKX;
+                    ArWorldHKX.SetTranslation(OrientQInv.RotateVector(ArWorldUE.GetTranslation()));
+                    ArWorldHKX.SetRotation(OrientQInv * ArWorldUE.GetRotation());
+                    ArWorldHKX.SetScale3D(ArWorldUE.GetScale3D());
+                    WorldHKX = LocalHKX * ArWorldHKX;
+                }
+                else
+                {
+                    WorldHKX = LocalHKX;
+                }
+            }
+            else if (ParentIdx >= 0 && ParentIdx < SkeletonBoneCount)
             {
                 const FQuat OrientQInv = OrientQ.Inverse();
                 FTransform ParentWorldHKX;
@@ -387,33 +430,41 @@ const bool bNeedVirtualArmature = (ERAnimIdx != nullptr && ArAnimIdx != nullptr)
             WorldUE[BoneIdx].SetScale3D(WorldHKX.GetScale3D());
         }
 
-        // Pass 3: Derive LocalUE -> write keys
+        // Pass 3: Derive LocalUE
         for (int32 BoneIdx = 0; BoneIdx < SkeletonBoneCount; ++BoneIdx)
         {
+            if (BoneIdx == IndependentRootBoneIdx)
+            {
+                LocalUE[BoneIdx] = FTransform::Identity;
+                continue;
+            }
+
             const int32 ParentIdx = RefSkel.GetParentIndex(BoneIdx);
-            FTransform LocalUE;
             if (ParentIdx >= 0 && ParentIdx < SkeletonBoneCount)
             {
-                LocalUE = WorldUE[BoneIdx].GetRelativeTransform(WorldUE[ParentIdx]);
+                LocalUE[BoneIdx] = WorldUE[BoneIdx].GetRelativeTransform(WorldUE[ParentIdx]);
             }
             else if (bNeedVirtualArmature)
             {
-                LocalUE = WorldUE[BoneIdx].GetRelativeTransform(ArWorldUE);
+                LocalUE[BoneIdx] = WorldUE[BoneIdx].GetRelativeTransform(ArWorldUE);
             }
             else
             {
-                LocalUE = WorldUE[BoneIdx];
+                LocalUE[BoneIdx] = WorldUE[BoneIdx];
             }
+        }
 
-            if (ParentIdx < 0 && Clip.RootMotionFrames.IsValidIndex(Frame))
-            {
-                const FTransform RootMotionUE = BuildRootMotionTransformUE(Clip.RootMotionFrames[Frame], OrientQ);
-                LocalUE = LocalUE * RootMotionUE;
-            }
+        if (Clip.RootMotionFrames.IsValidIndex(Frame))
+        {
+            LocalUE[IndependentRootBoneIdx] = BuildRootMotionTransformUE(Clip.RootMotionFrames[Frame], OrientQ);
+        }
 
-            AllPosKeys[BoneIdx].Add(LocalUE.GetTranslation() * SekiroToUEScale);
-            AllRotKeys[BoneIdx].Add(LocalUE.GetRotation());
-            AllScaleKeys[BoneIdx].Add(LocalUE.GetScale3D());
+        // Write keys
+        for (int32 BoneIdx = 0; BoneIdx < SkeletonBoneCount; ++BoneIdx)
+        {
+            AllPosKeys[BoneIdx].Add(LocalUE[BoneIdx].GetTranslation() * SekiroToUEScale);
+            AllRotKeys[BoneIdx].Add(LocalUE[BoneIdx].GetRotation());
+            AllScaleKeys[BoneIdx].Add(LocalUE[BoneIdx].GetScale3D());
         }
     }
 

@@ -1,4 +1,4 @@
-#include "SAModelImporter.h"
+﻿#include "SAModelImporter.h"
 #include "Misc/FileHelper.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -347,25 +347,111 @@ USkeleton* SAModelImporter::BuildSkeleton(const TArray<FSAImportBone>& Bones, co
     if (Bones.Num() == 0) return nullptr;
 
     const FQuat OrientQ = GetOrientQ();
+    const FName IndependentRootBoneName(TEXT("Root"));
+
+    int32 NamedRootIndex = INDEX_NONE;
+    int32 NamedRootCount = 0;
+    int32 SourceRootIndex = INDEX_NONE;
+    int32 SourceRootCount = 0;
+    for (int32 BoneIndex = 0; BoneIndex < Bones.Num(); ++BoneIndex)
+    {
+        const FSAImportBone& Bone = Bones[BoneIndex];
+        if (Bone.Name == IndependentRootBoneName)
+        {
+            NamedRootIndex = BoneIndex;
+            ++NamedRootCount;
+        }
+        if (Bone.ParentIndex == INDEX_NONE)
+        {
+            SourceRootIndex = BoneIndex;
+            ++SourceRootCount;
+        }
+    }
+
+    const bool bSourceHasNamedRoot = NamedRootIndex != INDEX_NONE;
+    if (bSourceHasNamedRoot)
+    {
+        const FSAImportBone& SourceRoot = Bones[NamedRootIndex];
+        const bool bIdentityReferencePose = SourceRoot.WorldTranslation.IsNearlyZero()
+            && SourceRoot.WorldRotation.Equals(FQuat::Identity)
+            && SourceRoot.WorldScale.Equals(FVector::OneVector);
+        const bool bLegalSingleRoot = NamedRootCount == 1
+            && NamedRootIndex == 0
+            && SourceRoot.ParentIndex == INDEX_NONE
+            && SourceRootCount == 1
+            && bIdentityReferencePose;
+        if (!bLegalSingleRoot)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("Skeleton '%s' contains bone 'Root', but it is not a legal identity single root; import aborted to avoid duplicate Root bones"),
+                *SkeletonName);
+            return nullptr;
+        }
+    }
+    else if (SourceRootCount != 1 || SourceRootIndex != 0)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Skeleton '%s' must contain one topologically first source root before an independent Root can be synthesized"),
+            *SkeletonName);
+        return nullptr;
+    }
 
     TArray<FSAImportBone> OrientedBones = Bones;
-    for (auto& Bone : OrientedBones)
+    for (FSAImportBone& Bone : OrientedBones)
     {
         Bone.WorldTranslation = OrientQ.RotateVector(Bone.WorldTranslation);
         Bone.WorldRotation = OrientQ * Bone.WorldRotation;
     }
     for (int32 i = 0; i < OrientedBones.Num(); ++i)
     {
-        auto& Bone = OrientedBones[i];
-        if (Bone.ParentIndex != INDEX_NONE)
+        FSAImportBone& Bone = OrientedBones[i];
+        if (Bone.ParentIndex >= 0 && Bone.ParentIndex < i)
         {
-            const auto& P = OrientedBones[Bone.ParentIndex];
+            const FSAImportBone& P = OrientedBones[Bone.ParentIndex];
             FTransform PW; PW.SetRotation(P.WorldRotation); PW.SetTranslation(P.WorldTranslation); PW.SetScale3D(P.WorldScale);
             FTransform W;  W.SetRotation(Bone.WorldRotation);  W.SetTranslation(Bone.WorldTranslation);  W.SetScale3D(Bone.WorldScale);
             FTransform L = W.GetRelativeTransform(PW);
             Bone.LocalRotation = L.GetRotation(); Bone.LocalTranslation = L.GetTranslation(); Bone.LocalScale = L.GetScale3D();
         }
         else { Bone.LocalRotation = Bone.WorldRotation; Bone.LocalTranslation = Bone.WorldTranslation; Bone.LocalScale = Bone.WorldScale; }
+    }
+
+    TArray<FSAImportBone> SkeletonBones;
+    if (bSourceHasNamedRoot)
+    {
+        SkeletonBones = MoveTemp(OrientedBones);
+        SkeletonBones[0].LocalTranslation = FVector::ZeroVector;
+        SkeletonBones[0].LocalRotation = FQuat::Identity;
+        SkeletonBones[0].LocalScale = FVector::OneVector;
+        UE_LOG(LogTemp, Display, TEXT("Skeleton '%s' uses existing identity Root bone"), *SkeletonName);
+    }
+    else
+    {
+        // 在索引 0 合成纯轨迹根；原始根及全部后代整体后移一位。
+        SkeletonBones.Reserve(OrientedBones.Num() + 1);
+
+        FSAImportBone IndependentRoot;
+        IndependentRoot.Name = IndependentRootBoneName;
+        IndependentRoot.ParentIndex = INDEX_NONE;
+        IndependentRoot.LocalTranslation = FVector::ZeroVector;
+        IndependentRoot.LocalRotation = FQuat::Identity;
+        IndependentRoot.LocalScale = FVector::OneVector;
+        IndependentRoot.WorldTranslation = FVector::ZeroVector;
+        IndependentRoot.WorldRotation = FQuat::Identity;
+        IndependentRoot.WorldScale = FVector::OneVector;
+        SkeletonBones.Add(IndependentRoot);
+
+        for (int32 SourceBoneIndex = 0; SourceBoneIndex < OrientedBones.Num(); ++SourceBoneIndex)
+        {
+            FSAImportBone Bone = OrientedBones[SourceBoneIndex];
+            Bone.ParentIndex = Bone.ParentIndex >= 0 && Bone.ParentIndex < SourceBoneIndex
+                ? Bone.ParentIndex + 1
+                : 0;
+            SkeletonBones.Add(MoveTemp(Bone));
+        }
+
+        UE_LOG(LogTemp, Display, TEXT("Skeleton '%s' synthesized identity Root above %d source bones"),
+            *SkeletonName, Bones.Num());
     }
 
     {
@@ -395,9 +481,9 @@ USkeleton* SAModelImporter::BuildSkeleton(const TArray<FSAImportBone>& Bones, co
     if (!Skeleton) return nullptr;
 
     FReferenceSkeletonModifier Modifier = FReferenceSkeletonModifier(Skeleton);
-    for (int32 i = 0; i < OrientedBones.Num(); ++i)
+    for (int32 i = 0; i < SkeletonBones.Num(); ++i)
     {
-        const auto& B = OrientedBones[i];
+        const FSAImportBone& B = SkeletonBones[i];
         int32 ParentIdx = B.ParentIndex;
         // Fix invalid parent: only root (bone 0) can have INDEX_NONE
         // and parent must always be before child
@@ -415,7 +501,7 @@ USkeleton* SAModelImporter::BuildSkeleton(const TArray<FSAImportBone>& Bones, co
     FSavePackageArgs Args; Args.TopLevelFlags = RF_Public | RF_Standalone; Args.Error = GWarn;
     UPackage::SavePackage(Package, Skeleton, *FileName, Args);
 
-    UE_LOG(LogTemp, Log, TEXT("Skeleton build success: %s (%d bones)"), *PackagePath, OrientedBones.Num());
+    UE_LOG(LogTemp, Log, TEXT("Skeleton build success: %s (%d bones)"), *PackagePath, SkeletonBones.Num());
     return Skeleton;
 }
 
