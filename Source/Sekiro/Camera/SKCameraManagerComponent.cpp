@@ -1,5 +1,6 @@
 ﻿#include "Camera/SKCameraManagerComponent.h"
 
+#include "Animation/SKAnimInstance.h"
 #include "Input/SKInputManager.h"
 #include "Movement/SKMovementComponent.h"
 #include "EngineUtils.h"
@@ -336,6 +337,14 @@ float USKCameraManagerComponent::NormalizeDeltaYaw(float FromYaw, float ToYaw) c
     return FMath::FindDeltaAngleDegrees(FromYaw, ToYaw);
 }
 
+bool USKCameraManagerComponent::IsActorYawOwnedByRootMotion() const
+{
+    if (!OwnerCharacter || !OwnerCharacter->GetMesh()) return false;
+
+    const USKAnimInstance* AnimInstance = Cast<USKAnimInstance>(OwnerCharacter->GetMesh()->GetAnimInstance());
+    return AnimInstance && AnimInstance->IsActorYawOwnedByRootMotion();
+}
+
 void USKCameraManagerComponent::ApplyActorYawForScript(float TargetYaw, float InterpSpeed, float DeltaTime)
 {
     ApplyActorYaw(TargetYaw, InterpSpeed, DeltaTime);
@@ -542,7 +551,7 @@ void USKCameraManagerComponent::UpdateMovementRotationSettings()
     }
     else
     {
-        CharacterMovement->bOrientRotationToMovement = true;
+        CharacterMovement->bOrientRotationToMovement = false;
         CharacterMovement->bUseControllerDesiredRotation = false;
     }
 }
@@ -586,7 +595,10 @@ void USKCameraManagerComponent::UpdateSprintAlignMode(float DeltaTime)
         TargetYaw = OwnerCharacter->GetActorRotation().Yaw;
     }
 
-    ApplyActorYaw(TargetYaw, SprintActorInterpSpeed, DeltaTime);
+    if (!IsActorYawOwnedByRootMotion())
+    {
+        ApplyActorYaw(TargetYaw, SprintActorInterpSpeed, DeltaTime);
+    }
 
     float CameraTargetYaw = 0.f;
     if (IsLockedOn() && GetLockTargetYaw(CameraTargetYaw))
@@ -607,7 +619,10 @@ void USKCameraManagerComponent::UpdateLockOnMode(float DeltaTime)
         return;
     }
 
-    ApplyActorYaw(TargetYaw, LockOnActorInterpSpeed, DeltaTime);
+    if (!IsActorYawOwnedByRootMotion())
+    {
+        ApplyActorYaw(TargetYaw, LockOnActorInterpSpeed, DeltaTime);
+    }
     ApplyControllerYaw(TargetYaw, LockOnCameraYawInterpSpeed, DeltaTime);
 }
 

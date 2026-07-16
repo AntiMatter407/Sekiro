@@ -11,6 +11,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Movement/SKMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "EnhancedInputComponent.h"
 
@@ -28,7 +29,11 @@ ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	bUseControllerRotationRoll = false;
 
 	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
-	MoveComp->bOrientRotationToMovement = true;
+	// 蹲姿 Idle 的 RootPos 比站立 Idle 低约 36.1 cm；由 192 cm 站立胶囊等比例保留身体余量，
+	// 得到约 156 cm 的蹲姿总高。半径保持 42 cm，半高取 78 cm。
+	MoveComp->GetNavAgentPropertiesRef().bCanCrouch = true;
+	MoveComp->SetCrouchedHalfHeight(78.f);
+	MoveComp->bOrientRotationToMovement = false;
 	MoveComp->RotationRate = FRotator(0.f, 500.f, 0.f);
 	MoveComp->JumpZVelocity = 700.f;
 	MoveComp->AirControl = 0.35f;

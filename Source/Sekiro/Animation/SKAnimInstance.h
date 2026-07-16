@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "SekiroLuaAnimInstance.h"
+#include "Animation/AnimInstance.h"
 #include "Movement/SKMovementComponent.h"
 #include "Animation/SKAnimDataTypes.h"
 #include "Camera/SKCameraManagerComponent.h"
@@ -12,21 +12,31 @@ class USKCameraManagerComponent;
 class USKInputManager;
 
 // ============================================================================
-// USKAnimInstance — 精简后的动画实例
-// 仅负责更新 Blueprint 可见变量（Speed/Angle/Direction/FrameFlags）。
-// 状态机、动作选择和过渡编排由 AnimBlueprint 负责。
+// USKAnimInstance — 项目角色动画数据适配层
+// 负责采集角色、移动、输入和相机数据，供 AnimBlueprint 消费。
+// 动画选择、过渡编排和最终 Pose 求值由 AnimBlueprint 负责。
 // ============================================================================
 
 UCLASS()
-class SEKIRO_API USKAnimInstance : public USekiroLuaAnimInstance
+class SEKIRO_API USKAnimInstance : public UAnimInstance
 {
     GENERATED_BODY()
 
 public:
+    /** 初始化项目动画实例的 UE Root Motion 基线。 */
     USKAnimInstance();
 
+    /** 初始化动画实例并缓存数据采集所需的角色组件。 */
     virtual void NativeInitializeAnimation() override;
+
+    /** 采集当前帧动画变量并计算项目移动状态。 */
     virtual void NativeUpdateAnimation(float DeltaSeconds) override;
+
+    // ── ActorYaw 控制权 ───────────────────────────────────────
+
+    /** 查询当前动画图是否接管角色世界 Yaw。 */
+    UFUNCTION(BlueprintPure, Category = "Animation|RootMotion")
+    bool IsActorYawOwnedByRootMotion() const;
 
     // ── Locomotion（Blueprint 读取） ────────────────────────────
 
@@ -65,6 +75,9 @@ public:
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     FVector Velocity = FVector::ZeroVector;       // 当前世界速度
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Jump")
+    float VerticalVelocity = 0.f;                 // 当前垂直速度，供动画图判断起跳阶段和落地强度
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     FVector Acceleration = FVector::ZeroVector;   // 当前世界加速度
@@ -129,6 +142,9 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion")
     uint32 bIsCrouching : 1;                      // 角色是否蹲下
 
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Jump")
+    uint32 bJumpStartedCrouched : 1;              // 本次离地前是否为蹲姿，解除胶囊蹲伏后仍可选择蹲姿起跳动画
+
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Camera")
     uint32 bIsLockedOn : 1;                       // 当前是否处于锁定目标模式
 
@@ -141,37 +157,38 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Camera")
     float MoveDirectionAngle = 0.f;               // 输入移动方向相对角色朝向的角度
 
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
+    float ActorYaw = 0.f;                         // 本帧角色世界 Yaw，供动画图锁定 Turn/Step 的绝对目标
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
+    float DesiredMoveYaw = 0.f;                   // 相机相对移动输入对应的绝对世界 Yaw
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
+    uint32 bHasDesiredMoveYaw : 1;                // 当前是否存在可用的绝对移动目标 Yaw
+
+    UPROPERTY(BlueprintReadWrite, Category = "Locomotion|Rotation")
+    uint32 bActorYawOwnedByRootMotion : 1;        // 动画图是否接管角色世界 Yaw，默认关闭
+
     // ── Dodge（Blueprint 读取） ─────────────────────────────────
 
     UPROPERTY(BlueprintReadOnly, Category = "Dodge")
-    uint32 bIsDodging : 1;
+    uint32 bIsDodging : 1;                       // 当前是否处于垫步或闪避动作
 
     UPROPERTY(BlueprintReadOnly, Category = "Dodge")
-    float DodgeDirection = 0.f;
+    float DodgeDirection = 0.f;                  // 闪避方向相对角色朝向的角度，单位为度
 
     UPROPERTY(BlueprintReadOnly, Category = "Dodge")
-    float DodgeDirectionLateral = 0.f;
-
-    // ── 帧级标志（从 FrameFlags 曲线读取，Blueprint 消费） ─────
-
-    UPROPERTY(BlueprintReadOnly, Category = "Flags")
-    uint32 bCanDeflect : 1;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Flags")
-    uint32 bDisableTurning : 1;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Flags")
-    uint32 bDisableMovement : 1;
-
-    UPROPERTY(BlueprintReadOnly, Category = "Flags")
-    uint32 bInvincible : 1;
+    float DodgeDirectionLateral = 0.f;           // 闪避横向输入分量，负数为左、正数为右
 
     // ── 输入意图（Blueprint 读取） ─────────────────────────────
 
     UPROPERTY(BlueprintReadOnly, Category = "Input")
-    FName InputIntent;
+    FName InputIntent;                           // 预留的离散输入意图名称，当前未在本类中赋值
 
 protected:
+    /** 缓存当前动画 Pawn 及数据采集所需的项目组件。 */
+    void CacheOwnerReferences();
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true"))
     float RotationModeTurnEnterAngle = 45.f;      // 锁定/非锁定切换进入转向过渡的最小角度
 
@@ -179,16 +196,16 @@ protected:
     float RotationModeTurnDuration = 0.22f;       // 锁定/非锁定切换转向过渡保持时间
 
     UPROPERTY()
-    TObjectPtr<ASKCharacter> OwnerCharacter;
+    TObjectPtr<ASKCharacter> OwnerCharacter;      // 当前动画实例所属的 Sekiro 角色
 
     UPROPERTY()
-    TObjectPtr<USKMovementComponent> OwnerMovement;
+    TObjectPtr<USKMovementComponent> OwnerMovement; // 所属角色的项目移动组件
 
     UPROPERTY()
-    TObjectPtr<USKCameraManagerComponent> OwnerCameraManager;
+    TObjectPtr<USKCameraManagerComponent> OwnerCameraManager; // 所属角色的项目相机组件
 
     UPROPERTY()
-    TObjectPtr<USKInputManager> OwnerInputManager;
+    TObjectPtr<USKInputManager> OwnerInputManager; // 所属角色的项目输入组件
 
     float RotationModeTurnTimeRemaining = 0.f;    // 锁定/非锁定切换转向过渡剩余时间
 };

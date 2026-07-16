@@ -2,12 +2,18 @@
 #include "Character/SKCharacter.h"
 #include "Input/SKInputManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
 #include "Animation/AnimEnums.h"
 #include "KismetAnimationLibrary.h"
-#include "SekiroAnimLogicData.h"
 
 namespace
 {
+/**
+ * @brief 判断动画步态是否属于有位移的 Walk、Run 或 Sprint。
+ *
+ * @param InGait ESKAnimGait，待检查的动画步态。
+ * @return bool，属于移动步态时返回 true，否则返回 false。
+ */
 bool SKIsMovingGait(ESKAnimGait InGait)
 {
     return InGait == ESKAnimGait::Walk
@@ -15,6 +21,59 @@ bool SKIsMovingGait(ESKAnimGait InGait)
         || InGait == ESKAnimGait::Sprint;
 }
 
+/**
+ * @brief 根据移动输入、摇杆阈值和上一帧步态解析蹲姿下的目标步态。
+ *
+ * @param bHasMovementInput bool，当前是否存在有效移动输入。
+ * @param MovementInputAmount float，当前移动输入强度，预期范围为 [0, 1]。
+ * @param CurrentGait ESKAnimGait，状态机当前使用的动画步态，用于阈值滞回。
+ * @param InputManager const USKInputManager*，输入组件；为空时退化为当前 Walk 或默认 Run。
+ * @return ESKAnimGait，解析后的 Idle、Walk 或 Run；蹲姿不会返回 Sprint。
+ */
+ESKAnimGait SKResolveCrouchGait(
+    bool bHasMovementInput,
+    float MovementInputAmount,
+    ESKAnimGait CurrentGait,
+    const USKInputManager* InputManager)
+{
+    if (!bHasMovementInput)
+    {
+        return ESKAnimGait::Idle;
+    }
+
+    if (!InputManager)
+    {
+        return CurrentGait == ESKAnimGait::Walk
+            ? ESKAnimGait::Walk
+            : ESKAnimGait::Run;
+    }
+
+    if (InputManager->IsWalkHeld())
+    {
+        return ESKAnimGait::Walk;
+    }
+
+    const float WalkEnterThreshold = InputManager->GetAnalogWalkEnterThreshold();
+    const float RunEnterThreshold = InputManager->GetAnalogRunEnterThreshold();
+    if (CurrentGait == ESKAnimGait::Walk)
+    {
+        return MovementInputAmount >= RunEnterThreshold
+            ? ESKAnimGait::Run
+            : ESKAnimGait::Walk;
+    }
+
+    return MovementInputAmount <= WalkEnterThreshold
+        ? ESKAnimGait::Walk
+        : ESKAnimGait::Run;
+}
+
+/**
+ * @brief 将移动组件的速度档位转换为动画步态。
+ *
+ * @param InTier ESKMovementTier，移动组件当前请求的速度档位。
+ * @param bWantsMovement bool，角色当前是否仍有移动输入或实际水平位移。
+ * @return ESKAnimGait，没有移动意图时返回 Idle，否则返回对应的 Walk、Run 或 Sprint。
+ */
 ESKAnimGait SKConvertMovementTierToGait(ESKMovementTier InTier, bool bWantsMovement)
 {
     if (!bWantsMovement)
@@ -25,7 +84,6 @@ ESKAnimGait SKConvertMovementTierToGait(ESKMovementTier InTier, bool bWantsMovem
     switch (InTier)
     {
     case ESKMovementTier::Walk:
-    case ESKMovementTier::Crouch:
         return ESKAnimGait::Walk;
     case ESKMovementTier::Sprint:
         return ESKAnimGait::Sprint;
@@ -37,6 +95,13 @@ ESKAnimGait SKConvertMovementTierToGait(ESKMovementTier InTier, bool bWantsMovem
     }
 }
 
+/**
+ * @brief 获取指定动画步态对应的项目参考速度。
+ *
+ * @param InGait ESKAnimGait，待查询的动画步态。
+ * @param Movement const USKMovementComponent*，项目移动组件；为空时使用当前兼容默认速度。
+ * @return float，对应步态的水平参考速度，单位为 cm/s；Idle 返回 0。
+ */
 float SKGetGaitReferenceSpeed(ESKAnimGait InGait, const USKMovementComponent* Movement)
 {
     if (!Movement)
@@ -63,6 +128,15 @@ float SKGetGaitReferenceSpeed(ESKAnimGait InGait, const USKMovementComponent* Mo
     }
 }
 
+/**
+ * @brief 根据当前速度计算源步态到目标步态的归一化切换进度。
+ *
+ * @param CurrentGait ESKAnimGait，当前动画步态。
+ * @param TargetGait ESKAnimGait，期望切换到的动画步态。
+ * @param CurrentSpeed float，角色当前水平速度，单位为 cm/s。
+ * @param Movement const USKMovementComponent*，项目移动组件；为空时使用兼容默认速度。
+ * @return float，范围为 [0, 1] 的切换进度；1 表示已经到达目标步态速度区间。
+ */
 float SKCalculateGaitBlendAlpha(
     ESKAnimGait CurrentGait,
     ESKAnimGait TargetGait,
@@ -82,6 +156,12 @@ float SKCalculateGaitBlendAlpha(
     return TargetSpeed > SourceSpeed ? RangeAlpha : 1.f - RangeAlpha;
 }
 
+/**
+ * @brief 将局部方向角按 45 度扇区转换为八方向动画枚举。
+ *
+ * @param InAngle float，角色局部方向角，单位为度，预期范围为 [-180, 180]。
+ * @return ESKLocomotionDirection，对应的前、后、左、右或四个斜向枚举。
+ */
 ESKLocomotionDirection SKConvertAngleToDirection(float InAngle)
 {
     if (InAngle > -22.5f && InAngle <= 22.5f) return ESKLocomotionDirection::Fwd;
@@ -93,44 +173,74 @@ ESKLocomotionDirection SKConvertAngleToDirection(float InAngle)
     if (InAngle > -112.5f && InAngle <= -67.5f) return ESKLocomotionDirection::L;
     return ESKLocomotionDirection::Fwd_L;
 }
+
+/**
+ * @brief 将相机空间移动输入转换成世界空间的目标移动 Yaw。
+ *
+ * @param InOwnerCharacter const ASKCharacter*，提供控制器和控制旋转的角色；不能为空。
+ * @param InMoveIntent const FVector2D&，屏幕空间移动输入，X 为左右、Y 为前后。
+ * @param OutYaw float&，成功时写入目标世界 Yaw，单位为度；失败时保持原值。
+ * @return bool，成功获得有效世界方向时返回 true，否则返回 false。
+ */
+bool SKResolveMoveIntentYaw(const ASKCharacter* InOwnerCharacter, const FVector2D& InMoveIntent, float& OutYaw)
+{
+    if (!InOwnerCharacter) return false;
+    if (InMoveIntent.SizeSquared() < FMath::Square(0.1f)) return false;
+
+    const AController* Controller = InOwnerCharacter->GetController();
+    if (!Controller) return false;
+
+    const FVector2D NormalizedIntent = InMoveIntent.GetSafeNormal();
+    const FRotator ControlYawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+    const FVector Forward = FRotationMatrix(ControlYawRotation).GetUnitAxis(EAxis::X);
+    const FVector Right = FRotationMatrix(ControlYawRotation).GetUnitAxis(EAxis::Y);
+    const FVector DesiredDirection = (Forward * NormalizedIntent.Y + Right * NormalizedIntent.X).GetSafeNormal2D();
+    if (DesiredDirection.IsNearlyZero()) return false;
+
+    OutYaw = DesiredDirection.Rotation().Yaw;
+    return true;
+}
 }
 
+/**
+ * 初始化项目动画实例的 UE Root Motion 基线。
+ * 构造阶段不访问 Pawn 或世界，只设置动画实例自身状态；必须在游戏线程创建 UObject。
+ */
 USKAnimInstance::USKAnimInstance()
 {
-    bAutoUpdateLuaDrivenAnimation = false;
-    DefaultLuaAnimModuleName = TEXT("Animation.Sekiro.ABP_Sekiro");
     RootMotionMode = ERootMotionMode::RootMotionFromEverything;
+    bActorYawOwnedByRootMotion = false;
 }
 
+/**
+ * 初始化动画实例并缓存所属角色、移动组件、相机组件和输入组件。
+ * 由 UE 动画生命周期在游戏线程调用；会更新本实例持有的 UObject 引用，不执行 Pose 求值。
+ */
 void USKAnimInstance::NativeInitializeAnimation()
 {
     Super::NativeInitializeAnimation();
     RootMotionMode = ERootMotionMode::RootMotionFromEverything;
-    OwnerCharacter = Cast<ASKCharacter>(TryGetPawnOwner());
-    if (OwnerCharacter)
-    {
-        OwnerMovement = Cast<USKMovementComponent>(OwnerCharacter->GetCharacterMovement());
-        OwnerCameraManager = OwnerCharacter->FindComponentByClass<USKCameraManagerComponent>();
-        OwnerInputManager = OwnerCharacter->FindComponentByClass<USKInputManager>();
-    }
+    CacheOwnerReferences();
 }
 
+/**
+ * 采集角色当前帧的移动、输入、相机、步态和转向数据，供 AnimBlueprint 只读消费。
+ * 由 UE 动画生命周期在游戏线程调用；不会主动更新脚本状态机，也不直接修改角色移动。
+ *
+ * @param DeltaSeconds 当前动画更新步长，单位为秒；非正值仍会刷新瞬时采集数据。
+ */
 void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
     Super::NativeUpdateAnimation(DeltaSeconds);
 
     if (!OwnerCharacter)
     {
-        OwnerCharacter = Cast<ASKCharacter>(TryGetPawnOwner());
-        if (OwnerCharacter)
-        {
-            OwnerMovement = Cast<USKMovementComponent>(OwnerCharacter->GetCharacterMovement());
-            OwnerCameraManager = OwnerCharacter->FindComponentByClass<USKCameraManagerComponent>();
-            OwnerInputManager = OwnerCharacter->FindComponentByClass<USKInputManager>();
-        }
+        CacheOwnerReferences();
     }
     if (!OwnerCharacter) return;
 
+    const bool bWasInAir = bIsInAir;
+    const bool bWasCrouching = bIsCrouching;
     const ESKAnimRotationMode PreviousRotationMode = RotationMode;
 
     // ── Locomotion ────────────────────────────────────────────
@@ -144,6 +254,7 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     }
 
     Velocity = OwnerCharacter->GetVelocity();
+    VerticalVelocity = Velocity.Z;
     Speed = Velocity.Size2D();
     Acceleration = CharacterMovement ? CharacterMovement->GetCurrentAcceleration() : FVector::ZeroVector;
     AccelerationAmount = Acceleration.Size2D();
@@ -155,8 +266,8 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     bHasMovementInput = MovementInputAmount > 0.1f;
     bIsAccelerating = AccelerationAmount > 3.f;
 
-    Angle = UKismetAnimationLibrary::CalculateDirection(
-        Velocity, OwnerCharacter->GetActorRotation());
+    const FRotator ActorRotation = OwnerCharacter->GetActorRotation();
+    Angle = UKismetAnimationLibrary::CalculateDirection(Velocity, ActorRotation);
     Direction = SKConvertAngleToDirection(Angle);
 
     if (OwnerCameraManager)
@@ -164,18 +275,33 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
         bIsLockedOn = OwnerCameraManager->IsLockedOn();
         bIsSprintCameraAligning = OwnerCameraManager->IsSprintCameraAligning();
         CameraMode = OwnerCameraManager->GetCameraMode();
-        MoveDirectionAngle = OwnerCameraManager->GetMoveDirectionAngle();
     }
     else
     {
         bIsLockedOn = false;
         bIsSprintCameraAligning = false;
         CameraMode = ESKCameraMode::Free;
+    }
+
+    ActorYaw = ActorRotation.Yaw;
+    bHasDesiredMoveYaw = SKResolveMoveIntentYaw(OwnerCharacter, MoveIntent, DesiredMoveYaw);
+    if (bHasDesiredMoveYaw)
+    {
+        MoveDirectionAngle = FMath::FindDeltaAngleDegrees(ActorYaw, DesiredMoveYaw);
+    }
+    else if (!Velocity.IsNearlyZero())
+    {
+        DesiredMoveYaw = ActorYaw;
         MoveDirectionAngle = Angle;
+    }
+    else
+    {
+        DesiredMoveYaw = ActorYaw;
+        MoveDirectionAngle = 0.f;
     }
 
     DirectionDelta = FMath::FindDeltaAngleDegrees(Angle, MoveDirectionAngle);
-    AimYawDelta = FMath::FindDeltaAngleDegrees(OwnerCharacter->GetActorRotation().Yaw, OwnerCharacter->GetControlRotation().Yaw);
+    AimYawDelta = FMath::FindDeltaAngleDegrees(ActorYaw, OwnerCharacter->GetControlRotation().Yaw);
     RootYawOffset = 0.f;
 
     if (bIsInAir)
@@ -189,6 +315,11 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     else
     {
         MovementState = ESKAnimMovementState::Grounded;
+    }
+
+    if (!bWasInAir && bIsInAir)
+    {
+        bJumpStartedCrouched = bWasCrouching;
     }
 
     Stance = bIsCrouching ? ESKAnimStance::Crouching : ESKAnimStance::Standing;
@@ -206,7 +337,9 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
         RotationMode = ESKAnimRotationMode::VelocityDirection;
     }
 
-    DesiredGait = SKConvertMovementTierToGait(MovementTier, bHasMovementInput || bIsMoving);
+    DesiredGait = bIsCrouching || MovementTier == ESKMovementTier::Crouch
+        ? SKResolveCrouchGait(bHasMovementInput, MovementInputAmount, Gait, OwnerInputManager)
+        : SKConvertMovementTierToGait(MovementTier, bHasMovementInput || bIsMoving);
     if (!SKIsMovingGait(DesiredGait))
     {
         Gait = ESKAnimGait::Idle;
@@ -308,23 +441,35 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
         GroundedEntryState = ESKAnimGroundedEntryState::Cycle;
     }
 
-    // ── FrameFlags 从动画曲线读取（供 ABP 消费） ──────────────
-    UAnimMontage* CurrentMontage = GetCurrentActiveMontage();
-    if (CurrentMontage)
+}
+
+/**
+ * 查询项目动画图是否声明接管角色世界 Yaw。
+ * 本函数只读取动画实例字段，可在游戏线程的相机和移动更新中调用，不修改任何状态。
+ *
+ * @return 动画图已接管角色世界 Yaw 时返回 true；默认返回 false。
+ */
+bool USKAnimInstance::IsActorYawOwnedByRootMotion() const
+{
+    return bActorYawOwnedByRootMotion;
+}
+
+/**
+ * 从当前动画 Pawn 缓存角色以及动画数据采集所需的项目组件。
+ * 由动画生命周期在游戏线程调用；成功时替换缓存引用，Pawn 不是 ASKCharacter 时清空全部缓存。
+ */
+void USKAnimInstance::CacheOwnerReferences()
+{
+    OwnerCharacter = Cast<ASKCharacter>(TryGetPawnOwner());
+    if (!OwnerCharacter)
     {
-        float CurveValue = 0.f;
-        if (GetCurveValue(TEXT("FrameFlags"), CurveValue))
-        {
-            int32 Mask = FMath::RoundToInt(CurveValue);
-            bDisableTurning  = (Mask & (1 << (uint8)ESKFrameFlag::DisableTurning)) != 0;
-            bDisableMovement = (Mask & (1 << (uint8)ESKFrameFlag::DisableMovement)) != 0
-                            || (Mask & (1 << (uint8)ESKFrameFlag::LimitMoveSpeedWalk)) != 0
-                            || (Mask & (1 << (uint8)ESKFrameFlag::LimitMoveSpeedDash)) != 0;
-            bCanDeflect      = (Mask & (1 << (uint8)ESKFrameFlag::EnableParry)) != 0
-                            && (Mask & (1 << (uint8)ESKFrameFlag::DisableParry)) == 0;
-            bInvincible      = (Mask & (1 << (uint8)ESKFrameFlag::Invincible)) != 0;
-        }
+        OwnerMovement = nullptr;
+        OwnerCameraManager = nullptr;
+        OwnerInputManager = nullptr;
+        return;
     }
 
-    UpdateLuaDrivenAnimation(DeltaSeconds);
+    OwnerMovement = Cast<USKMovementComponent>(OwnerCharacter->GetCharacterMovement());
+    OwnerCameraManager = OwnerCharacter->FindComponentByClass<USKCameraManagerComponent>();
+    OwnerInputManager = OwnerCharacter->FindComponentByClass<USKInputManager>();
 }

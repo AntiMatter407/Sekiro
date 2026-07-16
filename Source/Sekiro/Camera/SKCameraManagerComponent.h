@@ -142,6 +142,9 @@ public:
     float NormalizeDeltaYaw(float FromYaw, float ToYaw) const; // 计算标准化 Yaw 差
 
     UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
+    bool IsActorYawOwnedByRootMotion() const;             // 动画实例的旋转策略是否由 RootMotion 驱动
+
+    UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
     void ApplyActorYawForScript(float TargetYaw, float InterpSpeed, float DeltaTime); // 脚本应用角色 Yaw
 
     UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
