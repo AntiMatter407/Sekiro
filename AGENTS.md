@@ -52,6 +52,7 @@ Tools/                  # 外部工具（Yabber, FlverToFbx, texconv）
 **核心架构原则**：C++ 只提供通用接口（UFUNCTION），脚本层负责编排具体工作流。
 **新增或修改 `Content/Script/**/*.lua` 时，必须先读取并遵守 `Docs/lua-code-style.md`，并补齐必要中文注释。**
 **需要修改 `.h` / `.cpp` 时，必须先读取 cpp-workflow.md 然后按规则执行。**
+**新增 C++ 函数时，完整的职责、参数、返回值和线程约束注释以 `.cpp` 实现处为准；`.h` 只保留必要的接口摘要、UHT 提示，以及无独立实现的模板/内联/纯虚函数文档。**
 **操作 UE 编辑器时，必须先读取 aibridge-workflow.md 然后按规则执行。**
 **分析未知的 Bug/问题/错误时，必须先读取 bug-fix-workflow.md 然后按规则执行。**
 
