@@ -38,7 +38,7 @@
 |  | 5400-5403 | 不同方向的蹲到蹲跑 | `Anim_Sekiro_Crouch_RunStart_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 5410-5413 | 不同方向的蹲到蹲跑 | `Anim_Sekiro_Crouch_RunStart2_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 5500-5503 | 不同方向蹲跑 | `Anim_Sekiro_Crouch_RunLoop_Fwd` / `_Bwd` / `_L` / `_R` |
-|  | 5600-5603 | 不同方向蹲转向前面 | `Anim_Sekiro_Crouch_TurnL` / `_TurnR` |
+|  | 5600-5603 | 不同方向蹲跑到停止 | `Anim_Sekiro_Crouch_RunStop_Fwd` / `_Bwd` / `_L` / `_R` |
 |  | 20000 | 腿放在的悬挂 | `Anim_Sekiro_Hang_Idle` |
 |  | 20010 | 腿曲着悬挂 | `Anim_Sekiro_Hang_CrouchIdle` |
 |  | 20102-20103/20112-20113 | 腿放在/曲着悬挂左右移动 | `Anim_Sekiro_Hang_Move_L` / `_R` / `_CrouchL` / `_CrouchR` |

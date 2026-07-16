@@ -2,6 +2,8 @@
 
 本文定义一套确定版离线标注方案，用于从动画本身生成 Lua 动画状态机需要的 Locomotion 曲线。目标是替代之前依赖残留 TAE 曲线或手写 normalized time 的方案，让 `Start -> Cycle -> Stop -> Idle` 的过渡由动画姿势、脚步相位和匹配质量驱动。
 
+曲线名称、稳定语义、运行时读取方式和新增曲线登记规则统一以 [动画曲线生成与使用手册](../animation-curve-authoring-guide.md) 为准。本文只负责 Locomotion 曲线的离线生成算法和质量标准。
+
 ## 目标
 
 1. 删除旧方案残留曲线后，不再给基础移动动画写 `FrameFlags`、`CancelActions`、`AttackHitbox`。
@@ -14,38 +16,31 @@
 曲线命名遵循两个原则：
 
 1. 尽量少，避免每个动画堆大量布尔曲线。
-2. 不使用 bitmask；整数曲线只作为单值枚举使用。
+2. 不使用 bitmask；过渡条件使用独立布尔曲线，`FootPlant` 才使用单值枚举。
 3. 曲线名表达动画系统语义，而不是某个状态机实现细节。
 
-最终核心只保留 3 条曲线：
+最终核心保留 5 条曲线：
 
 | 曲线名 | 类型 | 用途 |
 | --- | --- | --- |
-| `MoveTransition` | int enum | 当前帧允许的移动状态过渡类型 |
+| `CanEnterLoop` | int bool | Start/Turn/SprintStart 当前帧能否进入 Loop |
+| `CanEnterStop` | int bool | Start/Loop 当前帧能否进入匹配的 Stop |
+| `CanEnterIdle` | int bool | Stop/SprintStop 当前帧能否进入 Idle |
 | `FootPlant` | int enum | 当前稳定触地的脚 |
 | `MovePhase` | float | 当前步态循环相位 |
 
-### MoveTransition
+### CanEnter 曲线
 
-类型：整数曲线，阶梯插值。
+类型：三条独立整数布尔曲线，阶梯插值，值只使用 `0/1`。
 
-用途：当前帧允许哪一种移动状态过渡。
-
-值定义：
-
-| 值 | 含义 |
-| ---: | --- |
-| `0` | `None`，不允许特殊过渡 |
-| `1` | `EnterLoop`，Start/Turn/SprintStart 可以进入 Loop |
-| `2` | `EnterStop`，Loop 可以进入 Stop |
-| `3` | `EnterIdle`，Stop/SprintStop 可以进入 Idle |
+用途：直接表达目标状态当前是否开放，不再把互斥语义压进同一条枚举曲线。
 
 写入规则：
 
-- Start/Turn/SprintStart：从自动匹配到 Loop 的帧开始写 `EnterLoop`，直到动画结束。
-- Loop：只在与目标 Stop 起始姿势和脚步相位匹配的窗口写 `EnterStop`。
+- Start/Turn/SprintStart：从自动匹配到 Loop 的帧开始写 `CanEnterLoop = 1`，直到动画结束；同时在适合取消到 Stop 的触地窗口写 `CanEnterStop = 1`。
+- Loop：只在与目标 Stop 起始姿势和脚步相位匹配的窗口写 `CanEnterStop = 1`。
 - BlendSpace 样本动画各自生成该曲线，运行时按样本权重混合或择优读取。
-- Stop/SprintStop：从自动匹配到 Idle 的帧开始写 `EnterIdle`，直到动画结束。
+- Stop/SprintStop：从自动匹配到 Idle 的帧开始写 `CanEnterIdle = 1`，直到动画结束。
 - 非移动过渡动画不生成该曲线。
 
 ### FootPlant
@@ -70,7 +65,7 @@
 
 类型：浮点曲线，线性插值。
 
-用途：描述步态周期相位，供 Loop -> Stop、BlendSpace 调试和后续同步使用。
+用途：描述步态周期相位，供 Start -> Loop、Loop -> Stop 与 BlendSpace 方向切换同步使用。
 
 值域：
 
@@ -185,7 +180,7 @@
 | 姿势差 | `0.15` | 关键骨骼局部姿势差 |
 | 相位一致性 | `0.10` | 脚步相位接近 |
 
-选择最低分帧作为 `MoveTransition = EnterLoop` 的开启帧。若置信度低于阈值，不写曲线。
+选择最低分帧作为 `CanEnterLoop = 1` 的开启帧。若置信度低于阈值，不写曲线。
 
 推荐阈值：
 
@@ -194,19 +189,19 @@
 | `StartSearchMinNormalizedTime` | `0.35` |
 | `EnterLoopMinConfidence` | `0.70` |
 
-### 5. Loop 到 Stop 匹配
+### 5. Start/Loop 到 Stop 匹配
 
-对每组 `loop -> stop`：
+对每组 `start/loop -> stop`：
 
 1. 提取 Stop 前 3 到 5 帧作为 Stop 入口姿势。
-2. 遍历 Loop 全周期帧，找与 Stop 入口姿势最接近的相位。
-3. 只在匹配相位附近写 `MoveTransition = EnterStop` 窗口。
+2. 遍历 Start 可取消区间或 Loop 全周期帧，找与 Stop 入口姿势最接近的相位。
+3. 只在匹配相位附近写 `CanEnterStop = 1` 窗口。
 
 窗口规则：
 
 - 优先使用 `MovePhase`，默认相位窗口半径 `0.08`。
 - 如果没有相位曲线，则退化为同侧脚触地窗口。
-- 如果两种方式都失败，不写 `MoveTransition = EnterStop`，报告低置信度。
+- 如果两种方式都失败，不写 `CanEnterStop`，报告低置信度。
 
 推荐阈值：
 
@@ -221,7 +216,7 @@
 
 1. 只搜索 Stop 后半段。
 2. 找最接近 Idle 姿势且 root/pelvis 速度接近 0 的帧。
-3. 从该帧开始写 `MoveTransition = EnterIdle` 到动画结束。
+3. 从该帧开始写 `CanEnterIdle = 1` 到动画结束。
 
 推荐阈值：
 
@@ -279,10 +274,12 @@ Lua 状态机只读曲线，不再猜字符串或硬拼动画名。
 
 规则：
 
-1. `Start -> Cycle`：当前动画 `MoveTransition == EnterLoop` 才允许切。
-2. `Cycle -> Stop`：输入停止后，当前 Loop/BlendSpace 样本 `MoveTransition == EnterStop` 才允许切。
-3. `Stop -> Idle`：当前 Stop `MoveTransition == EnterIdle` 才允许切。
-4. 如果某动画没有曲线，才走临时 fallback；fallback 必须在 debug 中明确标红，方便后续补标注。
+1. `Start -> Stop`：输入停止后，当前 Start 的 `CanEnterStop >= 0.5` 才允许切。
+2. `Start -> Cycle`：当前动画 `CanEnterLoop >= 0.5` 才允许切，并把源 `MovePhase` 映射为目标 Cycle 的起播位置。
+3. `Cycle -> Stop`：输入停止后，当前 Loop/BlendSpace 样本 `CanEnterStop >= 0.5` 才允许切。
+4. `Cycle` 更换方向 BlendSpace：读取源圆周相位，在目标资产中反查匹配位置；曲线缺失才退回归一化时间保持。
+5. `Stop -> Idle`：当前 Stop `CanEnterIdle >= 0.5` 才允许切。
+6. 如果某动画没有曲线，才走临时 fallback；fallback 必须在 debug 中明确标红，方便后续补标注。
 
 ## 实现阶段
 
@@ -320,7 +317,7 @@ Sprint 只有前向动画，因此 Stop/ToRun 重点使用角色朝向修正和�
 
 ### Phase 4：Step
 
-Step 暂不纳入 Phase 1 的移动过渡曲线生成；后续如果要接入，只写 `MoveTransition` / `FootPlant` / `MovePhase` 这三条曲线，不新增 Step 专用曲线。
+Step 暂不纳入 Phase 1；后续根据目标状态写已有 `CanEnterLoop` / `CanEnterIdle`，并按需要补 `FootPlant` / `MovePhase`，不新增 Step 专用曲线。
 
 ## 成功标准
 

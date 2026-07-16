@@ -2,6 +2,7 @@
 
 > 创建日期：2026-07-02
 > 关联文档：[AnimBlueprint 方案](sekiro-anim-blueprint.md)
+> 锁定动画详细设计：[Sekiro 锁定状态 Locomotion 设计](sekiro-lockon-locomotion.md)
 >
 > 目标：还原只狼原版“非锁定自由移动 / 锁定环绕移动 / 冲刺强制前向”的角色朝向、摄像机和动画蓝图协作规则。
 
