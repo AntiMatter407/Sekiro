@@ -1,23 +1,9 @@
-local LuaComponent = require("Gameplay.Base.LuaComponent")
+-- Lua 类型：UnLua UObject 运行时类。self 是真实的 USKLockOnIndicatorComponent，可直接读写 UPROPERTY 并调用 UFUNCTION。
+local LuaLog = require("Gameplay.Base.LuaLog")
 
-local SKLockOnIndicator = LuaComponent:Extend("SKLockOnIndicator", {
-    Debug = false,
-
-    TargetHeightOffset = 24.0,
-    IndicatorSize = 46.0,
-    IndicatorThickness = 2.0,
-    IndicatorOpacity = 1.0,
-    IndicatorColorR = 1.0,
-    IndicatorColorG = 0.35,
-    IndicatorColorB = 0.05,
-    IndicatorColorA = 1.0,
-
-    NearDistance = 280.0,
-    FarDistance = 1500.0,
-    NearScale = 1.12,
-    FarScale = 0.82,
-    PositionInterpSpeed = 24.0,
-})
+---@class SKLockOnIndicator: USKLockOnIndicatorComponent
+local SKLockOnIndicator = UnLua.Class()
+local Debug = false
 
 ---把数值限制在给定闭区间内。
 ---@param value number 需要限制范围的数值。
@@ -45,11 +31,28 @@ local function lerp(from_value, to_value, alpha)
     return from_value + (to_value - from_value) * alpha
 end
 
----在 Construct 生命周期阶段初始化本模块需要的缓存、绑定或动画层配置。
----@param _context userdata|table|nil UnLua 或动画宿主传入的调用上下文；当前函数保留该参数以匹配 C++ 回调签名。
+---在 UnLua 完成 UObject 绑定后初始化锁定点脚本状态。
+---@param _initializer table|nil UnLua 可选初始化表；当前模块不读取该参数。
 ---@return nil 该生命周期入口只执行初始化，不返回业务值。
-function SKLockOnIndicator:Construct(_context)
-    self:LogDebug("Construct", "lock-on indicator lua host constructed")
+function SKLockOnIndicator:Initialize(_initializer)
+    self.TargetHeightOffset = 24.0
+    self.IndicatorSize = 46.0
+    self.IndicatorThickness = 2.0
+    self.IndicatorOpacity = 1.0
+    self.IndicatorColorR = 1.0
+    self.IndicatorColorG = 0.35
+    self.IndicatorColorB = 0.05
+    self.IndicatorColorA = 1.0
+    self.NearDistance = 280.0
+    self.FarDistance = 1500.0
+    self.NearScale = 1.12
+    self.FarScale = 0.82
+    self.PositionInterpSpeed = 24.0
+    LuaLog.Debug(
+        Debug,
+        "SKLockOnIndicator",
+        "Initialize",
+        "lock-on indicator lua host initialized")
 end
 
 ---隐藏锁定点并清除屏幕位置平滑缓存，重新显示时从目标真实位置开始。
@@ -104,10 +107,9 @@ function SKLockOnIndicator:ApplyIndicatorStyle()
 end
 
 ---执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
----@param _context userdata|table|nil UnLua 或动画宿主传入的调用上下文；当前函数保留该参数以匹配 C++ 回调签名。
 ---@param delta_seconds number|nil 本帧增量时间，单位为秒；缺失时按 0 处理。
 ---@return boolean handled 始终返回 true；目标无效时会先隐藏锁定点。
-function SKLockOnIndicator:Tick(_context, delta_seconds)
+function SKLockOnIndicator:Tick(delta_seconds)
     self:RefreshCachedLockOnComponents()
     if not self:HasOwnerCharacter() or not self:IsLocalPlayerControlled() then
         self:HideIndicator()
@@ -136,4 +138,4 @@ function SKLockOnIndicator:Tick(_context, delta_seconds)
     return true
 end
 
-return SKLockOnIndicator:Export()
+return SKLockOnIndicator

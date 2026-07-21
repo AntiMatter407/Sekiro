@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- UE StateMachine AnimNode 的 Lua 编译期抽象。
 -- 节点位于 Pose Graph、输出 Pose，并拥有一个保存 Entry/State/Transition 的内部 Graph。
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")
@@ -7,8 +8,24 @@ local LuaAnimStateMachineGraph = require("Animation.Compiler.LuaAnimStateMachine
 
 ---@class LuaStateMachineNode: LuaAnimNode
 ---@field OwnedGraph LuaAnimStateMachineGraph 节点独占的内部状态机 Graph。
+---@field LayoutStyle string 内部状态机未显式放置 State 的自动排版风格。
 ---@field Pose LuaAnimPin 状态机最终姿势输出 Pin。
 local LuaStateMachineNode = LuaAnimNode:Extend("LuaStateMachineNode")
+
+---把 StateMachine 节点的 LayoutStyle 配置转发给 OwnedGraph，其余字段继续遵守 AnimNode 属性契约。
+---@param instance LuaStateMachineNode 正在接收配置的状态机节点。
+---@param key string 待写字段名。
+---@param value any Lua 声明值。
+---@return nil result LayoutStyle 写入内部 Graph，其余字段交回基类处理。
+local function assign_state_machine_field(instance, key, value)
+    if key == "LayoutStyle" and rawget(instance, "OwnedGraph") ~= nil then
+        instance.OwnedGraph.LayoutStyle = value
+        return
+    end
+    LuaAnimNode.__newindex(instance, key, value)
+end
+
+LuaStateMachineNode.__newindex = assign_state_machine_field
 
 ---初始化 StateMachine AnimNode，并在所属 Layer 登记它拥有的内部状态机 Graph。
 ---@param config LuaStateMachineNodeConfig Graph、节点名和源码位置等构造参数。
@@ -52,6 +69,14 @@ end
 ---@return LuaAnimTransition transition 新建且可直接配置混合属性的 Transition 对象。
 function LuaStateMachineNode:Transition(key, source_state_name, target_state_name, settings)
     return self.OwnedGraph:Transition(key, source_state_name, target_state_name, settings)
+end
+
+---创建内部 StateMachine Graph 的布局分区，使状态拓扑与编辑器排版在同一声明函数配置。
+---@param name string 内部状态机 Graph 中唯一的布局分区名。
+---@param settings LuaGraphLayoutGridSettings|nil 分区区域、单元格间距和风格覆盖。
+---@return LuaGraphLayoutGrid grid 可继续 Place 本状态机 State 的布局分区。
+function LuaStateMachineNode:Grid(name, settings)
+    return self.OwnedGraph:Grid(name, settings)
 end
 
 return LuaStateMachineNode

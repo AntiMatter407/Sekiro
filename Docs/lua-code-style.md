@@ -41,7 +41,7 @@ Content/Script/Gameplay/Sekiro/Input/SKInputManager.lua
 
 每个 Lua 文件按以下顺序组织：
 
-1. 模块说明注释。
+1. Lua 类型说明和模块职责注释。
 2. `require` 依赖。
 3. 本模块类表 / 数据表 / 常量表。
 4. `local` helper 函数。
@@ -49,34 +49,43 @@ Content/Script/Gameplay/Sekiro/Input/SKInputManager.lua
 6. C++ / UnLua 调用的 override 方法，例如 `Tick`、`OnMove`、`BeginPlay`。
 7. `return`。
 
-类模块推荐写法：
+每个文件第一条有效注释必须明确所属类型，禁止省略：
 
 ```lua
+-- Lua 类型：UnLua UObject 运行时类。self 是真实的 C++/蓝图实例，可直接读写 UPROPERTY 并调用 UFUNCTION。
+-- Lua 类型：纯 Lua 类/数据/工具模块。本文件不绑定 UObject，self（如有）只表示 Lua 表实例。
+-- Lua 类型：动画蓝图编译描述模块。编译期对象是纯 Lua；运行时规则通过显式 Inst 访问真实 AnimInstance。
+```
+
+同一个文件只选择一条最符合实际职责的类型说明。不得把纯 Lua 编译对象写成 UObject，也不得为已有 UObject 的运行时类再创建代理实例。
+
+UnLua UObject 运行时类推荐写法：
+
+```lua
+-- Lua 类型：UnLua UObject 运行时类。self 是真实的 USKInputManager，可直接读写 UPROPERTY 并调用 UFUNCTION。
 -- 管理玩家输入到角色意图的转换。
 -- 本模块只编排 C++ 暴露的输入、移动和缓冲接口，不直接操作 Enhanced Input 资产。
-local LuaComponent = require("Gameplay.Base.LuaComponent")
 
----@class SKInputManager: LuaComponent
+---@class SKInputManager: USKInputManager
 ---@field Debug boolean 是否输出输入调试信息。
-local SKInputManager = LuaComponent:Extend("SKInputManager", {
-    Debug = false,
-})
+local SKInputManager = UnLua.Class()
+SKInputManager.Debug = false
 
 local function clamp(value, min_value, max_value)
     return math.max(min_value, math.min(value, max_value))
 end
 
-function SKInputManager:Construct(_context)
-    self:LogDebug("Construct", "input lua host constructed")
+function SKInputManager:Initialize(_initializer)
+    self.SprintHoldTime = 0.0
 end
 
-function SKInputManager:Tick(_context, delta_seconds)
+function SKInputManager:Tick(delta_seconds)
     local delta = delta_seconds or 0
     self:SetDodgeHoldTime(self:GetDodgeHoldTime() + delta)
     return true
 end
 
-return SKInputManager:Export()
+return SKInputManager
 ```
 
 纯数据模块推荐写法：
@@ -107,7 +116,7 @@ return M
 
 ## 四、命名规范
 
-- 类表 / 模块表使用 `PascalCase`：`SKInputManager`、`LuaComponent`、`GroundLocomotion`。
+- 类表 / 模块表使用 `PascalCase`：`SKInputManager`、`LuaAnimNode`、`GroundLocomotion`。
 - 项目 Gameplay Lua 类沿用 `SK` 前缀：`SKHUD`、`SKUIManager`、`SKCameraManager`。
 - 动画蓝图入口使用 `ABP_角色名`：`ABP_Sekiro`。
 - 局部变量和局部 helper 函数使用 `snake_case`：`read_context_index`、`move_x`、`delta_seconds`。
@@ -330,19 +339,23 @@ local created = self:CreateWidgetByPath(
 
 ## 八、UnLua 与 C++ 桥接
 
-Gameplay 组件类使用 `LuaComponent:Extend`。Lua 文件按“C++ 子类 override”的方式编写：C++ 调用 `Tick`、`OnMove`、`BeginPlay` 时，Lua 类中提供同名方法即可。
+已有 C++ 或蓝图实例的 Gameplay 类统一返回 `UnLua.Class()`。UnLua 将 Lua 类表绑定到真实 UObject，因此方法内的 `self` 就是该 UObject，不再创建 `ContextObject`、代理表或弱引用包装实例。
 
-- 不写导出函数列表。`LuaComponent:Export()` 会自动导出类上的 public 方法。
+- 模块直接 `return ClassName`，不写导出函数列表，也不调用 `:Export()`。
+- `self.Property = Value` 直接写入同名 `UPROPERTY`；`self:Function(...)` 直接调用同名 `UFUNCTION`。字段不存在于反射系统时，赋值才作为该 UObject 对应 Lua 实例的私有状态。
+- `Initialize(_initializer)` 可能在 UObject 仍处于 `PendingConstruction` 时执行。这里仅初始化 Lua 私有字段，不得覆盖 `UPROPERTY`，也不得调用依赖完整对象状态的 `UFUNCTION`。
+- C++ 或蓝图默认值的 Lua 覆盖统一写在 `ReceiveBeginPlay()`；Actor/HUD 使用引擎实际派发的 `BeginPlay()`。例如 `self.MaxLockOnRange = 4000.0` 应在 `ReceiveBeginPlay()` 中执行，避免随后被 C++ 成员初始化或蓝图模板复制覆盖。
+- 不要在 Lua 类表上声明与 `UPROPERTY` 同名的字段，否则类字段可能遮蔽反射属性。
+- C++ 手动调用模块函数时已经把 UObject 作为第一个 Lua 参数传入，冒号方法会自动把它接收为 `self`。Lua 签名只声明业务参数，例如 C++ `Call(this, DeltaTime)` 对应 `Tick(delta_seconds)`，不得再增加 `_context`。
 - 不写旧前缀方法。输入、摄像机、UI 等事件逻辑应直接写在 `Tick`、`OnMove`、`OnDodgeCompleted`、`BeginPlay` 这类方法里。
 - 禁止为了“适配签名”额外套一层 `OnMove -> HandleMove -> Helper` 的业务转发链。只有确实被多个入口复用、并且名字能表达独立语义的代码，才允许抽成 `local` 函数或类方法。
-- `Construct` 只负责 Lua 实例初始化；不要把每帧事件再转发到同名空壳方法里。
-- 函数名来自变量或可能冲突时，用 `self:CallCpp(function_name, ...)` 显式转发。
-- 直接访问 C++ 暴露字段或方法前，确认字段来自当前上下文、运行时上下文或基类代理。
+- 不提供 `GetContextObject()`、`CallCpp()` 一类转发接口。类内直接使用真实 `self`；确需动态函数名时应优先改成有明确语义的 C++ 接口。
+- 只有动画编译器、IR、数据表和工具库继续使用纯 Lua 类系统；它们的 `self` 不是 UObject。
 
 override 示例：
 
 ```lua
-function SKCameraManager:Tick(_context, delta_seconds)
+function SKCameraManager:Tick(delta_seconds)
     self:RefreshCachedCameraComponents()
 
     if self:IsLockOnEnabled() then
@@ -412,13 +425,16 @@ start_to_cycle.PriorityOrder = 0
 start_to_cycle.BlendMode = "Linear"
 ```
 
-## 十、UI / 输入 / 摄像机 Lua 约定
+## 十、UI / 输入 / Movement / 摄像机 Lua 约定
 
 - 存在按键先后顺序歧义的组合输入统一使用 `Gameplay.Base.InputChordResolver`，具体规则见 [Lua 组合输入编写手册](input-chord-authoring-guide.md)。
 - Dodge、Step、Sprint 这类“按下边沿触发动作、Held 升级状态、方向持续驱动 Movement”的输入不属于组合键，不得加入人为时间窗口。
 - UI 层名、ZOrder、颜色、距离缩放等配置集中在文件顶部的表里。
 - 输入事件只转换为“意图”和“缓冲”，不要在输入模块里直接写复杂战斗结算。
-- 摄像机模块只处理视角模式、旋转设置和目标朝向，不直接写角色移动规则。
+- `Source/Sekiro` 中凡是可以安全脚本化的项目策略，优先迁入 Lua；C++ 只保留 UE 生命周期承载、物理/碰撞/复制、线程边界和语义化桥接接口。
+- Movement Lua 负责速度档位映射、ActorYaw 所有权、自由/冲刺/锁定朝向选择和转向前方向快照；`UCharacterMovementComponent` 继续负责物理、碰撞、Root Motion 应用和网络预测。
+- 摄像机模块只处理视角模式、ControllerYaw、视角输入和锁定目标，不直接写 ActorYaw 或角色移动规则。
+- 同一帧固定为 `Input Lua -> Movement Lua -> Camera Lua -> AnimInstance/Lua AnimBP`；动画需要转身前角度时读取 Movement 发布的快照，不得在角色旋转后重新推导。
 - UI、输入、摄像机调用 C++ 的函数应保持语义化，例如 `SetMovementTierByName`、`ApplyControllerYawForScript`、`SetLockOnIndicatorVisible`。
 - 每个跨系统调用点要通过函数名或注释说明影响范围，避免 Lua 文件之间隐式耦合。
 
@@ -427,12 +443,13 @@ start_to_cycle.BlendMode = "Linear"
 修改 Lua 后至少检查：
 
 - 文件在 `Content/Script/` 下，模块名和 `require` 路径一致。
+- 文件首条有效注释已经声明 Lua 类型，并且与实际 UObject/纯 Lua/动画编译职责一致。
 - 没有新增全局变量。
 - 每个函数和匿名回调都有中文职责说明、完整 `---@param` 和至少一条 `---@return`；无返回值函数显式标注 `---@return nil`。
 - 类、配置和稳定数据表具有可跳转的 `---@class` / `---@alias` 声明，函数签名不使用“`table` + 描述中的类型名”代替真实类型。
 - 运行 `python Script/check_lua_function_docs.py`，确保函数文档覆盖率为 100%。
-- C++ 调用的事件方法使用原名 override，文件中没有导出函数列表，也没有旧前缀方法。
+- C++ 调用的事件方法使用原名 override，参数中没有额外 `_context`，文件中没有包装实例、导出函数列表或旧前缀方法。
 - 动画状态名、资源名、曲线名来自集中数据表。
 - 新增或修改的语义动画曲线已经登记到 `Docs/animation-curve-authoring-guide.md`。
-- Debug `print` 已移除或改为 `LogDebug`。
+- Debug `print` 已移入统一日志工具并受模块调试开关控制。
 - 触碰动画 Lua 时，同时确认 `Docs/lua-anim-blueprint-authoring-guide.md` 的约定没有被破坏。

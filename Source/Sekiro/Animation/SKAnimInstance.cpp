@@ -1,10 +1,14 @@
 ﻿#include "SKAnimInstance.h"
+#include "Animation/AnimNodeBase.h"
 #include "Character/SKCharacter.h"
+#include "Engine/Canvas.h"
 #include "Input/SKInputManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "Animation/AnimEnums.h"
 #include "KismetAnimationLibrary.h"
+#include "UnLua.h"
+#include "UnLuaModule.h"
 
 namespace
 {
@@ -175,31 +179,79 @@ ESKLocomotionDirection SKConvertAngleToDirection(float InAngle)
 }
 
 /**
- * @brief 将相机空间移动输入转换成世界空间的目标移动 Yaw。
+ * @brief 从 UE 5.2 Sequence Player 的节点调试文本中提取原生动画资产名。
  *
- * @param InOwnerCharacter const ASKCharacter*，提供控制器和控制旋转的角色；不能为空。
- * @param InMoveIntent const FVector2D&，屏幕空间移动输入，X 为左右、Y 为前后。
- * @param OutYaw float&，成功时写入目标世界 Yaw，单位为度；失败时保持原值。
- * @return bool，成功获得有效世界方向时返回 true，否则返回 false。
+ * @param DebugLine const FString&，FNodeDebugData 生成的单行节点调试文本。
+ * @param OutNativeAssetName FString&，成功时写入 Sequence Player 当前播放的 UObject 短名。
+ * @return bool，识别到非 NULL 的 Sequence Player 资产名时返回 true。
  */
-bool SKResolveMoveIntentYaw(const ASKCharacter* InOwnerCharacter, const FVector2D& InMoveIntent, float& OutYaw)
+bool SKTryExtractSequenceAssetName(const FString& DebugLine, FString& OutNativeAssetName)
 {
-    if (!InOwnerCharacter) return false;
-    if (InMoveIntent.SizeSquared() < FMath::Square(0.1f)) return false;
+    static const FString SequencePrefix(TEXT("('"));
+    static const FString SequenceSuffix(TEXT("' Play Time:"));
 
-    const AController* Controller = InOwnerCharacter->GetController();
-    if (!Controller) return false;
+    const int32 AssetNameStart = DebugLine.Find(SequencePrefix, ESearchCase::CaseSensitive);
+    if (AssetNameStart == INDEX_NONE) return false;
 
-    const FVector2D NormalizedIntent = InMoveIntent.GetSafeNormal();
-    const FRotator ControlYawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
-    const FVector Forward = FRotationMatrix(ControlYawRotation).GetUnitAxis(EAxis::X);
-    const FVector Right = FRotationMatrix(ControlYawRotation).GetUnitAxis(EAxis::Y);
-    const FVector DesiredDirection = (Forward * NormalizedIntent.Y + Right * NormalizedIntent.X).GetSafeNormal2D();
-    if (DesiredDirection.IsNearlyZero()) return false;
+    const int32 ValueStart = AssetNameStart + SequencePrefix.Len();
+    const int32 AssetNameEnd = DebugLine.Find(SequenceSuffix, ESearchCase::CaseSensitive, ESearchDir::FromStart, ValueStart);
+    if (AssetNameEnd == INDEX_NONE || AssetNameEnd <= ValueStart) return false;
 
-    OutYaw = DesiredDirection.Rotation().Yaw;
-    return true;
+    OutNativeAssetName = DebugLine.Mid(ValueStart, AssetNameEnd - ValueStart);
+    return !OutNativeAssetName.IsEmpty() && OutNativeAssetName != TEXT("NULL");
 }
+
+/**
+ * @brief 通过 Animation.Sekiro.AnimAssets 查询原生动画资产对应的 Lua 语义名。
+ *
+ * @param ContextObject UObject*，用于获取当前游戏世界 UnLua Env 的上下文，不得为空。
+ * @param NativeAssetName const FString&，Sequence Player 输出的 UObject 短名。
+ * @param OutLuaAssetName FString&，成功时写入可用于 Lua 代码定位的资产名。
+ * @return bool，Lua 模块存在且返回非空字符串时返回 true。
+ * @note 仅允许在游戏线程的 ShowDebug Animation 绘制阶段调用，不参与动画更新和 Pose 求值。
+ */
+bool SKTryResolveLuaAnimationAssetName(UObject* ContextObject, const FString& NativeAssetName, FString& OutLuaAssetName)
+{
+    static const FString LuaModuleName(TEXT("Animation.Sekiro.AnimAssets"));
+    static const char* ResolverFunctionName = "GetLuaAssetName";
+
+    if (!ContextObject || NativeAssetName.IsEmpty() || !IsInGameThread()) return false;
+
+    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
+    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(ContextObject);
+    if (!LuaEnv) return false;
+
+    lua_State* LuaState = LuaEnv->GetMainState();
+    if (!LuaState) return false;
+
+    const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
+    UnLua::FLuaRetValues RequireReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
+    if (!RequireReturnValues.IsValid()
+        || RequireReturnValues.Num() == 0
+        || RequireReturnValues[0].GetType() != LUA_TTABLE)
+    {
+        return false;
+    }
+
+    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
+    UnLua::FLuaValue FunctionValue = ModuleTable[ResolverFunctionName];
+    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
+
+    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
+    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(NativeAssetName);
+    if (!FunctionReturnValues.IsValid()
+        || FunctionReturnValues.Num() == 0
+        || FunctionReturnValues[0].GetType() != LUA_TSTRING)
+    {
+        return false;
+    }
+
+    const char* LuaAssetNameUtf8 = FunctionReturnValues[0].Value<const char*>();
+    OutLuaAssetName = LuaAssetNameUtf8 ? UTF8_TO_TCHAR(LuaAssetNameUtf8) : FString();
+    FunctionReturnValues.Pop();
+    return !OutLuaAssetName.IsEmpty();
+}
+
 }
 
 /**
@@ -209,7 +261,6 @@ bool SKResolveMoveIntentYaw(const ASKCharacter* InOwnerCharacter, const FVector2
 USKAnimInstance::USKAnimInstance()
 {
     RootMotionMode = ERootMotionMode::RootMotionFromEverything;
-    bActorYawOwnedByRootMotion = false;
 }
 
 /**
@@ -284,20 +335,24 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     }
 
     ActorYaw = ActorRotation.Yaw;
-    bHasDesiredMoveYaw = SKResolveMoveIntentYaw(OwnerCharacter, MoveIntent, DesiredMoveYaw);
+    bHasDesiredMoveYaw = OwnerMovement && OwnerMovement->HasDesiredMoveYawSnapshot();
     if (bHasDesiredMoveYaw)
     {
+        DesiredMoveYaw = OwnerMovement->GetDesiredMoveYawSnapshot();
+        MoveDirectionAngleBeforeRotation = OwnerMovement->GetMoveDirectionAngleBeforeRotationSnapshot();
         MoveDirectionAngle = FMath::FindDeltaAngleDegrees(ActorYaw, DesiredMoveYaw);
     }
     else if (!Velocity.IsNearlyZero())
     {
         DesiredMoveYaw = ActorYaw;
         MoveDirectionAngle = Angle;
+        MoveDirectionAngleBeforeRotation = Angle;
     }
     else
     {
         DesiredMoveYaw = ActorYaw;
         MoveDirectionAngle = 0.f;
+        MoveDirectionAngleBeforeRotation = 0.f;
     }
 
     DirectionDelta = FMath::FindDeltaAngleDegrees(Angle, MoveDirectionAngle);
@@ -444,14 +499,57 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 }
 
 /**
- * 查询项目动画图是否声明接管角色世界 Yaw。
- * 本函数只读取动画实例字段，可在游戏线程的相机和移动更新中调用，不修改任何状态。
+ * 在 UE 原生 ShowDebug Animation 输出中增加活动 Sequence Player 资产的 Lua 语义名。
+ * 本函数只在游戏线程收集已有节点调试文本并调用 Lua 查表；不修改节点、状态机或 Pose。
  *
- * @return 动画图已接管角色世界 Yaw 时返回 true；默认返回 false。
+ * @param DisplayDebugManager FDisplayDebugManager&，UE 提供的当前帧调试文本绘制器。
+ * @param Indent float&，UE 当前调试层级的水平缩进；本函数不修改其持久值。
  */
-bool USKAnimInstance::IsActorYawOwnedByRootMotion() const
+void USKAnimInstance::DisplayDebugInstance(FDisplayDebugManager& DisplayDebugManager, float& Indent)
 {
-    return bActorYawOwnedByRootMotion;
+    Super::DisplayDebugInstance(DisplayDebugManager, Indent);
+
+#if ENABLE_DRAW_DEBUG
+    if (!IsInGameThread()) return;
+
+    DebugDataCounter.Increment();
+    FNodeDebugData NodeDebugData(this);
+    GatherDebugData(NodeDebugData);
+    TArray<FNodeDebugData::FFlattenedDebugData> FlattenedData = NodeDebugData.GetFlattenedDebugData();
+
+    TSet<FString> VisitedNativeAssetNames;
+    TArray<TPair<FString, FString>> ResolvedAssetNames;
+    for (FNodeDebugData::FFlattenedDebugData& Line : FlattenedData)
+    {
+        if (!Line.IsOnActiveBranch()) continue;
+
+        FString NativeAssetName;
+        if (!SKTryExtractSequenceAssetName(Line.DebugLine, NativeAssetName)
+            || VisitedNativeAssetNames.Contains(NativeAssetName))
+        {
+            continue;
+        }
+
+        VisitedNativeAssetNames.Add(NativeAssetName);
+        FString LuaAssetName;
+        if (SKTryResolveLuaAnimationAssetName(this, NativeAssetName, LuaAssetName))
+        {
+            ResolvedAssetNames.Emplace(MoveTemp(NativeAssetName), MoveTemp(LuaAssetName));
+        }
+    }
+
+    if (ResolvedAssetNames.IsEmpty()) return;
+
+    DisplayDebugManager.DrawString(TEXT("Lua Animation Assets"), Indent);
+    for (const TPair<FString, FString>& AssetNamePair : ResolvedAssetNames)
+    {
+        const FString DebugText = FString::Printf(
+            TEXT("%s -> %s"),
+            *AssetNamePair.Key,
+            *AssetNamePair.Value);
+        DisplayDebugManager.DrawString(DebugText, Indent + 4.f);
+    }
+#endif
 }
 
 /**

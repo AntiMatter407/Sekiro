@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 ---@class LuaTransitionGateExpression
 ---@field Type string Gate 节点类型。
 ---@field Name string 曲线名；非曲线节点为空字符串。

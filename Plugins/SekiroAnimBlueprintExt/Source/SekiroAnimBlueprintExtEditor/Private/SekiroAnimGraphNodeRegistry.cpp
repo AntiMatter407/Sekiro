@@ -11,7 +11,7 @@ namespace SekiroAnimGraphNodeRegistryPrivate
     TArray<FSekiroAnimIRNodeContract> BuildContracts()
     {
         TArray<FSekiroAnimIRNodeContract> Contracts;
-        Contracts.Reserve(13);
+        Contracts.Reserve(20);
 
         FSekiroAnimIRNodeContract& OutputPose = Contracts.AddDefaulted_GetRef();
         OutputPose.NodeType = SekiroAnimGraphIRNames::OutputPoseNode;
@@ -93,6 +93,175 @@ namespace SekiroAnimGraphNodeRegistryPrivate
         InertialPose.Direction = ESekiroAnimIRPinDirection::Output;
         InertialPose.DataType = SekiroAnimGraphIRNames::PoseData;
         InertialPose.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRNodeContract& LocalToComponent = Contracts.AddDefaulted_GetRef();
+        LocalToComponent.NodeType = SekiroAnimGraphIRNames::LocalToComponentSpaceNode;
+        LocalToComponent.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_LocalToComponentSpace"));
+        LocalToComponent.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        LocalToComponent.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& LocalPoseInput = LocalToComponent.Pins.AddDefaulted_GetRef();
+        LocalPoseInput.Name = TEXT("LocalPose");
+        LocalPoseInput.Direction = ESekiroAnimIRPinDirection::Input;
+        LocalPoseInput.DataType = SekiroAnimGraphIRNames::PoseData;
+        FSekiroAnimIRPinContract& ComponentPoseOutput = LocalToComponent.Pins.AddDefaulted_GetRef();
+        ComponentPoseOutput.Name = TEXT("ComponentPose");
+        ComponentPoseOutput.Direction = ESekiroAnimIRPinDirection::Output;
+        ComponentPoseOutput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        ComponentPoseOutput.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRNodeContract& ComponentToLocal = Contracts.AddDefaulted_GetRef();
+        ComponentToLocal.NodeType = SekiroAnimGraphIRNames::ComponentToLocalSpaceNode;
+        ComponentToLocal.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_ComponentToLocalSpace"));
+        ComponentToLocal.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        ComponentToLocal.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& ComponentPoseInput = ComponentToLocal.Pins.AddDefaulted_GetRef();
+        ComponentPoseInput.Name = TEXT("ComponentPose");
+        ComponentPoseInput.Direction = ESekiroAnimIRPinDirection::Input;
+        ComponentPoseInput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPinContract& LocalPoseOutput = ComponentToLocal.Pins.AddDefaulted_GetRef();
+        LocalPoseOutput.Name = TEXT("Pose");
+        LocalPoseOutput.Direction = ESekiroAnimIRPinDirection::Output;
+        LocalPoseOutput.DataType = SekiroAnimGraphIRNames::PoseData;
+        LocalPoseOutput.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRNodeContract& OrientationWarping = Contracts.AddDefaulted_GetRef();
+        OrientationWarping.NodeType = SekiroAnimGraphIRNames::OrientationWarpingNode;
+        OrientationWarping.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimationWarpingEditor.AnimGraphNode_OrientationWarping"));
+        OrientationWarping.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        OrientationWarping.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& OrientationComponentPose = OrientationWarping.Pins.AddDefaulted_GetRef();
+        OrientationComponentPose.Name = TEXT("ComponentPose");
+        OrientationComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPinContract& OrientationAngle = OrientationWarping.Pins.AddDefaulted_GetRef();
+        OrientationAngle.Name = TEXT("OrientationAngle");
+        OrientationAngle.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationAngle.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& OrientationAlpha = OrientationWarping.Pins.AddDefaulted_GetRef();
+        OrientationAlpha.Name = TEXT("Alpha");
+        OrientationAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& OrientationPose = OrientationWarping.Pins.AddDefaulted_GetRef();
+        OrientationPose.Name = TEXT("Pose");
+        OrientationPose.Direction = ESekiroAnimIRPinDirection::Output;
+        OrientationPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        OrientationPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRPropertyContract& OrientationSpineBones =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationSpineBones.Name = TEXT("SpineBones");
+        OrientationSpineBones.ValueType = ESekiroAnimIRValueType::String;
+        OrientationSpineBones.bRequired = true;
+        FSekiroAnimIRPropertyContract& OrientationFootRoot =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationFootRoot.Name = TEXT("IKFootRootBone");
+        OrientationFootRoot.ValueType = ESekiroAnimIRValueType::Name;
+        OrientationFootRoot.bRequired = true;
+        FSekiroAnimIRPropertyContract& OrientationFootBones =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationFootBones.Name = TEXT("IKFootBones");
+        OrientationFootBones.ValueType = ESekiroAnimIRValueType::String;
+        OrientationFootBones.bRequired = true;
+        FSekiroAnimIRPropertyContract& OrientationRotationAxis =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationRotationAxis.Name = TEXT("RotationAxis");
+        OrientationRotationAxis.ValueType = ESekiroAnimIRValueType::Name;
+        FSekiroAnimIRPropertyContract& OrientationDistribution =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationDistribution.Name = TEXT("DistributedBoneOrientationAlpha");
+        OrientationDistribution.ValueType = ESekiroAnimIRValueType::Float;
+        FSekiroAnimIRPropertyContract& OrientationInterpSpeed =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationInterpSpeed.Name = TEXT("RotationInterpSpeed");
+        OrientationInterpSpeed.ValueType = ESekiroAnimIRValueType::Float;
+
+        FSekiroAnimIRNodeContract& FootPlacement = Contracts.AddDefaulted_GetRef();
+        FootPlacement.NodeType = SekiroAnimGraphIRNames::FootPlacementNode;
+        FootPlacement.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimationWarpingEditor.AnimGraphNode_FootPlacement"));
+        FootPlacement.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        FootPlacement.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& FootPlacementComponentPose = FootPlacement.Pins.AddDefaulted_GetRef();
+        FootPlacementComponentPose.Name = TEXT("ComponentPose");
+        FootPlacementComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        FootPlacementComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPinContract& FootPlacementAlpha = FootPlacement.Pins.AddDefaulted_GetRef();
+        FootPlacementAlpha.Name = TEXT("Alpha");
+        FootPlacementAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        FootPlacementAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& FootPlacementPose = FootPlacement.Pins.AddDefaulted_GetRef();
+        FootPlacementPose.Name = TEXT("Pose");
+        FootPlacementPose.Direction = ESekiroAnimIRPinDirection::Output;
+        FootPlacementPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FootPlacementPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRPropertyContract& FootPlacementFootRoot = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootPlacementFootRoot.Name = TEXT("IKFootRootBone");
+        FootPlacementFootRoot.ValueType = ESekiroAnimIRValueType::Name;
+        FootPlacementFootRoot.bRequired = true;
+        FSekiroAnimIRPropertyContract& FootPlacementPelvis = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootPlacementPelvis.Name = TEXT("PelvisBone");
+        FootPlacementPelvis.ValueType = ESekiroAnimIRValueType::Name;
+        FootPlacementPelvis.bRequired = true;
+        FSekiroAnimIRPropertyContract& FootPlacementLegs = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootPlacementLegs.Name = TEXT("LegDefinitions");
+        FootPlacementLegs.ValueType = ESekiroAnimIRValueType::String;
+        FootPlacementLegs.bRequired = true;
+        FSekiroAnimIRPropertyContract& FootPlacementSpeedMode = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootPlacementSpeedMode.Name = TEXT("PlantSpeedMode");
+        FootPlacementSpeedMode.ValueType = ESekiroAnimIRValueType::Name;
+        FSekiroAnimIRPropertyContract& FootPlacementLockType = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootPlacementLockType.Name = TEXT("PlantLockType");
+        FootPlacementLockType.ValueType = ESekiroAnimIRValueType::Name;
+        const TCHAR* FootPlacementFloatPropertyNames[] = {
+            TEXT("PelvisMaxOffset"),
+            TEXT("PelvisHorizontalRebalancingWeight"),
+            TEXT("PlantSpeedThreshold"),
+            TEXT("PlantDistanceToGround"),
+            TEXT("TraceStartOffset"),
+            TEXT("TraceEndOffset"),
+            TEXT("TraceSweepRadius"),
+            TEXT("TraceMaxGroundPenetration"),
+        };
+        for (const TCHAR* PropertyName : FootPlacementFloatPropertyNames)
+        {
+            FSekiroAnimIRPropertyContract& Property = FootPlacement.Properties.AddDefaulted_GetRef();
+            Property.Name = PropertyName;
+            Property.ValueType = ESekiroAnimIRValueType::Float;
+        }
+        FSekiroAnimIRPropertyContract& FootPlacementTraceEnabled = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootPlacementTraceEnabled.Name = TEXT("bTraceEnabled");
+        FootPlacementTraceEnabled.ValueType = ESekiroAnimIRValueType::Bool;
+
+        FSekiroAnimIRNodeContract& LegIK = Contracts.AddDefaulted_GetRef();
+        LegIK.NodeType = SekiroAnimGraphIRNames::LegIKNode;
+        LegIK.EditorNodeClassPath = FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_LegIK"));
+        LegIK.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        LegIK.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& LegIKComponentPose = LegIK.Pins.AddDefaulted_GetRef();
+        LegIKComponentPose.Name = TEXT("ComponentPose");
+        LegIKComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        LegIKComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPinContract& LegIKAlpha = LegIK.Pins.AddDefaulted_GetRef();
+        LegIKAlpha.Name = TEXT("Alpha");
+        LegIKAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        LegIKAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& LegIKPose = LegIK.Pins.AddDefaulted_GetRef();
+        LegIKPose.Name = TEXT("Pose");
+        LegIKPose.Direction = ESekiroAnimIRPinDirection::Output;
+        LegIKPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        LegIKPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRPropertyContract& LegIKLegs = LegIK.Properties.AddDefaulted_GetRef();
+        LegIKLegs.Name = TEXT("LegDefinitions");
+        LegIKLegs.ValueType = ESekiroAnimIRValueType::String;
+        LegIKLegs.bRequired = true;
+        FSekiroAnimIRPropertyContract& LegIKReachPrecision = LegIK.Properties.AddDefaulted_GetRef();
+        LegIKReachPrecision.Name = TEXT("ReachPrecision");
+        LegIKReachPrecision.ValueType = ESekiroAnimIRValueType::Float;
+        FSekiroAnimIRPropertyContract& LegIKMaxIterations = LegIK.Properties.AddDefaulted_GetRef();
+        LegIKMaxIterations.Name = TEXT("MaxIterations");
+        LegIKMaxIterations.ValueType = ESekiroAnimIRValueType::Integer;
 
         FSekiroAnimIRNodeContract& SaveCachedPose = Contracts.AddDefaulted_GetRef();
         SaveCachedPose.NodeType = SekiroAnimGraphIRNames::SaveCachedPoseNode;
@@ -216,6 +385,68 @@ namespace SekiroAnimGraphNodeRegistryPrivate
         EnumBlendTime.Name = TEXT("BlendTime");
         EnumBlendTime.ValueType = ESekiroAnimIRValueType::Float;
 
+        FSekiroAnimIRNodeContract& Slot = Contracts.AddDefaulted_GetRef();
+        Slot.NodeType = SekiroAnimGraphIRNames::SlotNode;
+        Slot.EditorNodeClassPath = FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_Slot"));
+        Slot.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        Slot.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& SlotSource = Slot.Pins.AddDefaulted_GetRef();
+        SlotSource.Name = TEXT("Source");
+        SlotSource.Direction = ESekiroAnimIRPinDirection::Input;
+        SlotSource.DataType = SekiroAnimGraphIRNames::PoseData;
+        FSekiroAnimIRPinContract& SlotPose = Slot.Pins.AddDefaulted_GetRef();
+        SlotPose.Name = TEXT("Pose");
+        SlotPose.Direction = ESekiroAnimIRPinDirection::Output;
+        SlotPose.DataType = SekiroAnimGraphIRNames::PoseData;
+        SlotPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRPropertyContract& SlotName = Slot.Properties.AddDefaulted_GetRef();
+        SlotName.Name = TEXT("SlotName");
+        SlotName.ValueType = ESekiroAnimIRValueType::Name;
+        SlotName.bRequired = true;
+        FSekiroAnimIRPropertyContract& AlwaysUpdateSourcePose = Slot.Properties.AddDefaulted_GetRef();
+        AlwaysUpdateSourcePose.Name = TEXT("bAlwaysUpdateSourcePose");
+        AlwaysUpdateSourcePose.ValueType = ESekiroAnimIRValueType::Bool;
+
+        FSekiroAnimIRNodeContract& LayeredBlend = Contracts.AddDefaulted_GetRef();
+        LayeredBlend.NodeType = SekiroAnimGraphIRNames::LayeredBlendPerBoneNode;
+        LayeredBlend.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_LayeredBoneBlend"));
+        LayeredBlend.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        LayeredBlend.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& LayeredBasePose = LayeredBlend.Pins.AddDefaulted_GetRef();
+        LayeredBasePose.Name = TEXT("BasePose");
+        LayeredBasePose.Direction = ESekiroAnimIRPinDirection::Input;
+        LayeredBasePose.DataType = SekiroAnimGraphIRNames::PoseData;
+        FSekiroAnimIRPinContract& LayeredBlendPose = LayeredBlend.Pins.AddDefaulted_GetRef();
+        LayeredBlendPose.Name = TEXT("BlendPose");
+        LayeredBlendPose.Direction = ESekiroAnimIRPinDirection::Input;
+        LayeredBlendPose.DataType = SekiroAnimGraphIRNames::PoseData;
+        FSekiroAnimIRPinContract& LayeredBlendWeight = LayeredBlend.Pins.AddDefaulted_GetRef();
+        LayeredBlendWeight.Name = TEXT("BlendWeight");
+        LayeredBlendWeight.Direction = ESekiroAnimIRPinDirection::Input;
+        LayeredBlendWeight.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& LayeredPose = LayeredBlend.Pins.AddDefaulted_GetRef();
+        LayeredPose.Name = TEXT("Pose");
+        LayeredPose.Direction = ESekiroAnimIRPinDirection::Output;
+        LayeredPose.DataType = SekiroAnimGraphIRNames::PoseData;
+        LayeredPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRPropertyContract& BranchFilters = LayeredBlend.Properties.AddDefaulted_GetRef();
+        BranchFilters.Name = TEXT("BranchFilters");
+        BranchFilters.ValueType = ESekiroAnimIRValueType::String;
+        BranchFilters.bRequired = true;
+        FSekiroAnimIRPropertyContract& MeshSpaceRotationBlend = LayeredBlend.Properties.AddDefaulted_GetRef();
+        MeshSpaceRotationBlend.Name = TEXT("bMeshSpaceRotationBlend");
+        MeshSpaceRotationBlend.ValueType = ESekiroAnimIRValueType::Bool;
+        FSekiroAnimIRPropertyContract& MeshSpaceScaleBlend = LayeredBlend.Properties.AddDefaulted_GetRef();
+        MeshSpaceScaleBlend.Name = TEXT("bMeshSpaceScaleBlend");
+        MeshSpaceScaleBlend.ValueType = ESekiroAnimIRValueType::Bool;
+        FSekiroAnimIRPropertyContract& CurveBlendOption = LayeredBlend.Properties.AddDefaulted_GetRef();
+        CurveBlendOption.Name = TEXT("CurveBlendOption");
+        CurveBlendOption.ValueType = ESekiroAnimIRValueType::Name;
+        FSekiroAnimIRPropertyContract& BlendRootMotion = LayeredBlend.Properties.AddDefaulted_GetRef();
+        BlendRootMotion.Name = TEXT("bBlendRootMotionBasedOnRootBone");
+        BlendRootMotion.ValueType = ESekiroAnimIRValueType::Bool;
+
         return Contracts;
     }
 
@@ -225,7 +456,7 @@ namespace SekiroAnimGraphNodeRegistryPrivate
      *
      * @return 注册表内部数组的常量引用，其生命周期持续到进程结束。
      */
-    const TArray<FSekiroAnimIRNodeContract>& GetRegisteredContracts()
+    const TArray<FSekiroAnimIRNodeContract>& GetRegisteredContractsWithFootIK()
     {
         static const TArray<FSekiroAnimIRNodeContract> Contracts = BuildContracts();
         return Contracts;
@@ -240,7 +471,7 @@ namespace SekiroAnimGraphNodeRegistryPrivate
  */
 TConstArrayView<FSekiroAnimIRNodeContract> FSekiroAnimGraphNodeRegistry::GetContracts()
 {
-    return SekiroAnimGraphNodeRegistryPrivate::GetRegisteredContracts();
+    return SekiroAnimGraphNodeRegistryPrivate::GetRegisteredContractsWithFootIK();
 }
 
 /**
@@ -252,7 +483,8 @@ TConstArrayView<FSekiroAnimIRNodeContract> FSekiroAnimGraphNodeRegistry::GetCont
  */
 const FSekiroAnimIRNodeContract* FSekiroAnimGraphNodeRegistry::Find(const FName NodeType)
 {
-    for (const FSekiroAnimIRNodeContract& Contract : SekiroAnimGraphNodeRegistryPrivate::GetRegisteredContracts())
+    for (const FSekiroAnimIRNodeContract& Contract :
+        SekiroAnimGraphNodeRegistryPrivate::GetRegisteredContractsWithFootIK())
     {
         if (Contract.NodeType == NodeType) return &Contract;
     }

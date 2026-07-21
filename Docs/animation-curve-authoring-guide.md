@@ -38,11 +38,16 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 | 曲线名 | 状态 | 类型 | 语义 | 写入资产 | 当前消费者 |
 | --- | --- | --- | --- | --- | --- |
-| `CanEnterLoop` | 已生成 | `int bool` | Start 与循环动画的历史匹配窗口 | 对应 Start/SprintStart Sequence | 当前无正式运行时消费者；Start 改为完整播放后进入 Cycle |
+| `CanEnterLoop` | 使用中 | `int bool` | Start 或锁定 Jump InAir 过渡段已进入可衔接循环姿势的窗口 | Locomotion Start、非锁定/原地 Jump Start、锁定 Jump InAir Sequence | Lua GroundLocomotion 的 Start 到 Cycle；Jump Start/InAir 到 Loop |
 | `CanEnterStop` | 使用中 | `int bool` | 当前 Start/Loop 帧可进入匹配的 Stop | Start Sequence、BlendSpace 使用的 Loop 样本 Sequence | Lua GroundLocomotion 的 Start/Cycle 到 Stop |
-| `CanEnterIdle` | 已生成 | `int bool` | Stop 与 Idle 的历史匹配窗口 | 对应 Stop/SprintStop Sequence | 当前无正式运行时消费者；Stop 改为完整播放后进入 Idle |
+| `CanEnterIdle` | 使用中 | `int bool` | Stop 已进入可回 Idle 或退出外层 Sprint 的窗口 | Walk/Run/Sprint Stop Sequence | Stop 到 Idle；外层 Sprint 到 Standing/Crouching |
+| `CanExitStep` | 使用中 | `int bool` | Step 已进入可返回普通地面移动的尾部窗口 | 四方向 Step Sequence | 外层 Step 到 Standing/Crouching |
+| `CanExitTurn` | 使用中 | `int bool` | 原地 Turn 已进入可返回 Idle 的尾部窗口 | 站立/蹲姿左右 Idle Turn Sequence | Lua GroundLocomotion 的 Turn 到 Idle |
+| `CanEnterInAir` | 使用中 | `int bool` | 锁定八方向 Jump Start 已进入可衔接方向 InAir 过渡段的窗口 | 锁定八方向 Jump Start Sequence | Jump Start 到 DirectionalInAir |
+| `CanResumeMovement` | 使用中 | `int bool` | Jump Land 已恢复到可被移动输入安全打断的姿势窗口 | 原地/非锁定共用及锁定八方向 Jump Land Sequence | 有输入时外层 InAir 提前返回 Grounded |
+| `CanExitLand` | 使用中 | `int bool` | Jump Land 已进入可完整结束落地的尾部窗口 | 原地/非锁定共用及锁定八方向 Jump Land Sequence | 无输入时外层 InAir 返回 Grounded |
 | `FootPlant` | 已生成 | `int enum` | 当前稳定触地脚 | 需要脚步分析的 Locomotion Sequence | 自动标注、调试和相位校验；GroundLocomotion 暂未直接消费 |
-| `MovePhase` | 使用中 | `float` | 一个步态周期中的循环相位 | Start 与周期 Loop | GroundLocomotion 的 Start→Cycle 和 Cycle 方向资产切换相位匹配 |
+| `MovePhase` | 已生成 | `float` | 一个步态周期中的循环相位 | Start 与周期 Loop | 自动标注、调试和后续精确相位匹配；当前 GroundLocomotion 未直接消费 |
 | `FrameFlags` | 保留 | `int flags` | TAE 帧级行为标志 | 有对应 TAE 事件的动作动画 | 当前无正式运行时消费者 |
 | `CancelActions` | 保留 | `int enum` | TAE 动作取消窗口类型 | 有对应 TAE 事件的动作动画 | 当前无正式运行时消费者 |
 | `AttackHitbox` | 保留 | `int enum` | TAE 攻击框类型窗口 | 有对应 TAE 事件的攻击动画 | 当前武器碰撞走独立组件链路，不消费该曲线 |
@@ -53,13 +58,14 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 ### 共同规则
 
-历史生成的三条曲线都使用 `0/1` 阶梯值；当前运行时只消费 `CanEnterStop`：
+所有 Transition 语义曲线都使用 `0/1` 阶梯值：
 
 - `0`：当前帧不允许进入目标状态。
 - `1`：当前帧允许进入目标状态。
 - 曲线只写入语义适用的动画，不给无关动画添加全程为 `0` 的空曲线。
-- 输入、速度和角色状态决定“是否想切换”；`CanEnterStop` 决定进入 Stop 的自然脚步窗口。
-- `Start -> Cycle` 与 `Stop -> Idle` 不再读取 CanEnter 曲线；它们按剩余秒数在尾段开始交叉混合，旧一次性动画在淡出期间继续推进到末帧。
+- 输入、速度、姿态和物理状态决定“是否想切换”；语义曲线决定动画何时允许切换。
+- 输入打断、Dodge 升级 Sprint、起跳和落地检测等必须即时响应的 Transition 不强制增加曲线 Gate。
+- 需要等待动画窗口的 Transition 禁止再用 `TimeRemainingLessEqual` 作为正常条件或兜底。
 - 阶梯曲线最后一次状态变化后必须在动画末尾重复同值关键帧。UE 会把没有后续区间的孤立末键视为无持续时间语义，压缩后可能保留前一段值。
 
 ### CanEnterLoop
@@ -74,7 +80,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 4. 从匹配帧开始写 `1`，直到动画结束。
 5. Sprint Start 在 TAE 存在可靠移动进入窗口时，可优先使用原始事件帧；否则使用离线匹配结果。
 
-当前没有正式状态切换消费者。曲线保留在已标注资产中用于历史审计和姿势匹配分析；Walk/Run/Sprint Start 统一完整播放后进入 Cycle。
+当前由统一 Grounded 阶段状态机的 `Start -> Cycle` Gate，以及 Jump 状态机的非锁定/原地 `Start -> Loop`、锁定 `DirectionalInAir -> Loop` Gate 消费。
 
 ### CanEnterStop
 
@@ -86,6 +92,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 2. 将目标 Stop 的起始姿势与源动画可取消区间比较。
 3. 在匹配相位附近生成一个或多个允许窗口。
 4. 窗口内写 `1`，窗口外写 `0`。
+5. Start 资产从 `CanEnterLoop` 开启点起保持 `CanEnterStop = 1` 到结尾，保证保持输入和释放输入分别能进入 Cycle 与 Stop，不会错过最后窗口。
 
 适用动画：Walk/Run/Sprint Start、被 Walk/Run BlendSpace 使用的循环样本，以及独立 Sprint Loop。Start 的多个触地窗口允许短输入在最近安全帧进入 Stop；Loop 曲线仍写在样本 `UAnimSequence` 上，不写在 BlendSpace 资产本身。
 
@@ -99,7 +106,17 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 2. 同时检查 Root、Pelvis 速度已降低到稳定范围。
 3. 从最佳匹配帧开始写 `1`，直到动画结束。
 
-历史适用动画是 Walk/Run Stop、Sprint Stop，以及确实以 Idle 为目标的 TurnStop。当前没有正式状态切换消费者，Stop 统一完整播放后进入 Idle。
+适用动画是 Walk/Run Stop、Sprint Stop，以及确实以 Idle 为目标的 TurnStop。当前由统一 Grounded 阶段状态机的 `Stop -> Idle` Gate 消费。
+
+### Step、Turn 与 Jump 曲线
+
+- `CanExitStep`：写入四方向 Step；从动画尾部提前 `0.06` 秒开启，使 `Step -> Cycle/Idle` 保留交叉混合区间。
+- `CanExitTurn`：写入站立和蹲姿的左右 Idle Turn；从动画尾部提前约 `0.12` 秒开启，使 `Turn -> Idle` 保留交叉混合区间。当前资产由 AIBridge `anim_blueprint add_curve` 按实际时长写入并保存。
+- `CanEnterInAir`：只写入锁定八方向 Jump Start；从动画尾部提前 `0.08` 秒开启，使 Start 完成后衔接非循环的 DirectionalInAir。
+- `CanEnterLoop`：写入非锁定前向/原地 Jump Start 和锁定八方向 Jump InAir；从动画尾部提前 `0.08` 秒开启，仍未落地时进入通用 Jump Loop。
+- `CanResumeMovement`：写入原地/非锁定共用及锁定八方向 Jump Land。`Jump_Light_Stand` 在归一化 35% 开启；锁定八方向 Land 因与地面 Cycle 姿势差异更大，在归一化 50% 开启。有移动输入时可以较早恢复 Cycle，但不会从 Land 首帧硬切。
+- `CanExitLand`：同样写入全部 Jump Land；保持原有窗口，`Jump_Light_Stand` 在归一化 90%（`0.600s`）开启，锁定八方向 Land 在归一化 92%（`0.920s`）开启。没有移动输入时继续完整播放 Land，不受提前移动窗口影响。
+- 三者均由 `generate_locomotion_move_curve_payload.py` 根据实际 Sequence 时长生成 `0 -> 1` 阶梯键，并在动画末尾重复允许值。
 
 ### MoveTransition 拆分记录
 
@@ -113,22 +130,30 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 迁移时保留原关键帧时间，将每种值展开成目标曲线的 `0/1` 阶梯关键帧，并删除连续重复值。只有实际出现过 `1` 的目标曲线才写入该动画；写入成功后删除旧 `MoveTransition`。
 
-旧迁移数据保留在 `Script/temp/split_move_transition_curves.json` 供审计。当前生成器直接写独立曲线，不再先生成 `MoveTransition` 再拆分。截至 2026-07-12，当前 Locomotion 引用资产的生成结果为：`CanEnterLoop` 16 个、`CanEnterStop` 21 个、`CanEnterIdle` 9 个、`MovePhase` 18 个、`FootPlant` 9 个；其中 `CanEnterStop` 包含 12 个 Start/TurnStart 与 9 个 Loop。
+旧迁移数据保留在 `Script/temp/split_move_transition_curves.json` 供审计。当前生成器直接写独立曲线，不再先生成 `MoveTransition` 再拆分。截至 2026-07-19，Lua 动画蓝图引用资产的语义 Gate 验证结果为：`CanEnterLoop` 35 个、`CanEnterStop` 41 个、`CanEnterIdle` 19 个、`CanExitStep` 4 个、`CanExitTurn` 4 个、`CanEnterInAir` 8 个、`CanResumeMovement` 9 个、`CanExitLand` 9 个，96 个资产零错误。Jump 的非锁定/原地 Start 与锁定 DirectionalInAir 已补齐 `CanEnterLoop`；锁定八方向 Start 保留 `CanEnterInAir`。
 
 蹲姿 Locomotion 使用 `005000~005603` 资源组，与站姿 Idle/Turn、Walk/Run Start/Loop/Stop 语义对应。`Script/generate_crouch_locomotion_curves.py` 从站姿规范 payload 读取关键帧，按源/目标动画时长转换归一化位置后写入蹲姿资源；第二组 Start（`005110~005113`、`005410~005413`）复用同方向第一组 Start 模板。当前结果覆盖 37 个资产，其中 Idle 和 4 个 Idle Turn 不写无消费者曲线，其余 32 个资产共写入 80 条曲线：`CanEnterLoop` 16 条、`CanEnterStop` 24 条、`CanEnterIdle` 8 条、`MovePhase` 24 条、`FootPlant` 8 条。
 
 ### 当前接入状态
 
-截至 2026-07-12，曲线资产、Lua 曲线名和 GroundLocomotion 的主要移动过渡均已完成接入：
+截至 2026-07-18，需要动画时机的 Locomotion 跳转全部改为曲线 Gate：
 
-| 过渡 | 当前实现 | 目标实现 |
-| --- | --- | --- |
-| `Start -> Stop` | 输入释放后等待 `CanEnterStop >= 0.5` | `0.55` 秒异常等待上限 |
-| `Start -> Cycle` | 剩余时间进入 `CycleBlendTime` 时捕获源 `MovePhase`、反查目标起播位置并交叉混合；Start 在淡出期间继续到末帧 | `2.10` 秒动画时间异常上限 |
-| `Cycle -> Stop` | 停止意图确认后等待 `CanEnterStop >= 0.5` | `0.65` 秒异常等待上限 |
-| `Stop -> Idle` | 剩余时间进入 `IdleBlendTime` 时开始 Pose 交叉混合；Stop 在淡出期间继续到末帧 | `1.50` 秒动画时间异常上限 |
+| 过渡 | 当前实现 |
+| --- | --- |
+| `Start -> Stop` | 输入释放后等待 `CanEnterStop >= 0.5` |
+| `Start -> Cycle` | 保持移动时等待 `CanEnterLoop >= 0.5` |
+| `Cycle -> Stop` | 停止意图确认后等待 `CanEnterStop >= 0.5` |
+| `Stop -> Idle` | 无新输入时等待 `CanEnterIdle >= 0.5` |
+| `Step -> Standing/Crouching` | Dodge 结束后等待 `CanExitStep >= 0.5` |
+| `Turn -> Idle` | 没有移动或闪避输入时等待 `CanExitTurn >= 0.5` |
+| `Sprint -> Standing/Crouching` | Sprint 意图结束后等待嵌套 Stop 输出的 `CanEnterIdle >= 0.5` |
+| `Jump Start -> DirectionalInAir` | 锁定有向跳仍在空中且 `CanEnterInAir >= 0.5` |
+| `Jump Start -> Loop` | 非锁定或原地跳仍在空中且 `CanEnterLoop >= 0.5` |
+| `Jump DirectionalInAir -> Loop` | 锁定有向跳仍在空中且 `CanEnterLoop >= 0.5` |
+| `InAir -> Grounded`（有移动输入） | 已落地、有移动输入且嵌套 Land 输出的 `CanResumeMovement >= 0.5` |
+| `InAir -> Grounded`（无移动输入） | 已落地、无移动输入且嵌套 Land 输出的 `CanExitLand >= 0.5` |
 
-这些上限都不是正常过渡条件。Start/Stop 只有在剩余时间查询或动画时间推进异常时才使用时间上限，并输出 `AnimationFallback` 调试日志；`CanEnterStop` 缺失或样本无法形成有效门控时仍使用 `CurveFallback`。
+曲线缺失时 Gate 失败关闭，避免在错误姿势窗口静默跳转。资产生成和 `Check Lua` 前的审计必须保证所有被消费曲线存在且至少包含一个允许区间。
 
 ## 四、相位与触地曲线
 
@@ -155,82 +180,38 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 它不是“动画开始为 0、结尾为 1”的普通时间归一化直线。生成器必须从实际左右脚接触锚点建立相位；检测不到可靠锚点时不写曲线，并把动画列入低置信度报告。
 
-## 五、运行时读取
+## 五、当前运行时消费
 
-### Lua 接口
-
-状态机基类提供三个读取入口：
+业务 `CanEnter_*` 只回答输入和角色状态等业务意图，不直接采样动画曲线。曲线比较由编译期 Gate DSL 声明，并由 NodeFactory 生成原生 Transition Rule 节点：
 
 ```lua
-local value = self:GetCurrentCurveValue(Curve.CanEnterStop, 0)
-local enum_value = self:GetCurrentCurveIntValue(Curve.FootPlant, 0)
-```
-
-接口选择必须匹配语义：
-
-- 连续值和可被 BlendSpace 加权的布尔门控使用 `GetCurrentCurveValue`。
-- 单个 Sequence 上的离散枚举可使用 `GetCurrentCurveIntValue`。
-- 真正的位掩码使用 `HasCurrentCurveFlag`。
-- 当前运行时的 `CanEnterStop` 必须使用浮点接口并比较 `>= 0.5`。
-
-状态机写法示例：
-
-```lua
----@param Inst userdata 当前 Transition 所属 AnimInstance 的 UnLua UObject 代理。
----@return boolean can_enter 是否允许从 Start 进入 Cycle。
-function GroundLocomotion.CanEnter_Start_Cycle(Inst)
-    return Inst:WantsMove()
-        and Inst:IsTailBlendReady(Tuning.CycleBlendTime)
-end
+Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
+    BlendDuration = Tuning.StopBlendDuration,
+    Gate = Rule.CurveGreaterEqual(
+        CurveNames.CanEnterStop,
+        Tuning.CurveThreshold),
+})
 
 ---@param Inst userdata 当前 Transition 所属 AnimInstance 的 UnLua UObject 代理。
----@return boolean can_enter 是否允许从 Cycle 进入 Stop。
+---@return boolean can_enter 输入是否已经释放。
 function GroundLocomotion.CanEnter_Cycle_Stop(Inst)
-    return Inst:WantsStop()
-        and Inst:GetCurrentCurveValue(Curve.CanEnterStop, 0) >= 0.5
-end
-
----@param Inst userdata 当前 Transition 所属 AnimInstance 的 UnLua UObject 代理。
----@return boolean can_enter 是否允许从 Stop 进入 Idle。
-function GroundLocomotion.CanEnter_Stop_Idle(Inst)
-    return not Inst:WantsMove()
-        and Inst:IsTailBlendReady(Tuning.IdleBlendTime)
+    return Inst.bHasMovementInput ~= true
 end
 ```
 
-曲线名集中声明在动画层 `Library.lua`，状态机不得散落裸字符串。
+曲线名集中声明在 `Animation.Sekiro.Shared.CurveNames`。`CanEnterLoop/Stop/Idle`、`CanExitStep`、`CanExitTurn`、`CanEnterInAir`、`CanResumeMovement` 和 `CanExitLand` 已有正式 Transition 消费者；`FootPlant` 和 `MovePhase` 继续用于标注、调试和后续相位匹配。
 
-### Sequence 采样
+### 历史相位匹配实现
 
-C++ 根据当前 `UAnimSequenceBase`、当前播放时间和 Skeleton SmartName 查找浮点曲线并求值。动画、Skeleton 或曲线不存在时返回调用方给出的 fallback。
+旧动态 Pose Graph 曾把 `MovePhase` 映射到单位圆进行混合，并反查目标 Sequence/BlendSpace 的 `NormalizedStartPosition`。该运行时消费者已经随旧 Host/快照架构删除。
 
-### BlendSpace 采样
-
-浮点接口对 BlendSpace 的处理流程是：
-
-1. 获取当前输入下所有有效样本及权重。
-2. 将 BlendSpace 当前时间归一化后映射到每个样本自己的动画长度。
-3. 分别采样各样本曲线。
-4. 按样本权重计算加权平均值。
-
-因此 `CanEnterStop >= 0.5` 表示当前主要混合结果已经进入允许停止的窗口。所有可能参与该 BlendSpace 区域的样本都应带有该曲线；缺失样本按 `0` 参与，会降低最终门控值。
-
-整数接口对 BlendSpace 样本执行按位 OR，适合 `FrameFlags` 一类位掩码，不适合 `CanEnter*`。否则只要一个低权重样本为 `1` 就可能提前开放过渡。
-
-`MovePhase` 不走上述普通浮点加权。插件将每个样本的相位映射到单位圆，对正弦/余弦分量按权重混合后再还原相位，因此 `0.98` 与 `0.02` 会得到接近 `0/1` 的结果，而不是错误的 `0.5`。
-
-状态切换时，Lua 先从源动画读取圆周混合后的 `MovePhase`，再让插件在目标 Sequence/BlendSpace 上扫描同名曲线，选择相位误差最小的归一化位置。相同相位在目标动画中出现多次时，才使用源归一化时间作为次级排序。目标 Pose 通过 `NormalizedStartPosition` 从该位置开始，普通 Blend 只负责消除剩余姿势差，不再承担脚步同步职责。
+如果后续重新接入精确相位匹配，应通过新的原生 AnimNode 或 Transition 能力实现，并在完成运行时消费者和验证后，把登记表中的 `MovePhase` 状态改回“使用中”。
 
 ## 六、缺失曲线处理
 
 默认原则是失败关闭：曲线缺失时返回 `0`，不允许正常过渡路径静默放行。
 
-允许的兜底只用于保证游戏不会永久卡住：
-
-- 输出包含动画别名、资产路径、状态名和曲线名的错误日志。
-- 达到明确的最大安全等待时间后才放行。
-- 兜底触发必须能在调试界面或日志中识别。
-- 不允许用新的 normalized time 常量悄悄替代缺失曲线。
+不再使用剩余时间或 normalized time 常量作为运行时兜底。缺失必须在生成/验证阶段报出动画别名、资产路径、状态名和曲线名，并修复资产后重新生成动画蓝图。
 
 ## 七、生成与更新流程
 
@@ -247,6 +228,7 @@ C++ 根据当前 `UAnimSequenceBase`、当前播放时间和 Skeleton SmartName 
 当前 Locomotion 生成入口和中间产物：
 
 - 生成脚本：`Script/temp/generate_locomotion_move_curve_payload.py`
+- Lua Transition 曲线验证器：`Script/verify_lua_anim_transition_curves.py`
 - 初始写入数据：`Script/temp/set_locomotion_move_curves.json`
 - 拆分迁移数据：`Script/temp/split_move_transition_curves.json`
 - 蹲姿复制生成器：`Script/generate_crouch_locomotion_curves.py`
@@ -289,8 +271,8 @@ TAE 曲线入口：
 ## 九、实现索引
 
 - Lua 曲线读取封装：`Content/Script/Animation/Base/LuaAnimStateMachine.lua`
-- Sekiro 曲线名声明：`Content/Script/Animation/Sekiro/Layer/GroundLocomotion/Library.lua`
-- GroundLocomotion 消费逻辑：`Content/Script/Animation/Sekiro/GroundLocomotion.lua`
-- Sequence/BlendSpace 采样实现：`Plugins/SekiroAnimBlueprintExt/Source/SekiroAnimBlueprintExt/Private/SekiroLuaAnimInstance.cpp`
+- Sekiro 曲线名声明：`Content/Script/Animation/Sekiro/Shared/CurveNames.lua`
+- GroundLocomotion 消费逻辑：`Content/Script/Animation/Sekiro/Layer/GroundLocomotion/` 与 `Content/Script/Animation/Sekiro/Layer/Airborne/Jump.lua`
+- 曲线 Gate 生成实现：`Plugins/SekiroAnimBlueprintExt/Source/SekiroAnimBlueprintExtEditor/Private/SekiroAnimBlueprintFactoryLibrary.cpp`
 - Lua 动画蓝图写法：[Lua 动画蓝图编写手册](lua-anim-blueprint-authoring-guide.md)
 - Lua 编码规范：[Lua 代码规范](lua-code-style.md)

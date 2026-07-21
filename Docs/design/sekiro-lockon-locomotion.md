@@ -1,6 +1,7 @@
 # Sekiro 锁定状态 Locomotion 设计
 
-> 状态：阶段一至三已实现并通过 PIE 四方向验证；阶段四持续调优  
+> 状态：历史实现方案。四方向资源选择和输入语义仍有效，但本文所述 BlendSpace、MovePhase 匹配和 Stop 轨迹冻结等旧动态 Pose Graph 机制已经删除；Orientation Warping 后来以原生生成节点重新接入。
+> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + Orientation Warping + Inertialization；`DirectionResidualAngle` 只驱动锁定 Walk/Run 的姿势补偿，不修改 CharacterMovement 的物理轨迹。
 > 日期：2026-07-11  
 > 关联文档：[角色摄像头与 Locomotion 方案](sekiro-camera-locomotion.md)、[动画曲线生成与使用手册](../animation-curve-authoring-guide.md)
 
@@ -73,20 +74,20 @@ RotationMode == LookingDirection -> LockOn
 
 ### LockOn 非 Sprint
 
-- `SKCameraManager.lua` 逐帧把 ActorYaw 插值到锁定目标。
+- `SKMovementComponent.lua` 在原生 CharacterMovement 求值前把 ActorYaw 插值到锁定目标。
 - GroundLocomotion 对 Idle、Start、Cycle、Stop、锁定 Step 提交 `RootMotionRotationMode.Ignore`。
 - 动画只贡献 RootMotion 平移，不用根旋转争抢朝向。
 
 ### SprintAlign
 
 - 角色朝向移动方向。
-- 普通 Sprint Cycle 由 CameraManager 在 RootMotion 不拥有 Yaw 时插值。
-- Sprint Start/Turn/Stop 这类瞬态动作由 `WarpToTarget` 临时拥有 ActorYaw。
+- 普通 Sprint Start/Cycle/Stop 都由 Movement Lua 持续插值 ActorYaw。
+- 当前动画资产不贡献角色转向；后方输入选择最近的 Left/Right Turn，而不是依赖 BackTurn 或 RootMotion 旋转。
 - 即使处于锁定状态，ControllerYaw 仍持续跟踪目标，镜头不改为看移动方向。
 
 ### Free
 
-维持当前 RootMotion/TurnPlan 方案，角色朝移动方向，摄像机不被移动输入修改。
+Movement Lua 把角色朝向移动方向，摄像机不被移动输入修改。动画 RootMotion 只提供相对角色朝向的平移；Back 动画语义始终是身体保持朝前时向后退，只在锁定模式使用。
 
 ## 五、锁定方向解析
 
@@ -103,7 +104,7 @@ RotationMode == LookingDirection -> LockOn
 
 必须加入滞回，不能在 `45°/135°` 边界直接切换。建议以当前方向为基准，候选方向至少比当前方向多 `10°` 优势才允许切换。方向一旦进入 Start、Stop 或 Step 就锁定到动作结束；只有 Cycle 可以更新方向。
 
-四向分区只决定播放哪条 Sequence，不得量化真实移动轨迹。Lua 同时保留精确 `MoveDirectionAngle`，计算 `精确角 - 素材主方向角`：Movement 用该残差旋转 Root Motion 平移，Orientation Warping 用同一残差旋转下半身，并通过 `Spine/Spine1/Spine2` 反向补偿上半身。这样 45 度输入仍沿 45 度移动，而角色胸口继续朝向锁定目标。
+四向分区只决定播放哪条 Sequence，不得量化真实移动轨迹。Lua 同时保留精确 `MoveDirectionAngle`，计算 `精确角 - 素材主方向角`；CharacterMovement 按真实输入负责物理轨迹，Orientation Warping 用该残差旋转下半身，并通过 `Spine/Spine1/Spine2` 反向补偿上半身。这样 45 度输入仍沿 45 度移动，而角色胸口继续朝向锁定目标。
 
 无移动输入时不把方向重置为 Forward。停止过程中保留最后一个有效 `LockedMoveDirection`，用于选择匹配的 Stop 动画。
 
@@ -208,7 +209,7 @@ Sprint Forward Cycle
 - LockOn Sprint：ActorYaw 朝移动方向，ControllerYaw 仍朝目标。
 - 移动输入绝不直接修改相机视角。
 - Look 输入在锁定时用于后续目标切换，不直接解除目标跟踪。
-- RootMotion 瞬态动作拥有 ActorYaw 时，CameraManager 暂停写 ActorYaw，但继续更新 ControllerYaw。
+- ActorYaw 始终由 Movement Lua 更新；Camera Lua 只更新 ControllerYaw，不与 Movement 争抢角色旋转。
 
 本阶段不修改镜头构图、Pitch、SpringArm Offset 和目标切换算法。若锁定镜头仍显得生硬，应单独调整相机位置/阻尼，不能通过修改动画方向补偿。
 
@@ -219,9 +220,9 @@ Sprint Forward Cycle
 | `LockedDirectionBoundaryAngle` | `45°` | 前后与左右基础分界 |
 | `LockedDirectionHysteresisAngle` | `10°` | 防止方向边界抖动 |
 | `LockedDirectionBlendTime` | `0.10s` | 四个 Cycle BlendSpace 切换混合 |
-| `LockOnActorInterpSpeed` | 保持 `14` | 非 Sprint 身体跟随目标 |
+| `LockOnActorInterpSpeed` | `14`（Movement Lua） | 非 Sprint 身体跟随目标 |
 | `LockOnCameraYawInterpSpeed` | 保持 `8` | 镜头跟随目标 |
-| `SprintActorInterpSpeed` | 保持 `12` | Sprint Cycle 身体追随移动方向 |
+| `SprintActorInterpSpeed` | `12`（Movement Lua） | Sprint 身体追随移动方向 |
 
 先保持现有相机参数，只在完成动画方向接入后基于日志和录像调优，避免同时改变两个系统而无法定位问题。
 
@@ -235,7 +236,7 @@ lockedDirection=Left
 moveDirectionAngle=-82.4
 directionAsset=Sekiro_CycleLeft1D
 gaitBlendInput=263.0
-yawOwner=Camera|RootMotion
+yawOwner=MovementLua
 phasePreserved=true
 ```
 

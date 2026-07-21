@@ -6,9 +6,14 @@
 #include "Framework/Commands/UICommandList.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "IAnimationBlueprintEditor.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Modules/ModuleManager.h"
 #include "SekiroAnimBlueprintFactoryLibrary.h"
 #include "SekiroLuaAnimBlueprintExtension.h"
 #include "Styling/AppStyle.h"
+#include "UnLua.h"
+#include "UnLuaModule.h"
+#include "UnLuaSettings.h"
 
 #define LOCTEXT_NAMESPACE "SekiroLuaAnimBlueprintEditorBinding"
 
@@ -18,7 +23,66 @@ namespace
 {
     const FName CheckLuaToolbarBlockName(TEXT("Sekiro.CheckLua"));
     const FName GenerateFromLuaToolbarBlockName(TEXT("Sekiro.GenerateFromLua"));
+    const FName EditorLuaDebugToolbarBlockName(TEXT("Sekiro.EditorLuaDebug"));
     const FName SourceModeToolbarBlockName(TEXT("Sekiro.SourceMode"));
+    const TCHAR* EditorLuaDebugConfigSection = TEXT("SekiroAnimBlueprintExtEditor.LuaDebug");
+    const TCHAR* EditorLuaDebugConfigKey = TEXT("EnableEditorDebug");
+    const FString LuaDebuggerModuleName(TEXT("Debug.LuaDebugger"));
+
+    /**
+     * 在当前编辑器 UnLua Env 中加载 LuaDebugger 模块并调用 Start 或 Stop。
+     * 只能在游戏线程调用；会激活 UnLua，但不进入 PIE、不加载游戏地图。
+     *
+     * @param FunctionName LuaDebugger 导出的无参函数名，必须为 Start 或 Stop。
+     * @return Lua 模块成功返回 true 时返回 true；环境、模块或函数不可用时返回 false。
+     */
+    bool CallLuaDebuggerControlFunction(const char* FunctionName)
+    {
+        if (!IsInGameThread() || FunctionName == nullptr) return false;
+
+        IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
+        if (UnLuaModule == nullptr) return false;
+        if (!UnLuaModule->IsActive()) UnLuaModule->SetActive(true);
+
+        UnLua::FLuaEnv* LuaEnv = UnLuaModule->GetEnv();
+        if (LuaEnv == nullptr) return false;
+        lua_State* LuaState = LuaEnv->GetMainState();
+        if (LuaState == nullptr) return false;
+
+        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaDebuggerModuleName);
+        UnLua::FLuaRetValues RequireReturnValues =
+            UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
+        if (!RequireReturnValues.IsValid()
+            || RequireReturnValues.Num() == 0
+            || RequireReturnValues[0].GetType() != LUA_TTABLE)
+        {
+            return false;
+        }
+
+        UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
+        UnLua::FLuaRetValues FunctionReturnValues = ModuleTable.Call(FunctionName);
+        return FunctionReturnValues.IsValid()
+            && FunctionReturnValues.Num() > 0
+            && FunctionReturnValues[0].GetType() == LUA_TBOOLEAN
+            && FunctionReturnValues[0].Value<bool>();
+    }
+
+    /**
+     * 将编辑器 Lua 调试开关保存到本用户的 EditorPerProjectUserSettings。
+     * 只能在游戏线程调用；不修改项目 DefaultConfig，也不标记任何资产。
+     *
+     * @param bEnabled true 表示编辑器阶段开启 9966 调试端口，false 表示只在 PIE 由 Main.lua 开启。
+     */
+    void SaveEditorLuaDebugEnabled(const bool bEnabled)
+    {
+        if (GConfig == nullptr) return;
+        GConfig->SetBool(
+            EditorLuaDebugConfigSection,
+            EditorLuaDebugConfigKey,
+            bEnabled,
+            GEditorPerProjectIni);
+        GConfig->Flush(false, GEditorPerProjectIni);
+    }
 
     /**
      * 将结构化诊断逐条写入编辑器日志，使 Lua 模块、行号和列号可直接用于 IDE 定位。
@@ -65,6 +129,61 @@ namespace
             }
         }
     }
+}
+
+/**
+ * 在 UnLua Env 创建前把持久化开关投影到本进程 UUnLuaSettings::StartupModuleName。
+ * 只修改内存默认对象，不保存 UnLua 项目配置；非游戏线程不得调用。
+ */
+void FSekiroLuaAnimBlueprintEditorBinding::PrepareEditorLuaDebugBeforeEnvCreation()
+{
+    UUnLuaSettings* UnLuaSettings = GetMutableDefault<UUnLuaSettings>();
+    if (UnLuaSettings == nullptr) return;
+
+    if (IsEditorLuaDebugEnabled())
+    {
+        if (UnLuaSettings->StartupModuleName.IsEmpty()
+            || UnLuaSettings->StartupModuleName == LuaDebuggerModuleName)
+        {
+            UnLuaSettings->StartupModuleName = LuaDebuggerModuleName;
+        }
+    }
+    else if (UnLuaSettings->StartupModuleName == LuaDebuggerModuleName)
+    {
+        UnLuaSettings->StartupModuleName.Reset();
+    }
+}
+
+/**
+ * 把已保存的编辑器 Lua 调试开关应用到当前 UnLua Env。
+ * 开关关闭时不会为了 Stop 而加载调试模块；只能在游戏线程调用。
+ *
+ * @return 开关关闭时返回 true；开关开启时仅在 LuaDebugger.Start 成功后返回 true。
+ */
+bool FSekiroLuaAnimBlueprintEditorBinding::ApplyEditorLuaDebugSetting()
+{
+    return !IsEditorLuaDebugEnabled()
+        || CallLuaDebuggerControlFunction("Start");
+}
+
+/**
+ * 读取本用户的编辑器 Lua 调试持久化开关。
+ * 本函数只读取 EditorPerProjectUserSettings，缺少配置时默认关闭。
+ *
+ * @return 允许非 PIE 编辑器环境开启 Lua 调试端口时返回 true。
+ */
+bool FSekiroLuaAnimBlueprintEditorBinding::IsEditorLuaDebugEnabled()
+{
+    bool bEnabled = false;
+    if (GConfig != nullptr)
+    {
+        GConfig->GetBool(
+            EditorLuaDebugConfigSection,
+            EditorLuaDebugConfigKey,
+            bEnabled,
+            GEditorPerProjectIni);
+    }
+    return bEnabled;
 }
 
 /**
@@ -209,6 +328,18 @@ void FSekiroLuaAnimBlueprintEditorBinding::FillToolbar(FToolBarBuilder& ToolbarB
         LOCTEXT("GenerateFromLuaLabel", "Generate From Lua"),
         LOCTEXT("GenerateFromLuaTooltip", "Transactionally rebuild this Animation Blueprint Graph from the latest valid Lua IR."),
         FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"));
+    ToolbarBuilder.AddToolBarButton(
+        FUIAction(
+            FExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::ExecuteToggleEditorLuaDebug),
+            FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanToggleEditorLuaDebug),
+            FIsActionChecked::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::IsEditorLuaDebugChecked)),
+        EditorLuaDebugToolbarBlockName,
+        TAttribute<FText>::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::GetEditorLuaDebugLabel),
+        LOCTEXT(
+            "EditorLuaDebugTooltip",
+            "When enabled, listen on Lua debug port 9966 before PIE so Check Lua and CompileIR breakpoints can be hit. When disabled, Main.lua starts debugging after PIE begins."),
+        FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Visible"),
+        EUserInterfaceActionType::ToggleButton);
     ToolbarBuilder.AddComboButton(
         FUIAction(
             FExecuteAction(),
@@ -482,6 +613,66 @@ bool FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction() const
 }
 
 /**
+ * 切换本用户的编辑器 Lua 调试开关，并立即启动或停止 9966 监听。
+ * 只能由非 PIE 工具栏动作在游戏线程调用；Lua 操作失败时不保存新状态。
+ */
+void FSekiroLuaAnimBlueprintEditorBinding::ExecuteToggleEditorLuaDebug()
+{
+    const bool bEnableEditorDebug = !IsEditorLuaDebugEnabled();
+    const char* ControlFunctionName = bEnableEditorDebug ? "Start" : "Stop";
+    if (!CallLuaDebuggerControlFunction(ControlFunctionName))
+    {
+        UE_LOG(
+            LogSekiroLuaAnimBlueprintEditorBinding,
+            Error,
+            TEXT("Failed to %s editor Lua debugging on port 9966."),
+            bEnableEditorDebug ? TEXT("start") : TEXT("stop"));
+        return;
+    }
+
+    SaveEditorLuaDebugEnabled(bEnableEditorDebug);
+    PrepareEditorLuaDebugBeforeEnvCreation();
+    UE_LOG(
+        LogSekiroLuaAnimBlueprintEditorBinding,
+        Display,
+        TEXT("Editor Lua debugging is now %s; the setting is stored per user."),
+        bEnableEditorDebug ? TEXT("enabled") : TEXT("disabled"));
+}
+
+/**
+ * 判断当前是否允许切换编辑器 Lua 调试生命周期。
+ * 本函数只读取 PIE/SIE 状态，不访问 Lua Env。
+ *
+ * @return 未运行 PIE/SIE 时返回 true，否则返回 false。
+ */
+bool FSekiroLuaAnimBlueprintEditorBinding::CanToggleEditorLuaDebug() const
+{
+    return GEditor == nullptr || GEditor->PlayWorld == nullptr;
+}
+
+/**
+ * 返回编辑器 Lua 调试按钮的勾选状态。
+ *
+ * @return 当前持久化开关开启时返回 true。
+ */
+bool FSekiroLuaAnimBlueprintEditorBinding::IsEditorLuaDebugChecked() const
+{
+    return IsEditorLuaDebugEnabled();
+}
+
+/**
+ * 构建编辑器 Lua 调试按钮的动态短标签。
+ *
+ * @return 开关开启时返回“Editor Debug: On”，否则返回“Editor Debug: Off”。
+ */
+FText FSekiroLuaAnimBlueprintEditorBinding::GetEditorLuaDebugLabel() const
+{
+    return IsEditorLuaDebugEnabled()
+        ? LOCTEXT("EditorLuaDebugOnLabel", "Editor Debug: On")
+        : LOCTEXT("EditorLuaDebugOffLabel", "Editor Debug: Off");
+}
+
+/**
  * 构建 Source Mode 单选菜单；菜单项通过扩展 UPROPERTY 持久化到当前动画蓝图资产。
  *
  * @return 新建的 Slate 菜单控件。
@@ -541,7 +732,8 @@ FText FSekiroLuaAnimBlueprintEditorBinding::GetSourceModeLabel() const
 }
 
 /**
- * 在编辑器事务中更新持久化 SourceMode，并标记动画蓝图 package 待保存；不检查 Lua或修改 Graph。
+ * 在编辑器事务中更新持久化 SourceMode，并标记动画蓝图 package 待保存。
+ * 切换到 Lua 时同步关闭多线程动画更新；函数不检查 Lua 或修改 Graph。
  *
  * @param SourceModeValue ESekiroLuaAnimBlueprintSourceMode 的 uint8 值，非法值被忽略。
  */
@@ -557,6 +749,10 @@ void FSekiroLuaAnimBlueprintEditorBinding::SetSourceMode(const uint8 SourceModeV
     Extension->Modify();
     Extension->SourceMode =
         static_cast<ESekiroLuaAnimBlueprintSourceMode>(SourceModeValue);
+    if (Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::Lua)
+    {
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
+    }
     AnimBlueprint->GetOutermost()->MarkPackageDirty();
 }
 

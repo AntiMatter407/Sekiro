@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Use Cached Pose 的 Lua 编译期节点类型。
 -- 节点按 CacheName 引用同一主 Pose Graph 中的原生 Save Cached Pose 节点。
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")

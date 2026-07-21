@@ -7,7 +7,7 @@
 
 class UAnimInstance;
 
-/** 在游戏线程执行 Lua Transition Rule，并向动画工作线程发布只读缓存。 */
+/** 在游戏线程执行 Lua 动画更新与 Transition Rule。 */
 UCLASS()
 class SEKIROANIMBLUEPRINTEXT_API USekiroLuaTransitionRuntimeLibrary : public UBlueprintFunctionLibrary
 {
@@ -23,17 +23,10 @@ public:
         float DeltaSeconds);
 
     // ── Transition Rule ──────────────────────────────────────
-    /** 执行 Lua Rule 并缓存严格 boolean 结果。 */
-    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation|Lua Transition")
-    static bool EvaluateAndCacheTransitionRule(
+    /** 按需执行 Lua Rule 并直接返回严格 boolean 结果。 */
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Transition")
+    static bool EvaluateLuaTransitionRule(
         UAnimInstance* AnimInstance,
-        const FString& LuaModuleName,
-        const FString& RuleFunctionName);
-
-    /** 从线程安全快照读取最近一次 Rule 结果。 */
-    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Transition", meta = (BlueprintThreadSafe))
-    static bool GetCachedTransitionRule(
-        const UAnimInstance* AnimInstance,
         const FString& LuaModuleName,
         const FString& RuleFunctionName);
 };

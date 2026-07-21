@@ -250,11 +250,23 @@ void USKLockOnIndicatorComponent::RemoveLockOnIndicatorWidget()
     IndicatorWidget = nullptr;
 }
 
+/**
+ * 缓存锁定 UI 的角色、控制器与相机依赖，并为原生 UnLua 组件补发一次标准
+ * ReceiveBeginPlay 生命周期。蓝图生成类和非原生类沿用引擎派发，纯原生类才在缓存完成后补发，
+ * 因此 Lua 的运行期初始化不会重复且可安全访问锁定目标相关接口。
+ * 本函数只在游戏线程执行，不创建锁定点控件，也不直接调用 Lua Initialize。
+ */
 void USKLockOnIndicatorComponent::BeginPlay()
 {
+    const bool bEngineDispatchesReceiveBeginPlay =
+        GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint)
+        || !GetClass()->HasAnyClassFlags(CLASS_Native);
+
     Super::BeginPlay();
 
     RefreshCachedComponents();
+
+    if (!bEngineDispatchesReceiveBeginPlay) ReceiveBeginPlay();
 }
 
 void USKLockOnIndicatorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

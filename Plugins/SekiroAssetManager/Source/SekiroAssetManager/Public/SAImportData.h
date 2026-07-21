@@ -92,6 +92,7 @@ struct FSAModelData
     FString SkeletonName;
     TArray<FSAImportBone> Bones;          // 主骨架骨骼（来自 HKX 骨架 + 回退时含 FLVER 骨骼）
     TArray<FSAImportBone> FlverBones;     // 可选的 FLVER 原始骨骼树（用于 ModelOnly 追加的数据源）
+    TArray<FSAImportBone> AuxiliaryBones; // 可选的无蒙皮参考骨骼，变换使用 UE 局部空间（厘米、四元数）
     TArray<FSAImportMeshSection> Meshes;
     TArray<FSAImportMaterial> Materials;
 };

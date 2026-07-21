@@ -4,6 +4,10 @@
 #include "AnimGraphNode_Inertialization.h"
 #include "AnimGraphNode_BlendListByBool.h"
 #include "AnimGraphNode_BlendListByEnum.h"
+#include "AnimGraphNode_LayeredBoneBlend.h"
+#include "AnimGraphNode_Slot.h"
+#include "AnimGraphNode_ComponentToLocalSpace.h"
+#include "AnimGraphNode_LocalToComponentSpace.h"
 #include "AnimGraphNode_Root.h"
 #include "AnimGraphNode_SaveCachedPose.h"
 #include "AnimGraphNode_SequencePlayer.h"
@@ -11,6 +15,9 @@
 #include "AnimGraphNode_StateResult.h"
 #include "AnimGraphNode_TransitionResult.h"
 #include "AnimGraphNode_UseCachedPose.h"
+#include "AnimGraphNode_LegIK.h"
+#include "AnimGraph/AnimGraphNode_FootPlacement.h"
+#include "AnimGraph/AnimGraphNode_OrientationWarping.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
@@ -78,6 +85,12 @@ namespace SekiroAnimBlueprintFactoryPrivate
     const FName MainAnimGraphNotFound = TEXT("Factory.MainAnimGraphNotFound");
     const FName DefaultRootNodeNotFound = TEXT("Factory.DefaultRootNodeNotFound");
     const FName NativeNodeCreationFailed = TEXT("Factory.NativeNodeCreationFailed");
+    const FName InvalidFootPlacementLegDefinitions = TEXT("Factory.InvalidFootPlacementLegDefinitions");
+    const FName InvalidLegIKDefinitions = TEXT("Factory.InvalidLegIKDefinitions");
+    const FName InvalidLayeredBlendBranchFilters = TEXT("Factory.InvalidLayeredBlendBranchFilters");
+    const FName InvalidLayeredBlendCurveOption = TEXT("Factory.InvalidLayeredBlendCurveOption");
+    const FName InvalidFootPlacementPlantSpeedMode = TEXT("Factory.InvalidFootPlacementPlantSpeedMode");
+    const FName InvalidFootPlacementPlantLockType = TEXT("Factory.InvalidFootPlacementPlantLockType");
     const FName NativePinNotFound = TEXT("Factory.NativePinNotFound");
     const FName ConnectionFailed = TEXT("Factory.ConnectionFailed");
     const FName EmptyCachedPoseName = TEXT("Factory.EmptyCachedPoseName");
@@ -117,6 +130,10 @@ namespace SekiroAnimBlueprintFactoryPrivate
         TMap<FString, UAnimSequenceBase*> SequenceAssets;
         TMap<FName, UEnum*> VariableEnums;
         TMap<FString, UEnum*> NodeEnums;
+        TMap<FString, TArray<FFootPlacemenLegDefinition>> FootPlacementLegDefinitions;
+        TMap<FString, TArray<FAnimLegIKDefinition>> LegIKDefinitions;
+        TMap<FString, TArray<FBranchFilter>> LayeredBlendBranchFilters;
+        TMap<FString, EFootPlacementLockType> FootPlacementLockTypes;
     };
 
     /**
@@ -181,6 +198,266 @@ namespace SekiroAnimBlueprintFactoryPrivate
     }
 
     /**
+     * 将 FootPlacement 的紧凑双腿字符串解析为引擎原生腿定义。
+     * 本函数仅处理值类型，可在任意线程调用；失败时清空输出且不访问 Skeleton 或 UObject。
+     *
+     * @param DefinitionText `FKFootBone,IKFootBone,BallBone,NumBonesInLimb|...` 格式字符串。
+     * @param OutDefinitions 接收已去除字段首尾空白的原生腿定义；失败时为空。
+     * @param OutError 接收首个格式错误的人类可读说明；成功时为空。
+     * @return 所有分组均包含四个有效字段且 NumBonesInLimb 大于等于 1 时返回 true。
+     */
+    bool ParseFootPlacementLegDefinitions(
+        const FString& DefinitionText,
+        TArray<FFootPlacemenLegDefinition>& OutDefinitions,
+        FString& OutError)
+    {
+        OutDefinitions.Reset();
+        OutError.Reset();
+        TArray<FString> LegStrings;
+        DefinitionText.ParseIntoArray(LegStrings, TEXT("|"), false);
+        if (LegStrings.IsEmpty())
+        {
+            OutError = TEXT("LegDefinitions must contain at least one leg.");
+            return false;
+        }
+
+        for (int32 LegIndex = 0; LegIndex < LegStrings.Num(); ++LegIndex)
+        {
+            TArray<FString> Fields;
+            LegStrings[LegIndex].ParseIntoArray(Fields, TEXT(","), false);
+            if (Fields.Num() != 4)
+            {
+                OutError = FString::Printf(
+                    TEXT("LegDefinitions entry %d must contain exactly four comma-separated fields."),
+                    LegIndex);
+                OutDefinitions.Reset();
+                return false;
+            }
+
+            for (FString& Field : Fields) Field = Field.TrimStartAndEnd();
+            const FName FKFootBone(*Fields[0]);
+            const FName IKFootBone(*Fields[1]);
+            const FName BallBone(*Fields[2]);
+            int32 NumBonesInLimb = 0;
+            if (FKFootBone.IsNone() || IKFootBone.IsNone() || BallBone.IsNone())
+            {
+                OutError = FString::Printf(
+                    TEXT("LegDefinitions entry %d contains an empty or None bone name."),
+                    LegIndex);
+                OutDefinitions.Reset();
+                return false;
+            }
+            if (!LexTryParseString(NumBonesInLimb, *Fields[3]) || NumBonesInLimb < 1)
+            {
+                OutError = FString::Printf(
+                    TEXT("LegDefinitions entry %d requires NumBonesInLimb >= 1."),
+                    LegIndex);
+                OutDefinitions.Reset();
+                return false;
+            }
+
+            FFootPlacemenLegDefinition& Definition = OutDefinitions.AddDefaulted_GetRef();
+            Definition.FKFootBone = FBoneReference(FKFootBone);
+            Definition.IKFootBone = FBoneReference(IKFootBone);
+            Definition.BallBone = FBoneReference(BallBone);
+            Definition.NumBonesInLimb = NumBonesInLimb;
+        }
+
+        return true;
+    }
+
+    /**
+     * 将 LegIK 的紧凑双腿字符串解析为引擎原生腿定义。
+     * 本函数仅处理值类型，可在任意线程调用；失败时清空输出且不访问 Skeleton 或 UObject。
+     *
+     * @param DefinitionText `IKFootBone,FKFootBone,NumBonesInLimb|...` 格式字符串。
+     * @param OutDefinitions 接收已去除字段首尾空白的原生腿定义；失败时为空。
+     * @param OutError 接收首个格式错误的人类可读说明；成功时为空。
+     * @return 所有分组均包含三个有效字段且 NumBonesInLimb 大于等于 1 时返回 true。
+     */
+    bool ParseLegIKDefinitions(
+        const FString& DefinitionText,
+        TArray<FAnimLegIKDefinition>& OutDefinitions,
+        FString& OutError)
+    {
+        OutDefinitions.Reset();
+        OutError.Reset();
+        TArray<FString> LegStrings;
+        DefinitionText.ParseIntoArray(LegStrings, TEXT("|"), false);
+        if (LegStrings.IsEmpty())
+        {
+            OutError = TEXT("LegDefinitions must contain at least one leg.");
+            return false;
+        }
+
+        for (int32 LegIndex = 0; LegIndex < LegStrings.Num(); ++LegIndex)
+        {
+            TArray<FString> Fields;
+            LegStrings[LegIndex].ParseIntoArray(Fields, TEXT(","), false);
+            if (Fields.Num() != 3)
+            {
+                OutError = FString::Printf(
+                    TEXT("LegDefinitions entry %d must contain exactly three comma-separated fields."),
+                    LegIndex);
+                OutDefinitions.Reset();
+                return false;
+            }
+
+            for (FString& Field : Fields) Field = Field.TrimStartAndEnd();
+            const FName IKFootBone(*Fields[0]);
+            const FName FKFootBone(*Fields[1]);
+            int32 NumBonesInLimb = 0;
+            if (IKFootBone.IsNone() || FKFootBone.IsNone())
+            {
+                OutError = FString::Printf(
+                    TEXT("LegDefinitions entry %d contains an empty or None bone name."),
+                    LegIndex);
+                OutDefinitions.Reset();
+                return false;
+            }
+            if (!LexTryParseString(NumBonesInLimb, *Fields[2]) || NumBonesInLimb < 1)
+            {
+                OutError = FString::Printf(
+                    TEXT("LegDefinitions entry %d requires NumBonesInLimb >= 1."),
+                    LegIndex);
+                OutDefinitions.Reset();
+                return false;
+            }
+
+            FAnimLegIKDefinition& Definition = OutDefinitions.AddDefaulted_GetRef();
+            Definition.IKFootBone = FBoneReference(IKFootBone);
+            Definition.FKFootBone = FBoneReference(FKFootBone);
+            Definition.NumBonesInLimb = NumBonesInLimb;
+        }
+
+        return true;
+    }
+
+    /**
+     * 将 Layered Blend Per Bone 的紧凑分支过滤字符串解析为引擎原生过滤器。
+     * 本函数仅处理值类型，可在任意线程调用；失败时清空输出，不校验骨骼是否存在于具体 Skeleton。
+     *
+     * @param DefinitionText `BoneName,BlendDepth|...` 格式字符串，至少包含一个过滤分支。
+     * @param OutFilters 接收保持声明顺序的原生分支过滤器；失败时为空。
+     * @param OutError 接收首个格式错误的人类可读说明；成功时为空。
+     * @return 所有分组均包含有效骨骼名和整数 BlendDepth 时返回 true。
+     */
+    bool ParseLayeredBlendBranchFilters(
+        const FString& DefinitionText,
+        TArray<FBranchFilter>& OutFilters,
+        FString& OutError)
+    {
+        OutFilters.Reset();
+        OutError.Reset();
+        TArray<FString> FilterStrings;
+        DefinitionText.ParseIntoArray(FilterStrings, TEXT("|"), false);
+        if (FilterStrings.IsEmpty())
+        {
+            OutError = TEXT("BranchFilters must contain at least one bone filter.");
+            return false;
+        }
+
+        for (int32 FilterIndex = 0; FilterIndex < FilterStrings.Num(); ++FilterIndex)
+        {
+            TArray<FString> Fields;
+            FilterStrings[FilterIndex].ParseIntoArray(Fields, TEXT(","), false);
+            if (Fields.Num() != 2)
+            {
+                OutError = FString::Printf(
+                    TEXT("BranchFilters entry %d must contain BoneName and BlendDepth."),
+                    FilterIndex);
+                OutFilters.Reset();
+                return false;
+            }
+
+            for (FString& Field : Fields) Field = Field.TrimStartAndEnd();
+            const FName BoneName(*Fields[0]);
+            int32 BlendDepth = 0;
+            if (BoneName.IsNone())
+            {
+                OutError = FString::Printf(
+                    TEXT("BranchFilters entry %d contains an empty or None bone name."),
+                    FilterIndex);
+                OutFilters.Reset();
+                return false;
+            }
+            if (!LexTryParseString(BlendDepth, *Fields[1]))
+            {
+                OutError = FString::Printf(
+                    TEXT("BranchFilters entry %d requires an integer BlendDepth."),
+                    FilterIndex);
+                OutFilters.Reset();
+                return false;
+            }
+
+            FBranchFilter& Filter = OutFilters.AddDefaulted_GetRef();
+            Filter.BoneName = BoneName;
+            Filter.BlendDepth = BlendDepth;
+        }
+
+        return true;
+    }
+
+    /**
+     * 将 Lua 使用的稳定曲线混合名称解析为 UE5.2 的 Layered Blend 曲线策略。
+     * 本函数仅比较名称并写入值类型输出，可在任意线程调用。
+     *
+     * @param OptionName CurveBlendOption 属性值；允许 UE5.2 ECurveBlendOption 的七个公开名称。
+     * @param OutOption 接收匹配的引擎枚举；失败时保持调用前的值。
+     * @return 名称精确匹配一个受支持枚举值时返回 true，否则返回 false。
+     */
+    bool ParseLayeredBlendCurveOption(
+        const FName OptionName,
+        ECurveBlendOption::Type& OutOption)
+    {
+        if (OptionName == TEXT("Override")) OutOption = ECurveBlendOption::Override;
+        else if (OptionName == TEXT("DoNotOverride")) OutOption = ECurveBlendOption::DoNotOverride;
+        else if (OptionName == TEXT("NormalizeByWeight")) OutOption = ECurveBlendOption::NormalizeByWeight;
+        else if (OptionName == TEXT("BlendByWeight")) OutOption = ECurveBlendOption::BlendByWeight;
+        else if (OptionName == TEXT("UseBasePose")) OutOption = ECurveBlendOption::UseBasePose;
+        else if (OptionName == TEXT("UseMaxValue")) OutOption = ECurveBlendOption::UseMaxValue;
+        else if (OptionName == TEXT("UseMinValue")) OutOption = ECurveBlendOption::UseMinValue;
+        else return false;
+        return true;
+    }
+
+    /**
+     * 将 Lua IR 的 FootPlacement 植脚锁定名称解析为引擎枚举。
+     * 本函数仅比较 FName 并写入值类型输出，可在任意线程调用，不访问 UObject。
+     *
+     * @param LockTypeName PlantLockType 属性值；允许 Unlocked、PivotAroundBall、PivotAroundAnkle、LockRotation。
+     * @param OutLockType 接收匹配的引擎锁定枚举；失败时保持调用前的值。
+     * @return 名称精确匹配一个受支持枚举值时返回 true，否则返回 false。
+     */
+    bool ParseFootPlacementLockType(
+        const FName LockTypeName,
+        EFootPlacementLockType& OutLockType)
+    {
+        if (LockTypeName == TEXT("Unlocked"))
+        {
+            OutLockType = EFootPlacementLockType::Unlocked;
+            return true;
+        }
+        if (LockTypeName == TEXT("PivotAroundBall"))
+        {
+            OutLockType = EFootPlacementLockType::PivotAroundBall;
+            return true;
+        }
+        if (LockTypeName == TEXT("PivotAroundAnkle"))
+        {
+            OutLockType = EFootPlacementLockType::PivotAroundAnkle;
+            return true;
+        }
+        if (LockTypeName == TEXT("LockRotation"))
+        {
+            OutLockType = EFootPlacementLockType::LockRotation;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * 覆盖 BlendList 每个 Pose 的统一 BlendTime；仅操作尚未编译的编辑器节点结构体。
      * 必须在游戏线程调用，Node 由当前 Factory 独占。
      *
@@ -201,7 +478,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
     }
 
     /**
-     * 判断注册表解析出的编辑器类是否属于本阶段可物化的七种原生节点。
+     * 判断注册表解析出的编辑器类是否属于本阶段可物化的原生节点。
      * 本函数只比较已加载 UClass，必须在游戏线程调用以遵守 UObject 访问约束。
      *
      * @param NodeClass 注册表 EditorNodeClassPath 解析出的类。
@@ -214,11 +491,18 @@ namespace SekiroAnimBlueprintFactoryPrivate
             || NodeClass == UAnimGraphNode_SequencePlayer::StaticClass()
             || NodeClass == UAnimGraphNode_StateMachine::StaticClass()
             || NodeClass == UAnimGraphNode_Inertialization::StaticClass()
+            || NodeClass == UAnimGraphNode_LocalToComponentSpace::StaticClass()
+            || NodeClass == UAnimGraphNode_ComponentToLocalSpace::StaticClass()
+            || NodeClass == UAnimGraphNode_OrientationWarping::StaticClass()
+            || NodeClass == UAnimGraphNode_FootPlacement::StaticClass()
+            || NodeClass == UAnimGraphNode_LegIK::StaticClass()
             || NodeClass == UAnimGraphNode_SaveCachedPose::StaticClass()
             || NodeClass == UAnimGraphNode_UseCachedPose::StaticClass()
             || NodeClass == UK2Node_VariableGet::StaticClass()
             || NodeClass == UAnimGraphNode_BlendListByBool::StaticClass()
-            || NodeClass == UAnimGraphNode_BlendListByEnum::StaticClass();
+            || NodeClass == UAnimGraphNode_BlendListByEnum::StaticClass()
+            || NodeClass == UAnimGraphNode_Slot::StaticClass()
+            || NodeClass == UAnimGraphNode_LayeredBoneBlend::StaticClass();
     }
 
     /**
@@ -419,6 +703,143 @@ namespace SekiroAnimBlueprintFactoryPrivate
                         OutData.NodeEnums.Add(Node.Id, EnumType);
                     }
                 }
+                if (RegisteredClass != nullptr && *RegisteredClass == UAnimGraphNode_FootPlacement::StaticClass())
+                {
+                    const FSekiroAnimIRProperty* LegDefinitionsProperty =
+                        FindProperty(Node, TEXT("LegDefinitions"));
+                    TArray<FFootPlacemenLegDefinition> LegDefinitions;
+                    FString ParseError;
+                    if (LegDefinitionsProperty == nullptr
+                        || !ParseFootPlacementLegDefinitions(
+                            LegDefinitionsProperty->Value.StringValue,
+                            LegDefinitions,
+                            ParseError))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidFootPlacementLegDefinitions,
+                            ParseError.IsEmpty()
+                                ? TEXT("FootPlacement requires valid LegDefinitions.")
+                                : ParseError,
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+                    else
+                    {
+                        OutData.FootPlacementLegDefinitions.Add(Node.Id, MoveTemp(LegDefinitions));
+                    }
+
+                    const FSekiroAnimIRProperty* PlantSpeedModeProperty =
+                        FindProperty(Node, TEXT("PlantSpeedMode"));
+                    if (PlantSpeedModeProperty != nullptr
+                        && PlantSpeedModeProperty->Value.NameValue != TEXT("Graph")
+                        && PlantSpeedModeProperty->Value.NameValue != TEXT("Manual"))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidFootPlacementPlantSpeedMode,
+                            FString::Printf(
+                                TEXT("FootPlacement PlantSpeedMode '%s' must be Graph or Manual."),
+                                *PlantSpeedModeProperty->Value.NameValue.ToString()),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+
+                    const FSekiroAnimIRProperty* PlantLockTypeProperty =
+                        FindProperty(Node, TEXT("PlantLockType"));
+                    if (PlantLockTypeProperty != nullptr)
+                    {
+                        EFootPlacementLockType PlantLockType = EFootPlacementLockType::PivotAroundBall;
+                        if (!ParseFootPlacementLockType(
+                            PlantLockTypeProperty->Value.NameValue,
+                            PlantLockType))
+                        {
+                            AddError(
+                                OutDiagnostics,
+                                InvalidFootPlacementPlantLockType,
+                                FString::Printf(
+                                    TEXT("FootPlacement PlantLockType '%s' must be Unlocked, PivotAroundBall, PivotAroundAnkle, or LockRotation."),
+                                    *PlantLockTypeProperty->Value.NameValue.ToString()),
+                                Node.Id,
+                                Node.SourceLocation);
+                        }
+                        else
+                        {
+                            OutData.FootPlacementLockTypes.Add(Node.Id, PlantLockType);
+                        }
+                    }
+                }
+                if (RegisteredClass != nullptr && *RegisteredClass == UAnimGraphNode_LegIK::StaticClass())
+                {
+                    const FSekiroAnimIRProperty* LegDefinitionsProperty =
+                        FindProperty(Node, TEXT("LegDefinitions"));
+                    TArray<FAnimLegIKDefinition> LegDefinitions;
+                    FString ParseError;
+                    if (LegDefinitionsProperty == nullptr
+                        || !ParseLegIKDefinitions(
+                            LegDefinitionsProperty->Value.StringValue,
+                            LegDefinitions,
+                            ParseError))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidLegIKDefinitions,
+                            ParseError.IsEmpty() ? TEXT("LegIK requires valid LegDefinitions.") : ParseError,
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+                    else
+                    {
+                        OutData.LegIKDefinitions.Add(Node.Id, MoveTemp(LegDefinitions));
+                    }
+                }
+                if (RegisteredClass != nullptr
+                    && *RegisteredClass == UAnimGraphNode_LayeredBoneBlend::StaticClass())
+                {
+                    const FSekiroAnimIRProperty* BranchFiltersProperty =
+                        FindProperty(Node, TEXT("BranchFilters"));
+                    TArray<FBranchFilter> BranchFilters;
+                    FString ParseError;
+                    if (BranchFiltersProperty == nullptr
+                        || !ParseLayeredBlendBranchFilters(
+                            BranchFiltersProperty->Value.StringValue,
+                            BranchFilters,
+                            ParseError))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidLayeredBlendBranchFilters,
+                            ParseError.IsEmpty()
+                                ? TEXT("LayeredBlendPerBone requires valid BranchFilters.")
+                                : ParseError,
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+                    else
+                    {
+                        OutData.LayeredBlendBranchFilters.Add(Node.Id, MoveTemp(BranchFilters));
+                    }
+
+                    const FSekiroAnimIRProperty* CurveOptionProperty =
+                        FindProperty(Node, TEXT("CurveBlendOption"));
+                    if (CurveOptionProperty != nullptr)
+                    {
+                        ECurveBlendOption::Type CurveOption = ECurveBlendOption::Override;
+                        if (!ParseLayeredBlendCurveOption(
+                            CurveOptionProperty->Value.NameValue,
+                            CurveOption))
+                        {
+                            AddError(
+                                OutDiagnostics,
+                                InvalidLayeredBlendCurveOption,
+                                FString::Printf(
+                                    TEXT("LayeredBlendPerBone CurveBlendOption '%s' is not supported."),
+                                    *CurveOptionProperty->Value.NameValue.ToString()),
+                                Node.Id,
+                                Node.SourceLocation);
+                        }
+                    }
+                }
                 if (RegisteredClass == nullptr
                     || *RegisteredClass != UAnimGraphNode_SequencePlayer::StaticClass())
                 {
@@ -613,11 +1034,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
             {
                 GraphsById.Add(Graph.Id, &Graph);
                 for (const FSekiroAnimIRNode& Node : Graph.Nodes) NodesById.Add(Node.Id, &Node);
-                if (Graph.GraphType != SekiroAnimGraphIRNames::StateMachineGraph) continue;
-                for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
-                {
-                    Transitions.Add(&Transition);
-                }
             }
         }
 
@@ -739,11 +1155,11 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
 
         /**
-         * 在工厂创建的 EventGraph 中生成 BlueprintUpdateAnimation override，并按规范 IR 顺序串联全部 Lua Rule 刷新调用。
-         * 每个调用把当前 AnimInstance 作为显式参数传给 Runtime；此函数只搭建 K2 图，不执行 Lua。
+         * 在工厂创建的 EventGraph 中生成 BlueprintUpdateAnimation override 及唯一 Lua 更新桥接。
+         * Transition Rule 由各自的 Rule Graph 按需执行，本函数不枚举或预计算任何规则。
          * 必须在游戏线程调用，目标蓝图是本次 Builder 独占的新资产。
          *
-         * @return override Event、Self、调用节点、默认参数和全部连接创建成功时返回 true。
+         * @return override Event、Self、Lua 更新节点、默认参数和连接创建成功时返回 true。
          */
         bool BuildEventGraph()
         {
@@ -761,18 +1177,14 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
             UFunction* UpdateFunction = UAnimInstance::StaticClass()->FindFunctionByName(
                 GET_FUNCTION_NAME_CHECKED(UAnimInstance, BlueprintUpdateAnimation));
-            UFunction* EvaluateFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
-                GET_FUNCTION_NAME_CHECKED(
-                    USekiroLuaTransitionRuntimeLibrary,
-                    EvaluateAndCacheTransitionRule));
             UFunction* LuaUpdateFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
                 GET_FUNCTION_NAME_CHECKED(USekiroLuaTransitionRuntimeLibrary, EvaluateBlueprintUpdateAnimation));
-            if (UpdateFunction == nullptr || EvaluateFunction == nullptr || LuaUpdateFunction == nullptr)
+            if (UpdateFunction == nullptr || LuaUpdateFunction == nullptr)
             {
                 AddError(
                     Diagnostics,
                     K2FunctionNotFound,
-                    TEXT("Required BlueprintUpdateAnimation or EvaluateAndCacheTransitionRule function was not found."),
+                    TEXT("Required BlueprintUpdateAnimation function or Lua update bridge was not found."),
                     Preflight.Blueprint.SourceModule,
                     Preflight.Blueprint.SourceLocation);
                 return false;
@@ -813,10 +1225,10 @@ namespace SekiroAnimBlueprintFactoryPrivate
             UEdGraphPin* SelfPin = SelfNode != nullptr
                 ? SelfNode->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Output)
                 : nullptr;
-            UEdGraphPin* PreviousExecPin = EventNode != nullptr
+            UEdGraphPin* EventExecPin = EventNode != nullptr
                 ? EventNode->FindPin(UEdGraphSchema_K2::PN_Then, EGPD_Output)
                 : nullptr;
-            if (EventNode == nullptr || SelfPin == nullptr || PreviousExecPin == nullptr)
+            if (EventNode == nullptr || SelfPin == nullptr || EventExecPin == nullptr)
             {
                 AddError(
                     Diagnostics,
@@ -831,13 +1243,12 @@ namespace SekiroAnimBlueprintFactoryPrivate
             UK2Node_CallFunction* LuaUpdateNode = CreateCallFunctionNode(
                 *EventGraph, TEXT("EvaluateBlueprintUpdateAnimation"), LuaUpdateFunction, 320, 0);
             UEdGraphPin* LuaUpdateExec = LuaUpdateNode != nullptr ? LuaUpdateNode->GetExecPin() : nullptr;
-            UEdGraphPin* LuaUpdateThen = LuaUpdateNode != nullptr ? LuaUpdateNode->GetThenPin() : nullptr;
             UEdGraphPin* LuaUpdateInstance = LuaUpdateNode != nullptr ? LuaUpdateNode->FindPin(TEXT("AnimInstance"), EGPD_Input) : nullptr;
             UEdGraphPin* LuaUpdateModule = LuaUpdateNode != nullptr ? LuaUpdateNode->FindPin(TEXT("LuaModuleName"), EGPD_Input) : nullptr;
             UEdGraphPin* LuaUpdateDelta = LuaUpdateNode != nullptr ? LuaUpdateNode->FindPin(TEXT("DeltaSeconds"), EGPD_Input) : nullptr;
             UEdGraphPin* EventDelta = EventNode->FindPin(TEXT("DeltaTimeX"), EGPD_Output);
             if (EventDelta == nullptr) EventDelta = EventNode->FindPin(TEXT("DeltaSeconds"), EGPD_Output);
-            if (LuaUpdateExec == nullptr || LuaUpdateThen == nullptr || LuaUpdateInstance == nullptr
+            if (LuaUpdateExec == nullptr || LuaUpdateInstance == nullptr
                 || LuaUpdateModule == nullptr || LuaUpdateDelta == nullptr || EventDelta == nullptr)
             {
                 AddError(Diagnostics, K2PinNotFound,
@@ -846,7 +1257,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
             K2Schema->TrySetDefaultValue(*LuaUpdateModule, Preflight.Blueprint.SourceModule, false);
-            if (!K2Schema->TryCreateConnection(PreviousExecPin, LuaUpdateExec)
+            if (!K2Schema->TryCreateConnection(EventExecPin, LuaUpdateExec)
                 || !K2Schema->TryCreateConnection(SelfPin, LuaUpdateInstance)
                 || !K2Schema->TryCreateConnection(EventDelta, LuaUpdateDelta))
             {
@@ -855,62 +1266,321 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     Preflight.Blueprint.SourceModule, Preflight.Blueprint.SourceLocation);
                 return false;
             }
-            PreviousExecPin = LuaUpdateThen;
-
-            int32 TransitionIndex = 0;
-            for (const FSekiroAnimIRTransition* Transition : Transitions)
-            {
-                if (Transition == nullptr) continue;
-                UK2Node_CallFunction* CallNode = CreateCallFunctionNode(
-                    *EventGraph,
-                    TEXT("EvaluateTransition.") + Transition->Id,
-                    EvaluateFunction,
-                    680 + TransitionIndex * 360,
-                    0);
-                UEdGraphPin* ExecutePin = CallNode != nullptr ? CallNode->GetExecPin() : nullptr;
-                UEdGraphPin* ThenPin = CallNode != nullptr ? CallNode->GetThenPin() : nullptr;
-                UEdGraphPin* AnimInstancePin = CallNode != nullptr
-                    ? CallNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
-                    : nullptr;
-                UEdGraphPin* ModulePin = CallNode != nullptr
-                    ? CallNode->FindPin(TEXT("LuaModuleName"), EGPD_Input)
-                    : nullptr;
-                UEdGraphPin* RulePin = CallNode != nullptr
-                    ? CallNode->FindPin(TEXT("RuleFunctionName"), EGPD_Input)
-                    : nullptr;
-                if (ExecutePin == nullptr
-                    || ThenPin == nullptr
-                    || AnimInstancePin == nullptr
-                    || ModulePin == nullptr
-                    || RulePin == nullptr)
-                {
-                    AddError(
-                        Diagnostics,
-                        K2PinNotFound,
-                        TEXT("EvaluateAndCacheTransitionRule call did not expose required K2 Pins."),
-                        Transition->Id,
-                        Transition->SourceLocation);
-                    return false;
-                }
-
-                K2Schema->TrySetDefaultValue(*ModulePin, Preflight.Blueprint.SourceModule, false);
-                K2Schema->TrySetDefaultValue(*RulePin, Transition->RuleFunctionName.ToString(), false);
-                if (!K2Schema->TryCreateConnection(PreviousExecPin, ExecutePin)
-                    || !K2Schema->TryCreateConnection(SelfPin, AnimInstancePin))
-                {
-                    AddError(
-                        Diagnostics,
-                        K2ConnectionFailed,
-                        TEXT("Failed to connect BlueprintUpdateAnimation Lua Rule refresh chain."),
-                        Transition->Id,
-                        Transition->SourceLocation);
-                    return false;
-                }
-
-                PreviousExecPin = ThenPin;
-                ++TransitionIndex;
-            }
             return true;
+        }
+
+        /** 把 Graph.Layout 中的逻辑分区单元格转换为确定性编辑器像素坐标。 */
+        TMap<FString, FIntPoint> BuildExplicitLayoutPositions(const FSekiroAnimIRGraph& Graph) const
+        {
+            constexpr int32 RegionWidth = 2400;
+            constexpr int32 RegionHeight = 1600;
+            TMap<FString, FIntPoint> Positions;
+            for (const FSekiroAnimIRLayoutGrid& Grid : Graph.Layout.Grids)
+            {
+                const int32 OriginX = Grid.RegionColumn * RegionWidth;
+                const int32 OriginY = Grid.RegionRow * RegionHeight;
+                for (const FSekiroAnimIRLayoutItem& Item : Grid.Items)
+                {
+                    Positions.Add(Item.ElementId, FIntPoint(
+                        OriginX + Item.Column * Grid.CellWidth,
+                        OriginY + Item.Row * Grid.CellHeight));
+                }
+            }
+            return Positions;
+        }
+
+        /** 根据风格把拓扑主轴层级和同层序号转换为画布坐标。 */
+        FIntPoint MakeFlowPosition(
+            const ESekiroAnimIRLayoutStyle Style,
+            const int32 Depth,
+            const int32 SecondaryIndex,
+            const int32 ElementIndex) const
+        {
+            constexpr int32 PrimarySpacing = 400;
+            constexpr int32 SecondarySpacing = 240;
+            if (Style == ESekiroAnimIRLayoutStyle::CompactGrid)
+            {
+                return FIntPoint((ElementIndex % 4) * PrimarySpacing, (ElementIndex / 4) * SecondarySpacing);
+            }
+            if (Style == ESekiroAnimIRLayoutStyle::RightToLeft)
+            {
+                return FIntPoint(Depth * PrimarySpacing, SecondaryIndex * SecondarySpacing);
+            }
+            if (Style == ESekiroAnimIRLayoutStyle::TopToBottom)
+            {
+                return FIntPoint(SecondaryIndex * PrimarySpacing, Depth * SecondarySpacing);
+            }
+            if (Style == ESekiroAnimIRLayoutStyle::BottomToTop)
+            {
+                return FIntPoint(SecondaryIndex * PrimarySpacing, -Depth * SecondarySpacing);
+            }
+            return FIntPoint(-Depth * PrimarySpacing, SecondaryIndex * SecondarySpacing);
+        }
+
+        /**
+         * 从 Result 反向领取每个有效输入节点，并递归计算“节点 + 直接输入子块”的层次布局。
+         * 每组直接输入的根节点位于父节点左侧同一列，子块按高度纵向堆叠；共享输入只归首个稳定父块所有。
+         * 未连接节点不计入有效树尺寸，而是在主树下方单独紧凑排列；显式 Grid 坐标最终覆盖自动结果。
+         *
+         * @param Graph 待排版的 Pose 或 StatePose IR Graph。
+         * @param ExplicitPositions Lua Grid 提供的固定画布坐标。
+         * @return 无返回值；函数直接修改 NativeNodes 中当前 Graph 对应节点的位置。
+         */
+        void ApplyHierarchicalPoseGraphLayout(
+            const FSekiroAnimIRGraph& Graph,
+            const TMap<FString, FIntPoint>& ExplicitPositions)
+        {
+            constexpr int32 HorizontalSpacing = 460;
+            constexpr int32 NodeBlockHeight = 140;
+            constexpr int32 SiblingSpacing = 40;
+            constexpr int32 DisconnectedHorizontalSpacing = 360;
+            constexpr int32 DisconnectedVerticalSpacing = 200;
+            constexpr int32 DisconnectedSectionSpacing = 320;
+
+            TArray<const FSekiroAnimIRNode*> OrderedNodes;
+            TSet<FString> GraphNodeIds;
+            for (const FSekiroAnimIRNode& Node : Graph.Nodes)
+            {
+                OrderedNodes.Add(&Node);
+                GraphNodeIds.Add(Node.Id);
+            }
+            OrderedNodes.Sort([](const FSekiroAnimIRNode& Left, const FSekiroAnimIRNode& Right)
+            {
+                return Left.DeclarationOrder < Right.DeclarationOrder;
+            });
+
+            TMap<FString, TArray<const FSekiroAnimIRLink*>> IncomingLinks;
+            for (const FSekiroAnimIRLink& Link : Graph.Links)
+            {
+                if (!GraphNodeIds.Contains(Link.Source.NodeId)
+                    || !GraphNodeIds.Contains(Link.Target.NodeId)) continue;
+                IncomingLinks.FindOrAdd(Link.Target.NodeId).Add(&Link);
+            }
+            for (TPair<FString, TArray<const FSekiroAnimIRLink*>>& Pair : IncomingLinks)
+            {
+                Pair.Value.Sort([](const FSekiroAnimIRLink& Left, const FSekiroAnimIRLink& Right)
+                {
+                    return Left.DeclarationOrder < Right.DeclarationOrder;
+                });
+            }
+
+            TMap<FString, TArray<FString>> OwnedInputs;
+            TSet<FString> EffectiveNodeIds;
+            EffectiveNodeIds.Add(Graph.RootNodeId);
+            TFunction<void(const FString&)> ClaimInputBlocks;
+            ClaimInputBlocks = [&](const FString& TargetNodeId)
+            {
+                const TArray<const FSekiroAnimIRLink*>* Links = IncomingLinks.Find(TargetNodeId);
+                if (Links == nullptr) return;
+                TSet<FString> DirectInputs;
+                for (const FSekiroAnimIRLink* Link : *Links)
+                {
+                    if (Link == nullptr
+                        || Link->Source.NodeId == TargetNodeId
+                        || DirectInputs.Contains(Link->Source.NodeId)) continue;
+                    DirectInputs.Add(Link->Source.NodeId);
+                    if (EffectiveNodeIds.Contains(Link->Source.NodeId)) continue;
+                    EffectiveNodeIds.Add(Link->Source.NodeId);
+                    OwnedInputs.FindOrAdd(TargetNodeId).Add(Link->Source.NodeId);
+                    ClaimInputBlocks(Link->Source.NodeId);
+                }
+            };
+            ClaimInputBlocks(Graph.RootNodeId);
+
+            TMap<FString, int32> BlockHeights;
+            TFunction<int32(const FString&)> MeasureBlock;
+            MeasureBlock = [&](const FString& NodeId)
+            {
+                if (const int32* CachedHeight = BlockHeights.Find(NodeId)) return *CachedHeight;
+                const TArray<FString>* Inputs = OwnedInputs.Find(NodeId);
+                int32 Height = NodeBlockHeight;
+                if (Inputs != nullptr && Inputs->Num() > 0)
+                {
+                    Height = 0;
+                    for (const FString& InputId : *Inputs) Height += MeasureBlock(InputId);
+                    Height += (Inputs->Num() - 1) * SiblingSpacing;
+                    Height = FMath::Max(Height, NodeBlockHeight);
+                }
+                BlockHeights.Add(NodeId, Height);
+                return Height;
+            };
+
+            TMap<FString, FIntPoint> AutomaticPositions;
+            TFunction<void(const FString&, int32, int32)> PlaceBlock;
+            PlaceBlock = [&](const FString& NodeId, const int32 NodeX, const int32 BlockCenterY)
+            {
+                AutomaticPositions.Add(NodeId, FIntPoint(NodeX, BlockCenterY - NodeBlockHeight / 2));
+                const TArray<FString>* Inputs = OwnedInputs.Find(NodeId);
+                if (Inputs == nullptr || Inputs->Num() == 0) return;
+
+                const int32 TotalHeight = MeasureBlock(NodeId);
+                int32 CursorY = BlockCenterY - TotalHeight / 2;
+                for (const FString& InputId : *Inputs)
+                {
+                    const int32 InputHeight = MeasureBlock(InputId);
+                    PlaceBlock(InputId, NodeX - HorizontalSpacing, CursorY + InputHeight / 2);
+                    CursorY += InputHeight + SiblingSpacing;
+                }
+            };
+
+            const FIntPoint* ExplicitRoot = ExplicitPositions.Find(Graph.RootNodeId);
+            const int32 RootX = ExplicitRoot != nullptr ? ExplicitRoot->X : 0;
+            const int32 RootCenterY = ExplicitRoot != nullptr
+                ? ExplicitRoot->Y + NodeBlockHeight / 2
+                : 0;
+            MeasureBlock(Graph.RootNodeId);
+            PlaceBlock(Graph.RootNodeId, RootX, RootCenterY);
+
+            int32 MinimumTreeX = 0;
+            int32 MaximumTreeY = 0;
+            bool bHasTreePosition = false;
+            for (const TPair<FString, FIntPoint>& Pair : AutomaticPositions)
+            {
+                MinimumTreeX = bHasTreePosition ? FMath::Min(MinimumTreeX, Pair.Value.X) : Pair.Value.X;
+                MaximumTreeY = bHasTreePosition ? FMath::Max(MaximumTreeY, Pair.Value.Y) : Pair.Value.Y;
+                bHasTreePosition = true;
+            }
+
+            TArray<const FSekiroAnimIRNode*> DisconnectedNodes;
+            for (const FSekiroAnimIRNode* Node : OrderedNodes)
+            {
+                if (!EffectiveNodeIds.Contains(Node->Id) && !ExplicitPositions.Contains(Node->Id))
+                {
+                    DisconnectedNodes.Add(Node);
+                }
+            }
+            const int32 DisconnectedColumns = FMath::Max(
+                1,
+                FMath::CeilToInt(FMath::Sqrt(static_cast<float>(DisconnectedNodes.Num()))));
+            const int32 DisconnectedOriginY = MaximumTreeY + DisconnectedSectionSpacing;
+            for (int32 Index = 0; Index < DisconnectedNodes.Num(); ++Index)
+            {
+                AutomaticPositions.Add(
+                    DisconnectedNodes[Index]->Id,
+                    FIntPoint(
+                        MinimumTreeX + (Index % DisconnectedColumns) * DisconnectedHorizontalSpacing,
+                        DisconnectedOriginY + (Index / DisconnectedColumns) * DisconnectedVerticalSpacing));
+            }
+
+            for (const FSekiroAnimIRNode* Node : OrderedNodes)
+            {
+                UEdGraphNode* const* NativeNode = NativeNodes.Find(Node->Id);
+                if (NativeNode == nullptr || *NativeNode == nullptr) continue;
+                const FIntPoint* Position = ExplicitPositions.Find(Node->Id);
+                if (Position == nullptr) Position = AutomaticPositions.Find(Node->Id);
+                if (Position == nullptr) continue;
+                (*NativeNode)->NodePosX = Position->X;
+                (*NativeNode)->NodePosY = Position->Y;
+            }
+        }
+
+        /**
+         * 将显式 Grid 位置应用为固定锚点，并按 Pose Link 到 Result 的反向深度排列其余节点。
+         * Radial 使用反向深度作为半径分层；未连接节点按声明顺序落到额外深度。
+         */
+        void ApplyPoseGraphLayout(const FSekiroAnimIRGraph& Graph)
+        {
+            ESekiroAnimIRLayoutStyle Style = Graph.Layout.Style;
+            const TMap<FString, FIntPoint> ExplicitPositions = BuildExplicitLayoutPositions(Graph);
+            if (Style == ESekiroAnimIRLayoutStyle::Auto
+                || Style == ESekiroAnimIRLayoutStyle::HierarchicalBlocks)
+            {
+                ApplyHierarchicalPoseGraphLayout(Graph, ExplicitPositions);
+                return;
+            }
+
+            TMap<FString, int32> Depths;
+            Depths.Add(Graph.RootNodeId, 0);
+            for (int32 Pass = 0; Pass < Graph.Nodes.Num(); ++Pass)
+            {
+                bool bChanged = false;
+                for (const FSekiroAnimIRLink& Link : Graph.Links)
+                {
+                    const int32* TargetDepth = Depths.Find(Link.Target.NodeId);
+                    if (TargetDepth == nullptr) continue;
+                    int32& SourceDepth = Depths.FindOrAdd(Link.Source.NodeId, *TargetDepth + 1);
+                    const int32 CandidateDepth = *TargetDepth + 1;
+                    if (CandidateDepth > SourceDepth)
+                    {
+                        SourceDepth = CandidateDepth;
+                        bChanged = true;
+                    }
+                }
+                if (!bChanged) break;
+            }
+
+            TArray<const FSekiroAnimIRNode*> OrderedNodes;
+            for (const FSekiroAnimIRNode& Node : Graph.Nodes) OrderedNodes.Add(&Node);
+            OrderedNodes.Sort([](const FSekiroAnimIRNode& Left, const FSekiroAnimIRNode& Right)
+            {
+                return Left.DeclarationOrder < Right.DeclarationOrder;
+            });
+            int32 MaximumDepth = 0;
+            for (const TPair<FString, int32>& Pair : Depths) MaximumDepth = FMath::Max(MaximumDepth, Pair.Value);
+            for (const FSekiroAnimIRNode* Node : OrderedNodes)
+            {
+                if (!Depths.Contains(Node->Id)) Depths.Add(Node->Id, ++MaximumDepth);
+            }
+            TMap<int32, int32> LayerSizes;
+            for (const FSekiroAnimIRNode* Node : OrderedNodes)
+            {
+                if (!ExplicitPositions.Contains(Node->Id)) ++LayerSizes.FindOrAdd(Depths[Node->Id]);
+            }
+            TMap<int32, int32> LayerCounts;
+            TSet<FIntPoint> Occupied;
+            for (const TPair<FString, FIntPoint>& Pair : ExplicitPositions) Occupied.Add(Pair.Value);
+
+            for (int32 ElementIndex = 0; ElementIndex < OrderedNodes.Num(); ++ElementIndex)
+            {
+                const FSekiroAnimIRNode& Node = *OrderedNodes[ElementIndex];
+                UEdGraphNode* const* NativeNode = NativeNodes.Find(Node.Id);
+                if (NativeNode == nullptr || *NativeNode == nullptr) continue;
+                const FIntPoint* Explicit = ExplicitPositions.Find(Node.Id);
+                if (Explicit != nullptr)
+                {
+                    (*NativeNode)->NodePosX = Explicit->X;
+                    (*NativeNode)->NodePosY = Explicit->Y;
+                    continue;
+                }
+
+                const int32 Depth = Depths[Node.Id];
+                const int32 SecondaryIndex = LayerCounts.FindOrAdd(Depth)++;
+                FIntPoint Position;
+                if (Style == ESekiroAnimIRLayoutStyle::Radial)
+                {
+                    const int32 LayerSize = FMath::Max(1, LayerSizes.FindRef(Depth));
+                    const double Angle = 2.0 * PI * static_cast<double>(SecondaryIndex)
+                        / static_cast<double>(LayerSize) - PI / 2.0;
+                    const double Radius = static_cast<double>(Depth * 520);
+                    Position = FIntPoint(
+                        FMath::RoundToInt(FMath::Cos(Angle) * Radius),
+                        FMath::RoundToInt(FMath::Sin(Angle) * Radius));
+                }
+                else
+                {
+                    Position = MakeFlowPosition(Style, Depth, SecondaryIndex, ElementIndex);
+                }
+                while (Occupied.Contains(Position))
+                {
+                    if (Style == ESekiroAnimIRLayoutStyle::TopToBottom
+                        || Style == ESekiroAnimIRLayoutStyle::BottomToTop)
+                    {
+                        Position.X += 400;
+                    }
+                    else if (Style != ESekiroAnimIRLayoutStyle::Radial)
+                    {
+                        Position.Y += 240;
+                    }
+                    else
+                    {
+                        Position.X += 160;
+                        Position.Y += 160;
+                    }
+                }
+                Occupied.Add(Position);
+                (*NativeNode)->NodePosX = Position.X;
+                (*NativeNode)->NodePosY = Position.Y;
+            }
         }
 
         /**
@@ -953,6 +1623,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
             {
                 if (!ConnectPoseLink(Link, NativeGraph)) return false;
             }
+
+            ApplyPoseGraphLayout(Graph);
 
             return true;
         }
@@ -1159,6 +1831,87 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return true;
             }
 
+            if (*NodeClass == UAnimGraphNode_Slot::StaticClass())
+            {
+                UAnimGraphNode_Slot* SlotNode =
+                    CreateNativeNode<UAnimGraphNode_Slot>(NativeGraph, Node.Id, PositionX, PositionY);
+                const FSekiroAnimIRProperty* SlotNameProperty = FindProperty(Node, TEXT("SlotName"));
+                if (SlotNode == nullptr || SlotNameProperty == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                SlotNode->Node.SlotName = SlotNameProperty->Value.NameValue;
+                const FSekiroAnimIRProperty* AlwaysUpdateProperty =
+                    FindProperty(Node, TEXT("bAlwaysUpdateSourcePose"));
+                if (AlwaysUpdateProperty != nullptr)
+                {
+                    SlotNode->Node.bAlwaysUpdateSourcePose = AlwaysUpdateProperty->Value.BoolValue;
+                }
+                SlotNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, SlotNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_LayeredBoneBlend::StaticClass())
+            {
+                UAnimGraphNode_LayeredBoneBlend* LayeredNode =
+                    CreateNativeNode<UAnimGraphNode_LayeredBoneBlend>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
+                const TArray<FBranchFilter>* BranchFilters =
+                    Preflight.LayeredBlendBranchFilters.Find(Node.Id);
+                if (LayeredNode == nullptr || BranchFilters == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                if (LayeredNode->Node.BlendPoses.IsEmpty()) LayeredNode->Node.AddPose();
+                while (LayeredNode->Node.BlendPoses.Num() > 1)
+                {
+                    LayeredNode->Node.RemovePose(LayeredNode->Node.BlendPoses.Num() - 1);
+                }
+                LayeredNode->Node.BlendMode = ELayeredBoneBlendMode::BranchFilter;
+                LayeredNode->Node.LayerSetup.SetNum(1);
+                LayeredNode->Node.LayerSetup[0].BranchFilters = *BranchFilters;
+                const FSekiroAnimIRProperty* RotationBlend =
+                    FindProperty(Node, TEXT("bMeshSpaceRotationBlend"));
+                if (RotationBlend != nullptr)
+                {
+                    LayeredNode->Node.bMeshSpaceRotationBlend = RotationBlend->Value.BoolValue;
+                }
+                const FSekiroAnimIRProperty* ScaleBlend =
+                    FindProperty(Node, TEXT("bMeshSpaceScaleBlend"));
+                if (ScaleBlend != nullptr)
+                {
+                    LayeredNode->Node.bMeshSpaceScaleBlend = ScaleBlend->Value.BoolValue;
+                }
+                const FSekiroAnimIRProperty* CurveOption =
+                    FindProperty(Node, TEXT("CurveBlendOption"));
+                if (CurveOption != nullptr)
+                {
+                    ECurveBlendOption::Type ParsedCurveOption = ECurveBlendOption::Override;
+                    if (!ParseLayeredBlendCurveOption(CurveOption->Value.NameValue, ParsedCurveOption))
+                    {
+                        return ReportNodeCreationFailure(Node);
+                    }
+                    LayeredNode->Node.CurveBlendOption = ParsedCurveOption;
+                }
+                const FSekiroAnimIRProperty* BlendRootMotion =
+                    FindProperty(Node, TEXT("bBlendRootMotionBasedOnRootBone"));
+                if (BlendRootMotion != nullptr)
+                {
+                    LayeredNode->Node.bBlendRootMotionBasedOnRootBone =
+                        BlendRootMotion->Value.BoolValue;
+                }
+
+                LayeredNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, LayeredNode);
+                return true;
+            }
+
             if (*NodeClass == UAnimGraphNode_Inertialization::StaticClass())
             {
                 UAnimGraphNode_Inertialization* InertializationNode =
@@ -1169,6 +1922,237 @@ namespace SekiroAnimBlueprintFactoryPrivate
                         PositionY);
                 if (InertializationNode == nullptr) return ReportNodeCreationFailure(Node);
                 NativeNodes.Add(Node.Id, InertializationNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_LocalToComponentSpace::StaticClass())
+            {
+                UAnimGraphNode_LocalToComponentSpace* ConversionNode =
+                    CreateNativeNode<UAnimGraphNode_LocalToComponentSpace>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
+                if (ConversionNode == nullptr) return ReportNodeCreationFailure(Node);
+                NativeNodes.Add(Node.Id, ConversionNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_ComponentToLocalSpace::StaticClass())
+            {
+                UAnimGraphNode_ComponentToLocalSpace* ConversionNode =
+                    CreateNativeNode<UAnimGraphNode_ComponentToLocalSpace>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
+                if (ConversionNode == nullptr) return ReportNodeCreationFailure(Node);
+                NativeNodes.Add(Node.Id, ConversionNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_OrientationWarping::StaticClass())
+            {
+                UAnimGraphNode_OrientationWarping* OrientationNode =
+                    CreateNativeNode<UAnimGraphNode_OrientationWarping>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
+                const FSekiroAnimIRProperty* SpineBonesProperty = FindProperty(Node, TEXT("SpineBones"));
+                const FSekiroAnimIRProperty* FootRootProperty = FindProperty(Node, TEXT("IKFootRootBone"));
+                const FSekiroAnimIRProperty* FootBonesProperty = FindProperty(Node, TEXT("IKFootBones"));
+                if (OrientationNode == nullptr
+                    || SpineBonesProperty == nullptr
+                    || FootRootProperty == nullptr
+                    || FootBonesProperty == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                OrientationNode->Node.Mode = EWarpingEvaluationMode::Manual;
+                OrientationNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                OrientationNode->Node.SpineBones.Reset();
+                TArray<FString> SpineBoneNames;
+                SpineBonesProperty->Value.StringValue.ParseIntoArray(SpineBoneNames, TEXT("|"), true);
+                for (const FString& SpineBoneName : SpineBoneNames)
+                {
+                    OrientationNode->Node.SpineBones.Add(
+                        FBoneReference(FName(*SpineBoneName.TrimStartAndEnd())));
+                }
+
+                OrientationNode->Node.IKFootRootBone = FBoneReference(FootRootProperty->Value.NameValue);
+                OrientationNode->Node.IKFootBones.Reset();
+                TArray<FString> FootBoneNames;
+                FootBonesProperty->Value.StringValue.ParseIntoArray(FootBoneNames, TEXT("|"), true);
+                for (const FString& FootBoneName : FootBoneNames)
+                {
+                    OrientationNode->Node.IKFootBones.Add(
+                        FBoneReference(FName(*FootBoneName.TrimStartAndEnd())));
+                }
+
+                const FSekiroAnimIRProperty* RotationAxisProperty = FindProperty(Node, TEXT("RotationAxis"));
+                if (RotationAxisProperty != nullptr)
+                {
+                    const FName RotationAxis = RotationAxisProperty->Value.NameValue;
+                    OrientationNode->Node.RotationAxis = RotationAxis == TEXT("X")
+                        ? EAxis::X
+                        : RotationAxis == TEXT("Y") ? EAxis::Y : EAxis::Z;
+                }
+
+                const FSekiroAnimIRProperty* DistributionProperty =
+                    FindProperty(Node, TEXT("DistributedBoneOrientationAlpha"));
+                if (DistributionProperty != nullptr)
+                {
+                    OrientationNode->Node.DistributedBoneOrientationAlpha = FMath::Clamp(
+                        static_cast<float>(DistributionProperty->Value.FloatValue),
+                        0.0f,
+                        1.0f);
+                }
+
+                const FSekiroAnimIRProperty* InterpSpeedProperty =
+                    FindProperty(Node, TEXT("RotationInterpSpeed"));
+                if (InterpSpeedProperty != nullptr)
+                {
+                    OrientationNode->Node.RotationInterpSpeed = FMath::Max(
+                        0.0f,
+                        static_cast<float>(InterpSpeedProperty->Value.FloatValue));
+                }
+
+                OrientationNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, OrientationNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_FootPlacement::StaticClass())
+            {
+                UAnimGraphNode_FootPlacement* FootPlacementNode =
+                    CreateNativeNode<UAnimGraphNode_FootPlacement>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
+                const FSekiroAnimIRProperty* FootRootProperty = FindProperty(Node, TEXT("IKFootRootBone"));
+                const FSekiroAnimIRProperty* PelvisProperty = FindProperty(Node, TEXT("PelvisBone"));
+                const TArray<FFootPlacemenLegDefinition>* LegDefinitions =
+                    Preflight.FootPlacementLegDefinitions.Find(Node.Id);
+                if (FootPlacementNode == nullptr
+                    || FootRootProperty == nullptr
+                    || PelvisProperty == nullptr
+                    || LegDefinitions == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                FootPlacementNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                FootPlacementNode->Node.IKFootRootBone = FBoneReference(FootRootProperty->Value.NameValue);
+                FootPlacementNode->Node.PelvisBone = FBoneReference(PelvisProperty->Value.NameValue);
+                FootPlacementNode->Node.LegDefinitions = *LegDefinitions;
+                const FSekiroAnimIRProperty* PlantSpeedModeProperty =
+                    FindProperty(Node, TEXT("PlantSpeedMode"));
+                FootPlacementNode->Node.PlantSpeedMode = PlantSpeedModeProperty != nullptr
+                    && PlantSpeedModeProperty->Value.NameValue == TEXT("Manual")
+                    ? EWarpingEvaluationMode::Manual
+                    : EWarpingEvaluationMode::Graph;
+                const EFootPlacementLockType* PlantLockType =
+                    Preflight.FootPlacementLockTypes.Find(Node.Id);
+                if (PlantLockType != nullptr)
+                {
+                    FootPlacementNode->Node.PlantSettings.LockType = *PlantLockType;
+                }
+
+                const FSekiroAnimIRProperty* PelvisMaxOffset = FindProperty(Node, TEXT("PelvisMaxOffset"));
+                if (PelvisMaxOffset != nullptr)
+                {
+                    FootPlacementNode->Node.PelvisSettings.MaxOffset =
+                        static_cast<float>(PelvisMaxOffset->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* PelvisRebalancing =
+                    FindProperty(Node, TEXT("PelvisHorizontalRebalancingWeight"));
+                if (PelvisRebalancing != nullptr)
+                {
+                    FootPlacementNode->Node.PelvisSettings.HorizontalRebalancingWeight =
+                        static_cast<float>(PelvisRebalancing->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* PlantSpeedThreshold =
+                    FindProperty(Node, TEXT("PlantSpeedThreshold"));
+                if (PlantSpeedThreshold != nullptr)
+                {
+                    FootPlacementNode->Node.PlantSettings.SpeedThreshold =
+                        static_cast<float>(PlantSpeedThreshold->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* PlantDistanceToGround =
+                    FindProperty(Node, TEXT("PlantDistanceToGround"));
+                if (PlantDistanceToGround != nullptr)
+                {
+                    FootPlacementNode->Node.PlantSettings.DistanceToGround =
+                        static_cast<float>(PlantDistanceToGround->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* TraceStartOffset = FindProperty(Node, TEXT("TraceStartOffset"));
+                if (TraceStartOffset != nullptr)
+                {
+                    FootPlacementNode->Node.TraceSettings.StartOffset =
+                        static_cast<float>(TraceStartOffset->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* TraceEndOffset = FindProperty(Node, TEXT("TraceEndOffset"));
+                if (TraceEndOffset != nullptr)
+                {
+                    FootPlacementNode->Node.TraceSettings.EndOffset =
+                        static_cast<float>(TraceEndOffset->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* TraceSweepRadius = FindProperty(Node, TEXT("TraceSweepRadius"));
+                if (TraceSweepRadius != nullptr)
+                {
+                    FootPlacementNode->Node.TraceSettings.SweepRadius =
+                        static_cast<float>(TraceSweepRadius->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* TraceMaxGroundPenetration =
+                    FindProperty(Node, TEXT("TraceMaxGroundPenetration"));
+                if (TraceMaxGroundPenetration != nullptr)
+                {
+                    FootPlacementNode->Node.TraceSettings.MaxGroundPenetration =
+                        static_cast<float>(TraceMaxGroundPenetration->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* TraceEnabled = FindProperty(Node, TEXT("bTraceEnabled"));
+                if (TraceEnabled != nullptr)
+                {
+                    FootPlacementNode->Node.TraceSettings.bEnabled = TraceEnabled->Value.BoolValue;
+                }
+
+                FootPlacementNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, FootPlacementNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_LegIK::StaticClass())
+            {
+                UAnimGraphNode_LegIK* LegIKNode = CreateNativeNode<UAnimGraphNode_LegIK>(
+                    NativeGraph,
+                    Node.Id,
+                    PositionX,
+                    PositionY);
+                const TArray<FAnimLegIKDefinition>* LegDefinitions =
+                    Preflight.LegIKDefinitions.Find(Node.Id);
+                if (LegIKNode == nullptr || LegDefinitions == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                LegIKNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                LegIKNode->Node.LegsDefinition = *LegDefinitions;
+                const FSekiroAnimIRProperty* ReachPrecision = FindProperty(Node, TEXT("ReachPrecision"));
+                if (ReachPrecision != nullptr)
+                {
+                    LegIKNode->Node.ReachPrecision = static_cast<float>(ReachPrecision->Value.FloatValue);
+                }
+                const FSekiroAnimIRProperty* MaxIterations = FindProperty(Node, TEXT("MaxIterations"));
+                if (MaxIterations != nullptr)
+                {
+                    LegIKNode->Node.MaxIterations = static_cast<int32>(MaxIterations->Value.IntegerValue);
+                }
+
+                LegIKNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, LegIKNode);
                 return true;
             }
 
@@ -1354,13 +2338,13 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
 
         /**
-         * 在 Transition 自动创建的 UAnimationTransitionGraph 中搭建只读缓存 Getter，并连接默认 Result。
-         * 此图只调用 BlueprintThreadSafe Getter，不执行 Lua；Self 仅作为缓存键中的 AnimInstance 参数。
+         * 在 Transition 自动创建的 UAnimationTransitionGraph 中搭建 Lua Rule 直接调用，并连接默认 Result。
+         * 此图由原生状态机仅在检查当前 State 出边时求值；Lua 规则约定只读 AnimInstance。
          * 必须在游戏线程调用，TransitionNode 及其 BoundGraph 由当前 Builder 独占。
          *
          * @param Transition 提供模块规则名、稳定 ID 和源码位置的 IR Transition。
          * @param TransitionNode 已经完成 PostPlacedNewNode、拥有默认 Result 的原生 Transition 节点。
-         * @return Getter、Self、默认参数和 Result 连接全部创建成功时返回 true。
+         * @return Lua Rule 调用、Self、默认参数和 Result 连接全部创建成功时返回 true。
          */
         bool BuildTransitionRuleGraph(
             const FSekiroAnimIRTransition& Transition,
@@ -1382,16 +2366,16 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
 
-            UFunction* GetterFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
+            UFunction* EvaluateFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
                 GET_FUNCTION_NAME_CHECKED(
                     USekiroLuaTransitionRuntimeLibrary,
-                    GetCachedTransitionRule));
-            if (GetterFunction == nullptr)
+                    EvaluateLuaTransitionRule));
+            if (EvaluateFunction == nullptr)
             {
                 AddError(
                     Diagnostics,
                     K2FunctionNotFound,
-                    TEXT("GetCachedTransitionRule function was not found."),
+                    TEXT("EvaluateLuaTransitionRule function was not found."),
                     Transition.Id,
                     Transition.SourceLocation);
                 return false;
@@ -1405,26 +2389,26 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 TEXT("TransitionRule.Self.") + Transition.Id,
                 0,
                 160);
-            UK2Node_CallFunction* GetterNode = CreateCallFunctionNode(
+            UK2Node_CallFunction* EvaluateNode = CreateCallFunctionNode(
                 *TransitionGraph,
-                TEXT("GetTransitionRule.") + Transition.Id,
-                GetterFunction,
+                TEXT("EvaluateTransitionRule.") + Transition.Id,
+                EvaluateFunction,
                 260,
                 0);
 
             UEdGraphPin* SelfPin = SelfNode != nullptr
                 ? SelfNode->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Output)
                 : nullptr;
-            UEdGraphPin* AnimInstancePin = GetterNode != nullptr
-                ? GetterNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
+            UEdGraphPin* AnimInstancePin = EvaluateNode != nullptr
+                ? EvaluateNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
                 : nullptr;
-            UEdGraphPin* ModulePin = GetterNode != nullptr
-                ? GetterNode->FindPin(TEXT("LuaModuleName"), EGPD_Input)
+            UEdGraphPin* ModulePin = EvaluateNode != nullptr
+                ? EvaluateNode->FindPin(TEXT("LuaModuleName"), EGPD_Input)
                 : nullptr;
-            UEdGraphPin* RulePin = GetterNode != nullptr
-                ? GetterNode->FindPin(TEXT("RuleFunctionName"), EGPD_Input)
+            UEdGraphPin* RulePin = EvaluateNode != nullptr
+                ? EvaluateNode->FindPin(TEXT("RuleFunctionName"), EGPD_Input)
                 : nullptr;
-            UEdGraphPin* ReturnPin = GetterNode != nullptr ? GetterNode->GetReturnValuePin() : nullptr;
+            UEdGraphPin* ReturnPin = EvaluateNode != nullptr ? EvaluateNode->GetReturnValuePin() : nullptr;
             UEdGraphPin* ResultPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input);
             if (SelfPin == nullptr
                 || AnimInstancePin == nullptr
@@ -1436,7 +2420,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 AddError(
                     Diagnostics,
                     K2PinNotFound,
-                    TEXT("Transition Rule Getter or Result did not expose required K2 Pins."),
+                    TEXT("Lua Transition Rule call or Result did not expose required K2 Pins."),
                     Transition.Id,
                     Transition.SourceLocation);
                 return false;
@@ -1450,7 +2434,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 AddError(
                     Diagnostics,
                     K2ConnectionFailed,
-                    TEXT("Failed to connect cached Transition Rule Getter to native Transition Result."),
+                    TEXT("Failed to connect AnimInstance Self to Lua Transition Rule call."),
                     Transition.Id,
                     Transition.SourceLocation);
                 return false;
@@ -1499,14 +2483,15 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
         /**
          * 递归物化一棵已验证的扁平 Gate AST，并返回该子树的 Bool 输出 Pin。
-         * 所有节点均为 BlueprintThreadSafe Getter 或纯数学函数，不执行 Lua；只能在游戏线程构建资产时调用。
+         * 除 LuaBool 叶子复用当前 Rule 的直接返回外，其余节点均为原生 Getter 或纯数学函数。
+         * 本函数只能在游戏线程构建资产时调用，不执行实际动画规则。
          *
          * @param Transition 提供 Gate 节点数组、稳定 ID 和诊断位置。
          * @param GateIndex 当前子树根索引。
          * @param Graph 目标原生 Transition Rule Graph。
          * @param SourceState Transition 源 State，用于绑定最相关 SequencePlayer 时间 Getter。
          * @param SelfPin 当前 AnimInstance 的 Self 输出。
-         * @param LuaBoolPin EventGraph 已发布 Lua bool 的线程安全 Getter 输出。
+         * @param LuaBoolPin 当前 Transition Graph 内 Lua Rule 的直接 Bool 输出。
          * @return 成功时返回子树 Bool 输出 Pin；节点或连接创建失败时返回 nullptr。
          */
         UEdGraphPin* BuildTransitionGateNode(
@@ -1640,8 +2625,205 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
 
         /**
+         * 将有 Entry 或 Transition 连接的有效状态排成紧凑近方形网格，列数取有效自动状态数平方根的上取整。
+         * 没有任何连接的状态不参与主网格尺寸计算，而是在主网格下方单独成组；显式 Grid 状态保持固定坐标。
+         *
+         * @param Graph 待排版的 StateMachine IR Graph。
+         * @param NativeGraph 持有 Entry 和 State 节点的原生状态机 Graph。
+         * @param StateNodes 状态稳定 ID 到原生 State 节点的映射。
+         * @param ExplicitPositions Lua Grid 提供的固定画布坐标。
+         * @return 无返回值；函数直接修改 State 和 Entry 节点的位置。
+         */
+        void ApplyHierarchicalStateMachineLayout(
+            const FSekiroAnimIRGraph& Graph,
+            UAnimationStateMachineGraph& NativeGraph,
+            const TMap<FString, UAnimStateNode*>& StateNodes,
+            const TMap<FString, FIntPoint>& ExplicitPositions)
+        {
+            constexpr int32 StateHorizontalSpacing = 300;
+            constexpr int32 StateVerticalSpacing = 170;
+            constexpr int32 EntryHorizontalOffset = 240;
+            constexpr int32 DisconnectedSectionSpacing = 260;
+
+            TSet<FString> EffectiveStateIds;
+            if (!Graph.StateMachine.EntryStateId.IsEmpty())
+            {
+                EffectiveStateIds.Add(Graph.StateMachine.EntryStateId);
+            }
+            for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
+            {
+                EffectiveStateIds.Add(Transition.SourceStateId);
+                EffectiveStateIds.Add(Transition.TargetStateId);
+            }
+
+            TArray<const FSekiroAnimIRState*> OrderedStates;
+            for (const FSekiroAnimIRState& State : Graph.StateMachine.States) OrderedStates.Add(&State);
+            OrderedStates.Sort([](const FSekiroAnimIRState& Left, const FSekiroAnimIRState& Right)
+            {
+                return Left.DeclarationOrder < Right.DeclarationOrder;
+            });
+
+            TArray<const FSekiroAnimIRState*> AutomaticEffectiveStates;
+            TArray<const FSekiroAnimIRState*> DisconnectedStates;
+            for (const FSekiroAnimIRState* State : OrderedStates)
+            {
+                if (ExplicitPositions.Contains(State->Id)) continue;
+                if (EffectiveStateIds.Contains(State->Id)) AutomaticEffectiveStates.Add(State);
+                else DisconnectedStates.Add(State);
+            }
+
+            TSet<FIntPoint> Occupied;
+            for (const TPair<FString, FIntPoint>& Pair : ExplicitPositions) Occupied.Add(Pair.Value);
+            const int32 EffectiveColumns = FMath::Max(
+                1,
+                FMath::CeilToInt(FMath::Sqrt(static_cast<float>(AutomaticEffectiveStates.Num()))));
+            for (int32 Index = 0; Index < AutomaticEffectiveStates.Num(); ++Index)
+            {
+                FIntPoint Position(
+                    (Index % EffectiveColumns) * StateHorizontalSpacing,
+                    (Index / EffectiveColumns) * StateVerticalSpacing);
+                while (Occupied.Contains(Position)) Position.Y += StateVerticalSpacing;
+                Occupied.Add(Position);
+                UAnimStateNode* const* StateNode = StateNodes.Find(AutomaticEffectiveStates[Index]->Id);
+                if (StateNode == nullptr || *StateNode == nullptr) continue;
+                (*StateNode)->NodePosX = Position.X;
+                (*StateNode)->NodePosY = Position.Y;
+            }
+
+            const int32 EffectiveRows = AutomaticEffectiveStates.Num() > 0
+                ? FMath::DivideAndRoundUp(AutomaticEffectiveStates.Num(), EffectiveColumns)
+                : 0;
+            const int32 DisconnectedColumns = FMath::Max(
+                1,
+                FMath::CeilToInt(FMath::Sqrt(static_cast<float>(DisconnectedStates.Num()))));
+            const int32 DisconnectedOriginY = EffectiveRows * StateVerticalSpacing + DisconnectedSectionSpacing;
+            for (int32 Index = 0; Index < DisconnectedStates.Num(); ++Index)
+            {
+                FIntPoint Position(
+                    (Index % DisconnectedColumns) * StateHorizontalSpacing,
+                    DisconnectedOriginY + (Index / DisconnectedColumns) * StateVerticalSpacing);
+                while (Occupied.Contains(Position)) Position.Y += StateVerticalSpacing;
+                Occupied.Add(Position);
+                UAnimStateNode* const* StateNode = StateNodes.Find(DisconnectedStates[Index]->Id);
+                if (StateNode == nullptr || *StateNode == nullptr) continue;
+                (*StateNode)->NodePosX = Position.X;
+                (*StateNode)->NodePosY = Position.Y;
+            }
+
+            for (const TPair<FString, FIntPoint>& Pair : ExplicitPositions)
+            {
+                UAnimStateNode* const* StateNode = StateNodes.Find(Pair.Key);
+                if (StateNode == nullptr || *StateNode == nullptr) continue;
+                (*StateNode)->NodePosX = Pair.Value.X;
+                (*StateNode)->NodePosY = Pair.Value.Y;
+            }
+
+            UAnimStateNode* const* EntryStateNode = StateNodes.Find(Graph.StateMachine.EntryStateId);
+            if (NativeGraph.EntryNode != nullptr && EntryStateNode != nullptr && *EntryStateNode != nullptr)
+            {
+                NativeGraph.EntryNode->NodePosX = (*EntryStateNode)->NodePosX - EntryHorizontalOffset;
+                NativeGraph.EntryNode->NodePosY = (*EntryStateNode)->NodePosY;
+            }
+        }
+
+        /**
+         * 将 StateMachine 显式 Grid 作为固定锚点，并按选定风格排列其余 State。
+         * HierarchicalBlocks 使用紧凑近方形网格；传统流式风格仍从 Entry 做 BFS 分层。
+         */
+        void ApplyStateMachineLayout(
+            const FSekiroAnimIRGraph& Graph,
+            UAnimationStateMachineGraph& NativeGraph,
+            const TMap<FString, UAnimStateNode*>& StateNodes)
+        {
+            ESekiroAnimIRLayoutStyle Style = Graph.Layout.Style;
+            const TMap<FString, FIntPoint> ExplicitPositions = BuildExplicitLayoutPositions(Graph);
+            if (Style == ESekiroAnimIRLayoutStyle::Auto
+                || Style == ESekiroAnimIRLayoutStyle::HierarchicalBlocks)
+            {
+                ApplyHierarchicalStateMachineLayout(Graph, NativeGraph, StateNodes, ExplicitPositions);
+                return;
+            }
+
+            TMap<FString, int32> Depths;
+            TArray<FString> Queue;
+            if (!Graph.StateMachine.EntryStateId.IsEmpty())
+            {
+                Depths.Add(Graph.StateMachine.EntryStateId, 0);
+                Queue.Add(Graph.StateMachine.EntryStateId);
+            }
+            for (int32 QueueIndex = 0; QueueIndex < Queue.Num(); ++QueueIndex)
+            {
+                const FString& Current = Queue[QueueIndex];
+                const int32 CurrentDepth = Depths[Current];
+                for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
+                {
+                    if (Transition.SourceStateId != Current || Depths.Contains(Transition.TargetStateId)) continue;
+                    Depths.Add(Transition.TargetStateId, CurrentDepth + 1);
+                    Queue.Add(Transition.TargetStateId);
+                }
+            }
+
+            TArray<const FSekiroAnimIRState*> OrderedStates;
+            for (const FSekiroAnimIRState& State : Graph.StateMachine.States) OrderedStates.Add(&State);
+            OrderedStates.Sort([](const FSekiroAnimIRState& Left, const FSekiroAnimIRState& Right)
+            {
+                return Left.DeclarationOrder < Right.DeclarationOrder;
+            });
+            TMap<int32, int32> LayerCounts;
+            int32 FallbackDepth = Depths.Num();
+            TSet<FIntPoint> Occupied;
+            for (const TPair<FString, FIntPoint>& Pair : ExplicitPositions) Occupied.Add(Pair.Value);
+            for (int32 StateIndex = 0; StateIndex < OrderedStates.Num(); ++StateIndex)
+            {
+                const FSekiroAnimIRState& State = *OrderedStates[StateIndex];
+                UAnimStateNode* const* StateNode = StateNodes.Find(State.Id);
+                if (StateNode == nullptr || *StateNode == nullptr) continue;
+                const FIntPoint* Explicit = ExplicitPositions.Find(State.Id);
+                if (Explicit != nullptr)
+                {
+                    (*StateNode)->NodePosX = Explicit->X;
+                    (*StateNode)->NodePosY = Explicit->Y;
+                    continue;
+                }
+
+                const int32 Depth = Depths.Contains(State.Id) ? Depths[State.Id] : FallbackDepth++;
+                const int32 SecondaryIndex = LayerCounts.FindOrAdd(Depth)++;
+                FIntPoint Position;
+                if (Style == ESekiroAnimIRLayoutStyle::Radial)
+                {
+                    const float Angle = static_cast<float>(SecondaryIndex) * 1.57079632679f;
+                    const float Radius = static_cast<float>(FMath::Max(1, Depth)) * 420.0f;
+                    Position = FIntPoint(
+                        FMath::RoundToInt(FMath::Cos(Angle) * Radius),
+                        FMath::RoundToInt(FMath::Sin(Angle) * Radius));
+                    if (Depth == 0) Position = FIntPoint::ZeroValue;
+                }
+                else
+                {
+                    Position = MakeFlowPosition(Style, Depth, SecondaryIndex, StateIndex);
+                    if (Style == ESekiroAnimIRLayoutStyle::LeftToRight
+                        || Style == ESekiroAnimIRLayoutStyle::RightToLeft)
+                    {
+                        Position.X = -Position.X;
+                    }
+                }
+                while (Occupied.Contains(Position)) Position.Y += 260;
+                Occupied.Add(Position);
+                (*StateNode)->NodePosX = Position.X;
+                (*StateNode)->NodePosY = Position.Y;
+            }
+
+            UAnimStateNode* const* EntryStateNode = StateNodes.Find(Graph.StateMachine.EntryStateId);
+            if (NativeGraph.EntryNode != nullptr && EntryStateNode != nullptr && *EntryStateNode != nullptr)
+            {
+                NativeGraph.EntryNode->NodePosX = (*EntryStateNode)->NodePosX - 280;
+                NativeGraph.EntryNode->NodePosY = (*EntryStateNode)->NodePosY;
+            }
+        }
+
+        /**
          * 物化一个原生 StateMachine Graph，包括 Entry、State、Transition 及各 StatePose 子图。
-         * State/Transition 均经 FGraphNodeCreator::Finalize 触发 UE 默认 BoundGraph 生命周期；Transition Rule 只读取线程安全缓存。
+         * State/Transition 均经 FGraphNodeCreator::Finalize 触发 UE 默认 BoundGraph 生命周期；Transition Rule 按需直接调用 Lua。
          * 必须在游戏线程调用，NativeGraph 及其 SubGraphs 在调用期间由本 Builder 独占。
          *
          * @param Graph StateMachine 类型 IR Graph。
@@ -1724,6 +2906,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 if (!BuildPoseGraph(*StateGraph, *NativeStateGraph)) return false;
             }
 
+            ApplyStateMachineLayout(Graph, NativeGraph, StateNodes);
+
             UAnimStateNode* const* EntryState = StateNodes.Find(Graph.StateMachine.EntryStateId);
             if (NativeGraph.EntryNode == nullptr
                 || NativeGraph.EntryNode->Pins.Num() == 0
@@ -1761,8 +2945,9 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 UAnimStateTransitionNode* TransitionNode = CreateNativeNode<UAnimStateTransitionNode>(
                     NativeGraph,
                     Transition.Id,
-                    TransitionIndex * 300 + 150,
-                    100);
+                    ((*SourceState)->NodePosX + (*TargetState)->NodePosX) / 2,
+                    ((*SourceState)->NodePosY + (*TargetState)->NodePosY) / 2
+                        + ((TransitionIndex % 2 == 0) ? -60 : 60));
                 if (TransitionNode == nullptr || TransitionNode->BoundGraph == nullptr)
                 {
                     AddError(
@@ -1883,6 +3068,11 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 }
                 else if (IRPinName == TEXT("ActiveValue")) NativePinName = TEXT("ActiveEnumValue");
             }
+            else if ((*IRNode)->NodeType == SekiroAnimGraphIRNames::LayeredBlendPerBoneNode)
+            {
+                if (IRPinName == TEXT("BlendPose")) NativePinName = TEXT("BlendPoses_0");
+                else if (IRPinName == TEXT("BlendWeight")) NativePinName = TEXT("BlendWeights_0");
+            }
             UEdGraphPin* Pin = NativeNode.FindPin(NativePinName, Direction);
             if (Pin == nullptr && IRPinName == TEXT("ActiveValue"))
             {
@@ -1897,7 +3087,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
         const FSekiroAnimIRLayer& Layer;
         TMap<FString, const FSekiroAnimIRGraph*> GraphsById;
         TMap<FString, const FSekiroAnimIRNode*> NodesById;
-        TArray<const FSekiroAnimIRTransition*> Transitions;
         TMap<FString, UEdGraph*> NativeGraphs;
         TMap<FString, UEdGraphNode*> NativeNodes;
     };
@@ -2102,7 +3291,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
     /**
      * 在预检完成后调用 UAnimBlueprintFactory，物化原生 Graph 并执行完整 AnimBlueprint 编译。
-     * 必须在游戏线程调用；失败时清理新建蓝图且不通知 AssetRegistry。
+     * 必须在游戏线程调用；新蓝图会关闭多线程动画更新，使 Rule Graph 可安全直接进入 UnLua。
+     * 失败时清理新建蓝图且不通知 AssetRegistry。
      *
      * @param Preflight 已成功完成的规范化预检数据。
      * @param Outer 新蓝图所属 package。
@@ -2142,6 +3332,9 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 Preflight.Blueprint.SourceLocation);
             return nullptr;
         }
+
+        AnimBlueprint->Modify();
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
 
         if (bTransient)
         {
@@ -2185,7 +3378,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
     /**
      * 将已预检 IR 写入目标 AnimBlueprint 的现有 UObject，缺失图外壳由 ResetLuaOwnedBlueprint 自动恢复。
      * 可选 staging 仅供显式工具在进入原生编译前验证；编译前回调必须关闭 staging，避免嵌套原生编译。
-     * 必须在游戏线程且 GEditor 可用时调用。函数只准备 Graph，不调用目标 Blueprint 的原生编译。
+     * 必须在游戏线程且 GEditor 可用时调用。函数在同一事务中关闭多线程动画更新，
+     * 只准备 Graph，不调用目标 Blueprint 的原生编译。
      *
      * @param Blueprint 接收生成结构的标准动画蓝图。
      * @param Preflight 已完成资源解析和规范化的 IR 数据。
@@ -2231,6 +3425,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
             NSLOCTEXT("SekiroLuaAnimBlueprint", "PrepareTransaction", "Prepare Lua Animation Blueprint Graph"),
             &Blueprint);
         Blueprint.Modify();
+        Blueprint.bUseMultiThreadedAnimationUpdate = false;
 
         bool bPrepared = ResetLuaOwnedBlueprint(
             Blueprint,
@@ -2428,7 +3623,8 @@ UAnimBlueprint* USekiroAnimBlueprintFactoryLibrary::CompileLuaModuleToAnimBluepr
 
 /**
  * 为已有的标准 UAnimBlueprint 附加或更新 Lua 源扩展，并将资产标记为等待首次显式编译。
- * 函数只配置源身份，不读取 Lua、不清理现有 Graph，也不执行原生编译；因此可先安全接管旧动画蓝图，
+ * 函数配置源身份并立即关闭多线程动画更新，但不读取 Lua、不清理现有 Graph，也不执行原生编译；
+ * 因此可先安全接管旧动画蓝图，
  * 再通过 CompileLuaAnimBlueprintInPlace 完成带 staging 和事务回滚的结构替换。
  * 必须在非 PIE 的游戏线程调用，且目标必须是精确 UAnimBlueprint 类型以继续使用 UE5.2 原生动画编译器。
  *
@@ -2455,6 +3651,7 @@ bool USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
 
     AnimBlueprint->Modify();
     Extension->Modify();
+    AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
     Extension->LuaModuleName = LuaModuleName;
     Extension->SourceMode = ESekiroLuaAnimBlueprintSourceMode::Lua;
     Extension->MarkSourceDirty(TEXT("Lua source configured; compile the Animation Blueprint or start PIE."));

@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Inertialization 的 Lua 编译期节点类型。
 -- 具名类型只为 Graph API 和 Rider 提供准确 Pin 补全，运行时仍由 UE 原生节点求值。
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")

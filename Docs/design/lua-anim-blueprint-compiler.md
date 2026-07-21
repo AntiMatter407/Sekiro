@@ -97,8 +97,8 @@ Layer/GroundLocomotion/Graph/MainAnimGraph/Node/Locomotion/Graph/StateMachine/Tr
 
 - `BuildAnimGraph`、Node/Link 声明和资产生成属于编辑器编译期，只在重新生成动画蓝图时执行和调试。
 - `NativeUpdateAnimation`、`CanEnter_*`、`UpdateAnimation_*` 属于 PIE 运行期，可通过 UnLua 与 Rider Lua 调试器断点调试。
-- 运行期 Lua 只在游戏线程计算规则和参数，并以稳定 Transition ID/Property ID 写入帧缓存。
-- 原生 `AnimInstanceProxy` 将缓存复制到动画线程；Pose、Root Motion、Notify、SequencePlayer 和混合仍由 UE 原生节点执行。
+- Lua 来源 AnimBlueprint 暂时关闭多线程动画更新；原生状态机在游戏线程只检查当前状态的出边，对应 Transition Rule Graph 按需直接调用 Lua `CanEnter_*`。
+- Pose、Root Motion、Notify、SequencePlayer 和混合仍由 UE 原生节点执行；Lua 不直接操作 `FCompactPose` 或在工作线程进入 UnLua VM。
 
 因此，Lua 可以像蓝图逻辑一样参与 PIE 调试，但不在动画工作线程直接执行 Lua VM，也不替代原生 Pose 求值。
 
@@ -168,6 +168,8 @@ C++ NodeType 注册表是节点结构的唯一权威，保存编辑器节点类�
 | `SequencePlayer` | `AnimGraphNode_SequencePlayer` | `Pose`、`StatePose` | `Pose: Output Pose` | `Sequence` 必填；循环、速率和起播时间可选 |
 | `StateMachine` | `AnimGraphNode_StateMachine` | `Pose`、`StatePose` | `Pose: Output Pose` | 必须拥有 `StateMachine` Graph |
 | `Inertialization` | `AnimGraphNode_Inertialization` | `Pose`、`StatePose` | `Source: Input Pose`、`Pose: Output Pose` | 无 |
+| `FootPlacement` | `AnimGraphNode_FootPlacement` | `Pose`、`StatePose` | `ComponentPose`、`Alpha`、`Pose` | IK 根、骨盆和双腿定义必填；地面检测、种植速度和 `PlantLockType` 可选 |
+| `LegIK` | `AnimGraphNode_LegIK` | `Pose`、`StatePose` | `ComponentPose`、`Alpha`、`Pose` | 双腿 IK/FK 定义必填；精度与迭代数可选 |
 
 IR 的 `Pins` 是完整一致性断言，不是创建真实 Pin 的命令。未知 NodeType、缺失或多余 Pin、Pin 方向/类型/连接数不一致、未知 Property、必填 Property 缺失、Property 类型不一致、错误 GraphType 或 OwnedGraph 都必须在创建资产前被拒绝。Link 解析使用注册 Pin，不信任 Lua 自报结构。
 
@@ -176,13 +178,13 @@ NodeFactory 和后续节点扩展阶段需要补齐的原生概念：
 | 差异 | 当前状态 | 处理阶段 |
 |------|----------|----------|
 | 专用 Graph/Result UObject | 已生成对应原生 Graph、Result/Entry UObject，并保持正确 Outer/SubGraphs | 已完成 |
-| Transition `BoundGraph` 和 bool Result | 已生成原生规则 Graph，并连接线程安全 Lua 规则缓存 Getter | 已完成 |
+| Transition `BoundGraph` 和 bool Result | 已生成原生规则 Graph，并连接按需直调 Lua 规则的纯函数节点 | 已完成 |
 | 自定义 Transition Blend Graph、BlendProfile、CustomBlendCurve | IR 尚未声明 | 节点扩展阶段 |
 | Conduit、State Alias、Bidirectional/Shared Rule | IR 尚未声明 | 状态机扩展阶段 |
 | AnimLayer 接口签名、输入 Pose、Linked Anim Layer | 当前 Layer 仅是编译作用域 | AnimationLayer 阶段 |
 | Pin 的完整 K2 类型和 Optional Pin 暴露规则 | 注册表已覆盖稳定名称、方向和注册数据类型；完整 `FEdGraphPinType` 与 Optional Pin 暴露仍待节点生成时从真实节点核对 | NodeFactory 阶段 |
 | SequencePlayer 同步组、Role、Method、PlayRateBasis | 当前只覆盖最小播放器属性 | AssetPlayer 扩展阶段 |
-| Lua 规则的游戏线程缓存与动画线程只读消费 | 已按 AnimInstance、模块名和规则名隔离实现 | 已完成 |
+| Lua 规则的游戏线程按需求值 | Lua 来源资产关闭多线程 Update，Transition Graph 使用 AnimInstance、模块名和规则名直接求值 | 已完成 |
 
 ## 第三阶段：原生 NodeFactory
 
@@ -196,11 +198,11 @@ NodeFactory 只消费已经通过 Validator 的规范 IR，并把声明还原为
 4. 将 IR 属性写入真实节点，并按注册 Pin 名解析原生 Pin，通过 Graph Schema 建立 Pose Link。
 5. 连接 StateMachine Entry、State 与 Transition 拓扑，最后调用 UE 蓝图编译器验证生成类。
 
-首批后端只支持一个普通主动画层，以及 `OutputPose`、`StateResult`、`SequencePlayer`、`StateMachine`、`Inertialization`。多动画层、模板 AnimBlueprint 和自定义 Transition Blend Graph 必须返回明确诊断，不能被静默忽略。
+当前后端支持一个普通主动画层，以及播放器、状态机、混合、缓存姿势、空间转换、Orientation Warping、Foot Placement 和 Leg IK 等已注册节点。多动画层、模板 AnimBlueprint 和自定义 Transition Blend Graph 必须返回明确诊断，不能被静默忽略。
 
 `OutputPose` 与 `StateResult` 映射到 Schema 已创建的唯一默认 Result 节点，不重复创建。StateMachine Node 拥有 `UAnimationStateMachineGraph`，State 拥有 `UAnimationStateGraph`，Transition 拥有 `UAnimationTransitionGraph`；这些 Graph 同时保持正确的 UObject Outer 和父 Graph `SubGraphs` 关系。IR 的 Graph、Node、State 与 Transition 稳定 ID 映射为确定性 `GraphGuid`/`NodeGuid`，为后续增量重建和调试映射提供身份基础。
 
-Transition 后端会在生成蓝图的 `BlueprintUpdateAnimation` Event 中，于游戏线程逐条调用 Lua `CanEnter_*` 并发布结果。原生 Transition Rule Graph 只调用 `GetCachedTransitionRule` 读取最近快照，因此动画工作线程不进入 Lua VM，也不执行 UObject 反射。
+Transition 后端会在每条原生 Transition Rule Graph 中生成 `EvaluateLuaTransitionRule` 调用，再将 Lua 结果与 IR 声明的原生 Gate 合并后连接 Result。`BlueprintUpdateAnimation` Event 只负责 Lua 动画参数更新，不再全量预计算 Transition。Lua 来源资产关闭多线程动画更新，保证原生状态机按优先级检查当前出边时，直接在游戏线程进入 UnLua。
 
 一键入口 `CompileLuaModuleToAnimBlueprintAsset` 串联 `LuaModule -> CompileIR -> NodeFactory -> Blueprint Compile -> SavePackage`。它只创建新资产并拒绝覆盖，失败通过结构化 Diagnostic 返回；成功后生成物是标准 `UAnimBlueprint` 与 `GeneratedClass`，运行时不依赖编辑器模块。
 

@@ -94,6 +94,7 @@ FLVER 节点存的是**本地变换**（相对父骨骼），代码直接把本�
 
 **新增参数**：
 - `skeleton_source: str` — 骨架数据源路径。优先动画 JSON（已含 146 根完整骨架），其次 skeleton.hkx（需调提取器生成）。
+- `auxiliary_bones: list[dict]` — 可选的不蒙皮参考骨骼声明。项目资产配置可按资产名提供默认值，通用 C++ 导入器不硬编码业务骨骼名。
 
 **改造点**：
 
@@ -113,6 +114,20 @@ FLVER 节点存的是**本地变换**（相对父骨骼），代码直接把本�
    - 部件 FLVER 独有的骨骼（不在 146 根里，如布料 sim）→ 由 C++ 侧 `SAModelImporter` 追加（对齐 `AppendModelOnlyBones` 逻辑，见 3.3）
 
 4. **`_merge_bones` 弃用**：骨架不再从 FLVER 合并，改为直接用 146 根 HKX 骨架。`_merge_bones` 仅保留给"无 skeleton_source"的回退场景（行为不变，但会输出警告）。
+
+5. **辅助参考骨骼独立声明**：`AuxiliaryBones` 不进入源 `Bones` 数组，也不参与网格权重。声明只允许引用已经存在或更早声明的父骨骼，例如：
+
+   ```json
+   {
+     "Name": "IK_Foot_Plane",
+     "ParentName": "Root",
+     "LocalTranslation": [0.0, 0.0, 0.0],
+     "LocalRotation": [0.0, 0.0, 0.0, 1.0],
+     "LocalScale": [1.0, 1.0, 1.0]
+   }
+   ```
+
+   导入器在合成独立 `Root` 并保留全部现有层级后追加这些骨骼；重复名称、缺失父级或后置父级均应使导入失败，不能静默改挂到其他骨骼。
 
 ### 3.3 SAModelImporter C++ 改造（最小）
 

@@ -1,9 +1,12 @@
+-- Lua 类型：动画蓝图编译描述/状态机模块；编译对象是纯 Lua 表，运行时规则仅通过显式 Inst 访问 AnimInstance。
 -- Sekiro Jump 子状态机。
--- Start/Land 使用带 RootMotion 的八方向原始资产，InAir 只输出姿势并由 CharacterMovement 负责轨迹。
+-- 非锁定有向跳固定使用前向资产；锁定有向跳经过八方向 Start/InAir 过渡段，长时间滞空才进入通用 Loop。
 
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
 local Rule = require("Animation.Compiler.TransitionRule")
 local Anim = require("Animation.Sekiro.AnimAssets").Jump
+local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
+local DirectionalPose = require("Animation.Sekiro.Shared.DirectionalPose")
 local PoseSelectors = require("Animation.Sekiro.Shared.PoseSelectors")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
@@ -29,20 +32,67 @@ local LandAssets = {
     Right = Anim.Jump_Land_Right, ForwardRight = Anim.Jump_Land_ForwardRight,
 }
 
----声明 Jump Start/InAir/Land；物理落地立即进入 Land，根状态机等待 Land 尾部再回 Grounded。
+---按起跳瞬间锁定模式选择非锁定前向姿势或锁定八方向姿势，空中切换锁定目标不会改变本次 Jump。
+---@param Graph LuaAnimStateGraph 当前 Jump 状态的 Pose Graph。
+---@param name string 选择器和属性节点使用的稳定语义前缀。
+---@param unlocked_pose LuaAnimNode 非锁定模式使用的前向姿势节点。
+---@param locked_pose LuaAnimNode 锁定模式使用的八方向姿势节点。
+---@return LuaBlendListByBoolNode selector 最终锁定模式选择节点。
+local function select_jump_lock_mode(Graph, name, unlocked_pose, locked_pose)
+    local started_locked_on = Graph:Property(name .. "StartedLockedOn", "bJumpStartedLockedOn")
+    local selector = Graph:BlendListByBool(name .. "LockModeSelector")
+    selector.BlendTime = Tuning.JumpBlendDuration
+    selector.FalsePose:Connect(unlocked_pose.Pose)
+    selector.TruePose:Connect(locked_pose.Pose)
+    selector.ActiveValue:Connect(started_locked_on.Value)
+    return selector
+end
+
+---由锁存的 Jump 类型在原地姿势和八方向姿势之间选择，空中输入变化不会切换本次 Jump 资产。
+---@param Graph LuaAnimStateGraph 当前 Jump 状态的 Pose Graph。
+---@param name string 选择器和属性节点使用的稳定语义前缀。
+---@param stationary_pose LuaAnimNode 原地 Jump 对应的姿势节点。
+---@param directional_pose LuaAnimNode 八方向 Jump 对应的姿势节点。
+---@return LuaBlendListByBoolNode selector 最终 Jump 类型选择节点。
+local function select_jump_type(Graph, name, stationary_pose, directional_pose)
+    local directional_jump = Graph:Property(name .. "Directional", "bDirectionalJump")
+    local selector = Graph:BlendListByBool(name .. "TypeSelector")
+    selector.BlendTime = Tuning.JumpBlendDuration
+    selector.FalsePose:Connect(stationary_pose.Pose)
+    selector.TruePose:Connect(directional_pose.Pose)
+    selector.ActiveValue:Connect(directional_jump.Value)
+    return selector
+end
+
+---声明 Jump Start、锁定方向 InAir 过渡段、通用 Loop 和 Land。
+---锁定 InAir 不是循环动画：仍在空中时于曲线尾部进入 Loop，任何阶段物理接地都优先打断到 Land。
 ---@param Machine LuaStateMachineNode JumpLocomotion 原生状态机节点。
 ---@return nil result 只声明状态机拓扑。
 function JumpLocomotion.StateMachine(Machine)
     Machine:Entry("Start")
     Machine:State("Start")
-    Machine:State("InAir")
+    Machine:State("DirectionalInAir")
+    Machine:State("Loop")
     Machine:State("Land")
     Machine:Transition("Start_Land", "Start", "Land", { BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0 })
-    Machine:Transition("Start_InAir", "Start", "InAir", {
+    Machine:Transition("Start_DirectionalInAir", "Start", "DirectionalInAir", {
         BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 1,
-        Gate = Rule.TimeRemainingLessEqual(Tuning.JumpBlendDuration),
+        Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterInAir, Tuning.CurveThreshold),
     })
-    Machine:Transition("InAir_Land", "InAir", "Land", { BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0 })
+    Machine:Transition("Start_Loop", "Start", "Loop", {
+        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 2,
+        Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold),
+    })
+    Machine:Transition("DirectionalInAir_Land", "DirectionalInAir", "Land", {
+        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0,
+    })
+    Machine:Transition("DirectionalInAir_Loop", "DirectionalInAir", "Loop", {
+        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 1,
+        Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold),
+    })
+    Machine:Transition("Loop_Land", "Loop", "Land", {
+        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0,
+    })
     Machine:Transition("Land_Start", "Land", "Start", { BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0 })
 end
 
@@ -50,24 +100,76 @@ end
 ---@param Graph LuaAnimStateGraph Start 状态 Pose Graph。
 ---@return nil result Start 姿势连接 State Result。
 function JumpLocomotion.StateGraph_Start(Graph)
-    local start = PoseSelectors.Octant(Graph, "JumpStart", StartAssets, "JumpDirection", false)
-    Graph.Result:Connect(start.Pose)
+    local standing = PoseSelectors.Sequence(Graph, "StandingJumpStart", Anim.Stand_Jump_Start, false, nil)
+    local crouching = PoseSelectors.Sequence(Graph, "CrouchingJumpStart", Anim.Crouch_Jump_Start, false, nil)
+    local started_crouched = Graph:Property("JumpStartedCrouched", "bJumpStartedCrouchedPose")
+    local stationary = Graph:BlendListByBool("StationaryJumpStartStance")
+    stationary.BlendTime = Tuning.JumpBlendDuration
+    stationary.FalsePose:Connect(standing.Pose)
+    stationary.TruePose:Connect(crouching.Pose)
+    stationary.ActiveValue:Connect(started_crouched.Value)
+
+    local unlocked = PoseSelectors.Sequence(
+        Graph,
+        "UnlockedForwardJumpStart",
+        Anim.Jump_Unlock_Forward_Start,
+        false,
+        nil)
+    local locked = PoseSelectors.Octant(Graph, "LockedDirectionalJumpStart", StartAssets, "JumpDirection", false)
+    local directional = select_jump_lock_mode(Graph, "JumpStart", unlocked, locked)
+    local start = select_jump_type(Graph, "JumpStart", stationary, directional)
+    local aligned = DirectionalPose.Align(
+        Graph,
+        "JumpStartAlignment",
+        start,
+        "JumpDirectionResidualAngle",
+        "JumpWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
 end
 
----构建不提供位移的八方向 InAir 姿势。
----@param Graph LuaAnimStateGraph InAir 状态 Pose Graph。
----@return nil result InAir 姿势连接 State Result。
-function JumpLocomotion.StateGraph_InAir(Graph)
-    local in_air = PoseSelectors.Octant(Graph, "JumpInAir", InAirAssets, "JumpDirection", true)
-    Graph.Result:Connect(in_air.Pose)
+---构建锁定有向跳的八方向 InAir 过渡姿势；该动画只播放一次，曲线尾部进入通用 Loop。
+---@param Graph LuaAnimStateGraph DirectionalInAir 状态 Pose Graph。
+---@return nil result 八方向 InAir 过渡姿势连接 State Result。
+function JumpLocomotion.StateGraph_DirectionalInAir(Graph)
+    local in_air = PoseSelectors.Octant(Graph, "LockedDirectionalJumpInAir", InAirAssets, "JumpDirection", false)
+    local aligned = DirectionalPose.Align(
+        Graph,
+        "JumpInAirAlignment",
+        in_air,
+        "JumpDirectionResidualAngle",
+        "JumpWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
+end
+
+---构建原地、非锁定有向跳和锁定长时间滞空共同使用的循环姿势。
+---@param Graph LuaAnimStateGraph Loop 状态 Pose Graph。
+---@return nil result 通用 Jump Loop 姿势连接 State Result。
+function JumpLocomotion.StateGraph_Loop(Graph)
+    local loop = PoseSelectors.Sequence(Graph, "JumpLoop", Anim.Jump_Loop, true, nil)
+    Graph.Result:Connect(loop.Pose)
 end
 
 ---构建带 RootMotion 的八方向 Land。
 ---@param Graph LuaAnimStateGraph Land 状态 Pose Graph。
 ---@return nil result Land 姿势连接 State Result。
 function JumpLocomotion.StateGraph_Land(Graph)
-    local land = PoseSelectors.Octant(Graph, "JumpLand", LandAssets, "JumpDirection", false)
-    Graph.Result:Connect(land.Pose)
+    local stationary = PoseSelectors.Sequence(Graph, "StationaryJumpLand", Anim.Jump_Light_Stand, false, nil)
+    local unlocked = PoseSelectors.Sequence(
+        Graph,
+        "UnlockedForwardJumpLand",
+        Anim.Jump_Light_Stand,
+        false,
+        nil)
+    local locked = PoseSelectors.Octant(Graph, "LockedDirectionalJumpLand", LandAssets, "JumpDirection", false)
+    local directional = select_jump_lock_mode(Graph, "JumpLand", unlocked, locked)
+    local land = select_jump_type(Graph, "JumpLand", stationary, directional)
+    local aligned = DirectionalPose.Align(
+        Graph,
+        "JumpLandAlignment",
+        land,
+        "JumpDirectionResidualAngle",
+        "JumpWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
 end
 
 ---Start 期间已经落地时直接进入 Land，处理极短腾空或碰撞提前接地。
@@ -77,17 +179,41 @@ function JumpLocomotion.CanEnter_Start_Land(Inst)
     return Inst.bIsInAir ~= true
 end
 
----仍在空中时于 Start 尾部进入 InAir。
+---锁定有向跳仍在空中时于 Start 尾部进入八方向 InAir 过渡段。
 ---@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否进入 InAir。
-function JumpLocomotion.CanEnter_Start_InAir(Inst)
+---@return boolean can_enter 是否进入锁定方向 InAir 过渡段。
+function JumpLocomotion.CanEnter_Start_DirectionalInAir(Inst)
+    return Inst.bIsInAir == true
+        and Inst.bDirectionalJump == true
+        and Inst.bJumpStartedLockedOn == true
+end
+
+---原地或非锁定有向跳在 Start 曲线尾部直接进入通用 Loop。
+---@param Inst userdata 当前生成动画实例的 UnLua 代理。
+---@return boolean can_enter 是否从 Start 进入通用 Loop。
+function JumpLocomotion.CanEnter_Start_Loop(Inst)
+    return Inst.bIsInAir == true
+        and (Inst.bDirectionalJump ~= true or Inst.bJumpStartedLockedOn ~= true)
+end
+
+---锁定方向 InAir 过渡动画播放期间提前接地时立即打断到 Land。
+---@param Inst userdata 当前生成动画实例的 UnLua 代理。
+---@return boolean can_enter 是否提前进入 Land。
+function JumpLocomotion.CanEnter_DirectionalInAir_Land(Inst)
+    return Inst.bIsInAir ~= true
+end
+
+---锁定方向 InAir 过渡段播放完成且仍在空中时进入通用循环姿势。
+---@param Inst userdata 当前生成动画实例的 UnLua 代理。
+---@return boolean can_enter 是否进入通用 Jump Loop。
+function JumpLocomotion.CanEnter_DirectionalInAir_Loop(Inst)
     return Inst.bIsInAir == true
 end
 
----CharacterMovement 报告落地时立即从 InAir 进入 Land。
+---通用 Loop 期间由 CharacterMovement 报告接地时进入 Land。
 ---@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否进入 Land。
-function JumpLocomotion.CanEnter_InAir_Land(Inst)
+---@return boolean can_enter 是否从 Loop 进入 Land。
+function JumpLocomotion.CanEnter_Loop_Land(Inst)
     return Inst.bIsInAir ~= true
 end
 

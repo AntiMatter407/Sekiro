@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- UAnimationStateGraph 对应的 Lua 编译期 Graph。
 -- State Graph 输出 Pose，但使用 StatePose GraphType 和 StateResult 根节点，与主 AnimGraph 明确区分。
 local LuaAnimGraph = require("Animation.Compiler.LuaAnimGraph")

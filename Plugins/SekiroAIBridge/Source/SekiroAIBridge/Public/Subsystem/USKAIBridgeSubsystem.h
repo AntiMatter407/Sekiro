@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "EditorSubsystem.h"
@@ -9,6 +9,14 @@ class USKAIToolRegistry;
 class FSKAccessControl;
 class USKAIBridgeSettings;
 class FJsonObject;
+
+/** 等待在安全帧尾执行的工具调用。 */
+struct FSekiroPendingToolCall
+{
+    FString Id;                              // JSON-RPC 请求 ID，通知为空
+    TSharedPtr<FJsonObject> Params;           // tools/call 参数快照
+    bool bIsNotification = false;             // 是否为无需响应的通知
+};
 
 /**
  * AI桥接子系统（EditorSubsystem）
@@ -53,11 +61,17 @@ private:
     /** JSON-RPC 消息处理入口（在GameThread上调用） */
     void OnMessageReceived(const FString& JsonLine);
 
+    /** 将工具调用加入帧尾串行队列 */
+    void QueueToolsCall(const FString& Id, const TSharedPtr<FJsonObject>& Params, bool bIsNotification);
+
+    /** 在帧尾执行队首工具调用并发送响应 */
+    void ProcessPendingToolsCalls();
+
     /** 处理 tools/list 请求 */
     FString HandleToolsList(const FString& Id);
 
     /** 处理 tools/call 请求（含确认检查） */
-    FString HandleToolsCall(const FString& Id, const TSharedPtr<FJsonObject>& Params);
+    FString HandleToolsCall(const FString& Id, const TSharedPtr<FJsonObject>& Params, bool bIsNotification);
 
     /** 验证PSK认证（如有配置） */
     bool Authenticate(const TSharedPtr<FJsonObject>& AuthParams);
@@ -73,4 +87,7 @@ private:
     FSKAccessControl* AccessControl;
     int32 ServerPort;
     bool bAuthenticated = false;
+    TArray<FSekiroPendingToolCall> PendingToolCalls; // 等待安全帧尾执行的工具调用队列
+    FDelegateHandle EndFrameDelegateHandle;          // 帧尾队列处理委托句柄
+    bool bIsProcessingToolCall = false;              // 防止帧尾处理发生重入
 };

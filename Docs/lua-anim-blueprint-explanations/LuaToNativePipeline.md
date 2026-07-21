@@ -230,32 +230,28 @@ USkeletalMeshComponent
 
 Transition 是目前保留 Lua 运行时逻辑的部分。
 
-Factory 自动在生成 AnimBlueprint 的 Event Graph 中创建：
+Factory 为每条 Transition 生成独立 Rule Graph：
 
 ```text
-BlueprintUpdateAnimation
-    -> EvaluateAndCacheTransitionRule(Rule 0)
-    -> EvaluateAndCacheTransitionRule(Rule 1)
-    -> ...
-```
-
-每个调用发生在游戏线程：
-
-1. 通过 UnLua `require(SourceModule)`；
-2. 按完整 `RuleFunctionName` 查找函数；
-3. 使用 `UnLua::PushUObject` 把当前 AnimInstance 压入 Lua；
-4. 调用 `CanEnter_*(Inst)`；
-5. 要求返回严格 boolean；
-6. 以 `AnimInstance + Module + Rule` 为键发布到线程安全缓存。
-
-生成的原生 Transition Graph 不调用 Lua，而是：
-
-```text
-GetCachedTransitionRule(...)
+FAnimNode_StateMachine
+    -> 检查当前状态出边
+    -> Transition Rule Graph
+    -> EvaluateLuaTransitionRule(Current Rule)
     -> bCanEnterTransition
 ```
 
-这样工作线程只读取布尔快照，实际状态切换和过渡混合仍由 `FAnimNode_StateMachine` 完成。
+对应出边被检查时，调用在游戏线程执行：
+
+1. 通过 UnLua `require(SourceModule)`；
+2. 按完整 `RuleFunctionName` 查找函数；
+3. 创建可直接访问反射属性和函数的 AnimInstance `Inst` 代理；
+4. 调用 `CanEnter_*(Inst)`；
+5. 要求返回严格 boolean；
+6. 将结果与原生 Gate 组合后直接交给 Transition Result。
+
+生成的 `BlueprintUpdateAnimation` Event 只负责 Lua 动画参数更新，不会全量计算 Transition。Lua 来源 AnimBlueprint 关闭多线程 Update，以便 Rule Graph 安全进入 UnLua。
+
+实际状态切换、过渡混合和 BlendAlpha 仍由 `FAnimNode_StateMachine` 完成。
 
 ## Lua 与 C++ 到底是什么关系
 

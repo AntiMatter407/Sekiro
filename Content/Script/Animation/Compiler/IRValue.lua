@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- 构造 AnimGraph IR 的显式类型化属性值。
 -- 每个构造函数只写入自身类型对应的字段，C++ 导入器不需要从字符串内容猜测类型。
 ---@class IRValue

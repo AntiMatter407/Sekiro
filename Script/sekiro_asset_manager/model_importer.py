@@ -9,6 +9,18 @@ from typing import Optional
 
 _PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 
+_ASSET_AUXILIARY_BONES = {
+    "Sekiro": [
+        {
+            "Name": "IK_Foot_Plane",
+            "ParentName": "Root",
+            "LocalTranslation": [0.0, 0.0, 0.0],
+            "LocalRotation": [0.0, 0.0, 0.0, 1.0],
+            "LocalScale": [1.0, 1.0, 1.0],
+        },
+    ],
+}
+
 
 class ModelJsonBuilder:
     """Build complete model JSON from FLVER + MTD + TPF sources."""
@@ -70,9 +82,13 @@ class ModelJsonBuilder:
     def build(flver_paths, skeleton_flver=None, mtd_root=None, tpf_roots=None,
               asset_name="Sekiro", skeleton_source=None, world_source=None,
               extra_bones=None, drop_bone_weight_threshold=0.5,
-              drop_mesh_bone_prefixes=None, texture_lookup_dirs_extra=None, original_asset_name=None):
+              drop_mesh_bone_prefixes=None, texture_lookup_dirs_extra=None,
+              original_asset_name=None, auxiliary_bones=None):
         from sekiro_asset_manager.flver_parser import FlverParser, fk_accumulate
         from sekiro_asset_manager.mtd_parser import MtdParser
+
+        if auxiliary_bones is None:
+            auxiliary_bones = _ASSET_AUXILIARY_BONES.get(asset_name, [])
 
         skeleton_data = None
         if skeleton_flver and os.path.exists(skeleton_flver):
@@ -522,6 +538,7 @@ class ModelJsonBuilder:
             "OriginalAssetName": original_asset_name or asset_name,
             "SkeletonName": asset_name + "_Skeleton",
             "Bones": merged,
+            "AuxiliaryBones": list(auxiliary_bones or []),
             "Materials": merged_materials,
             "ResolvedMaterials": resolved_materials,
             "Meshes": all_meshes,
@@ -858,7 +875,10 @@ class ModelImporter:
                     flver_paths=flver_paths, output_json=output_json,
                     skeleton_flver=skeleton_flver, skeleton_hkx=skeleton_hkx,
                     skeleton_source=skeleton_source,
-                    drop_mesh_bone_prefixes=kwargs.get("drop_mesh_bone_prefixes"))
+                    drop_mesh_bone_prefixes=kwargs.get("drop_mesh_bone_prefixes"),
+                    original_asset_name=kwargs.get("original_asset_name"),
+                    asset_name=asset_name,
+                    auxiliary_bones=kwargs.get("auxiliary_bones"))
                 if not ok:
                     result["error"] = "JSON generation failed"
                     return result
@@ -902,7 +922,7 @@ class ModelImporter:
     def generate_model_json(self, flver_paths, output_json, skeleton_flver=None,
                          skeleton_hkx=None, skeleton_source=None,
                          drop_mesh_bone_prefixes=None, original_asset_name=None,
-                         asset_name=None):
+                         asset_name=None, auxiliary_bones=None):
         for fp in flver_paths:
             if not os.path.exists(fp):
                 print(f"  [Error] FLVER not found: {fp}")
@@ -940,7 +960,8 @@ class ModelImporter:
                 asset_name=asset_name,
                 drop_mesh_bone_prefixes=drop_mesh_bone_prefixes,
                 texture_lookup_dirs_extra=[tex_output_dir, self._shared_texture_dir()],
-                original_asset_name=orig_name)
+                original_asset_name=orig_name,
+                auxiliary_bones=auxiliary_bones)
         except Exception as e:
             print(f"  [Error] Model JSON build failed: {e}")
             import traceback
@@ -952,9 +973,13 @@ class ModelImporter:
             json.dump(model_data, f, indent=2, ensure_ascii=False)
 
         bones = len(model_data.get("Bones", []))
+        auxiliary_bones_count = len(model_data.get("AuxiliaryBones", []))
         meshes = len(model_data.get("Meshes", []))
         mats = len(model_data.get("Materials", []))
-        print(f"  JSON generated: {bones} bones, {meshes} meshes, {mats} materials -> {output_json}")
+        print(
+            f"  JSON generated: {bones} bones, {auxiliary_bones_count} auxiliary bones, "
+            f"{meshes} meshes, {mats} materials -> {output_json}"
+        )
         return True
 
     def _convert_tpf_dds_to_png(self, tpf_roots, output_dir=None):

@@ -60,7 +60,7 @@ StateMachineGraphId + "Transition" + "Idle_Move"
 
 ### `RuleFunctionName`
 
-这是生成的原生 Transition Rule Graph 用来查询缓存的完整函数名，例如：
+这是生成的原生 Transition Rule Graph 用来直接调用 Lua 规则的完整函数名，例如：
 
 ```text
 CanEnter_GroundLocomotion_Idle_Move
@@ -155,62 +155,57 @@ C++ 为每条 Transition 创建：
 - 从 Source State 到 Target State 的原生连接；
 - `UAnimationTransitionGraph`；
 - 默认 `UAnimGraphNode_TransitionResult`；
-- `GetCachedTransitionRule()` 调用节点；
+- `EvaluateLuaTransitionRule()` 调用节点；
 - AnimInstance Self、模块名和 `RuleFunctionName` 参数；
-- Getter 返回值到 `bCanEnterTransition` 的连接。
+- Lua 返回值与原生 Gate 的组合，以及到 `bCanEnterTransition` 的连接。
 
-生成的原生 Transition Graph **不会直接执行 Lua**。它只读取如下缓存键对应的布尔值：
+生成的原生 Transition Graph 会在被 `FAnimNode_StateMachine` 检查时直接执行 Lua。调用使用以下三个身份数据：
 
 ```text
 AnimInstance + LuaModuleName + RuleFunctionName
 ```
 
-这样动画工作线程读取缓存时不需要访问 Lua VM 或反射系统。
+为了保证 UnLua VM 与 UObject 反射安全，Lua 来源的 AnimBlueprint 会关闭多线程动画 Update。Transition Rule 必须保持只读，不应借由规则判断修改游戏状态。
 
-## Lua Rule 的发布与读取
+## Lua Rule 的按需求值
 
-设计上的完整流程应当是：
+完整流程是：
 
 ```text
-游戏线程
-    -> EvaluateAndCacheTransitionRule(AnimInstance, Module, Rule)
+原生 FAnimNode_StateMachine
+    -> 只检查当前状态的出边
+    -> 按 PriorityOrder 进入对应 Transition Rule Graph
+    -> EvaluateLuaTransitionRule(AnimInstance, Module, Rule)
     -> require Lua 模块
     -> 调用 CanEnter_*(Inst)
-    -> 发布严格 boolean 到线程安全缓存
-
-原生 Transition Graph
-    -> GetCachedTransitionRule(...)
-    -> 读取最近一次快照
+    -> 返回严格 boolean
+    -> 与原生 Gate 求与
     -> 输出 bCanEnterTransition
 ```
 
 Lua Rule 必须返回真正的 boolean。`nil`、数字、字符串、Lua 错误或函数缺失都会按 `false` 处理并记录错误。
 
-## 自动生成的运行时发布入口
+## `BlueprintUpdateAnimation` 的责任
 
-C++ Factory 的 `BuildEventGraph()` 会在生成的 AnimBlueprint Event Graph 中创建 `BlueprintUpdateAnimation` override，并按规范化 Transition 顺序串联全部 `EvaluateAndCacheTransitionRule()` 调用。
+C++ Factory 的 `BuildEventGraph()` 会在生成的 AnimBlueprint Event Graph 中创建 `BlueprintUpdateAnimation` override，但它只调用 Lua 的动画参数更新入口，不再遍历 Transition。
 
-每个调用节点都自动写入：
+每条 Transition 的调用节点则由 `BuildTransitionRuleGraph()` 生成，并自动写入：
 
 - 当前 AnimInstance Self；
 - Lua `SourceModule`；
 - Transition 的完整 `RuleFunctionName`。
 
-因此发布与读取链路已经生成：
+因此运行链路是：
 
 ```text
 BlueprintUpdateAnimation
-    -> EvaluateAndCacheTransitionRule(Rule A)
-    -> EvaluateAndCacheTransitionRule(Rule B)
-    -> ...
+    -> EvaluateBlueprintUpdateAnimation(Inst, DeltaSeconds)
 
-Transition Rule Graph
-    -> GetCachedTransitionRule(Current Rule)
+Current State Transition Rule Graph
+    -> EvaluateLuaTransitionRule(Current Rule)
 ```
 
-之前仅搜索普通 C++ 调用表达式会漏掉这条路径，因为 Factory 使用反射取得 `UFunction`，再创建 `UK2Node_CallFunction`，而不是在 C++ 每帧直接调用该函数。
-
-当前仍需注意一个独立边界：外部状态机的完整运行时规则名是在主 Lua 模块执行 `CompileIR()` 时复制到导出 table。编辑器编译后同一 UnLua 环境具备这些函数；全新打包进程只执行 `require` 而未执行 `CompileIR()` 时，仍需保证完整规则函数被静态导出或由运行时安全的初始化步骤准备。这个问题属于 Lua 模块运行时导出生命周期，不是缓存发布链缺失。
+外部状态机的完整运行时规则名会在主 Lua 模块初始化时准备到导出 table，以便 PIE 或打包进程首次 `require` 后即可按名调用。
 
 ## 编译期与运行时边界
 
@@ -218,8 +213,7 @@ Transition Rule Graph
 
 - `FAnimNode_StateMachine` 的 Transition 检查和混合；
 - 原生 Transition Rule Graph；
-- 线程安全规则缓存；
-- 游戏线程上的 Lua Rule 调用入口。
+- 游戏线程上按需进入 Lua Rule 的调用入口。
 
 BlendAlpha、源/目标状态权重和过渡剩余时间由 UE 原生状态机管理，不存放在 Lua Transition table 中。
 
@@ -233,10 +227,10 @@ BlendAlpha、源/目标状态权重和过渡剩余时间由 UE 原生状态机�
 
 不会。它被写入原生 Transition Node，BlendAlpha 由 UE 原生状态机计算。
 
-### 为什么规则 Graph 不直接调用 Lua？
+### 为什么现在规则 Graph 可以直接调用 Lua？
 
-动画 Graph 可能在工作线程更新或求值，而 UnLua、UObject 反射和多数游戏逻辑不能直接在该线程安全执行。缓存桥把 Lua 执行留在游戏线程，把工作线程读取限制为加锁的布尔快照。
+插件暂时将 Lua 来源 AnimBlueprint 限定为单线程 Update，因此 `FAnimNode_StateMachine` 检查 Transition 时仍在游戏线程，可以安全进入 UnLua 主 VM 并访问 AnimInstance 反射属性。代价是该动画蓝图不再使用并行状态机 Update。
 
 ### 现在 Lua Transition 已经能自动工作吗？
 
-生成资产已经自动包含每帧发布和原生规则图读取链。在编辑器完成 `CompileIR()` 后，PIE 路径可以闭环。全新打包进程仍需验证或修复外部状态机完整规则函数的运行时导出生命周期，避免模块首次 `require` 时尚未包含动态复制的规则名。
+生成资产自动包含每条 Transition 的原生规则 Graph 和 Lua 直调节点。PIE 中可在 `CanEnter_*` 内下断点；只有当前状态的该出边被检查时才会命中。

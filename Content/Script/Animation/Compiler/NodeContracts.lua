@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- AnimGraph 节点注册契约的 Lua 前端镜像。
 -- 本模块只负责在导出 IR 前提供补全与快速失败；C++ NodeType 注册表仍是 Pin、Property 和节点放置规则的唯一权威。
 
@@ -107,6 +108,121 @@ local contracts = {
         },
         Properties = {},
     },
+    OrientationWarping = {
+        NodeType = "OrientationWarping",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            {
+                Name = "ComponentPose",
+                Direction = "Input",
+                DataType = "ComponentPose",
+                bAllowMultipleConnections = false,
+            },
+            {
+                Name = "OrientationAngle",
+                Direction = "Input",
+                DataType = "Float",
+                bAllowMultipleConnections = false,
+            },
+            {
+                Name = "Alpha",
+                Direction = "Input",
+                DataType = "Float",
+                bAllowMultipleConnections = false,
+            },
+            {
+                Name = "Pose",
+                Direction = "Output",
+                DataType = "ComponentPose",
+                bAllowMultipleConnections = true,
+            },
+        },
+        Properties = {
+            { Name = "SpineBones", ValueType = "String", bRequired = true },
+            { Name = "IKFootRootBone", ValueType = "Name", bRequired = true },
+            { Name = "IKFootBones", ValueType = "String", bRequired = true },
+            { Name = "RotationAxis", ValueType = "Name", bRequired = false },
+            { Name = "DistributedBoneOrientationAlpha", ValueType = "Float", bRequired = false },
+            { Name = "RotationInterpSpeed", ValueType = "Float", bRequired = false },
+        },
+    },
+    FootPlacement = {
+        NodeType = "FootPlacement",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            { Name = "ComponentPose", Direction = "Input", DataType = "ComponentPose", bAllowMultipleConnections = false },
+            { Name = "Alpha", Direction = "Input", DataType = "Float", bAllowMultipleConnections = false },
+            { Name = "Pose", Direction = "Output", DataType = "ComponentPose", bAllowMultipleConnections = true },
+        },
+        Properties = {
+            { Name = "IKFootRootBone", ValueType = "Name", bRequired = true },
+            { Name = "PelvisBone", ValueType = "Name", bRequired = true },
+            { Name = "LegDefinitions", ValueType = "String", bRequired = true },
+            { Name = "PlantSpeedMode", ValueType = "Name", bRequired = false },
+            { Name = "PlantLockType", ValueType = "Name", bRequired = false },
+            { Name = "PelvisMaxOffset", ValueType = "Float", bRequired = false },
+            { Name = "PelvisHorizontalRebalancingWeight", ValueType = "Float", bRequired = false },
+            { Name = "PlantSpeedThreshold", ValueType = "Float", bRequired = false },
+            { Name = "PlantDistanceToGround", ValueType = "Float", bRequired = false },
+            { Name = "TraceStartOffset", ValueType = "Float", bRequired = false },
+            { Name = "TraceEndOffset", ValueType = "Float", bRequired = false },
+            { Name = "TraceSweepRadius", ValueType = "Float", bRequired = false },
+            { Name = "TraceMaxGroundPenetration", ValueType = "Float", bRequired = false },
+            { Name = "bTraceEnabled", ValueType = "Bool", bRequired = false },
+        },
+    },
+    LegIK = {
+        NodeType = "LegIK",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            { Name = "ComponentPose", Direction = "Input", DataType = "ComponentPose", bAllowMultipleConnections = false },
+            { Name = "Alpha", Direction = "Input", DataType = "Float", bAllowMultipleConnections = false },
+            { Name = "Pose", Direction = "Output", DataType = "ComponentPose", bAllowMultipleConnections = true },
+        },
+        Properties = {
+            { Name = "LegDefinitions", ValueType = "String", bRequired = true },
+            { Name = "ReachPrecision", ValueType = "Float", bRequired = false },
+            { Name = "MaxIterations", ValueType = "Integer", bRequired = false },
+        },
+    },
+    LocalToComponentSpace = {
+        NodeType = "LocalToComponentSpace",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            {
+                Name = "LocalPose",
+                Direction = "Input",
+                DataType = "Pose",
+                bAllowMultipleConnections = false,
+            },
+            {
+                Name = "ComponentPose",
+                Direction = "Output",
+                DataType = "ComponentPose",
+                bAllowMultipleConnections = true,
+            },
+        },
+        Properties = {},
+    },
+    ComponentToLocalSpace = {
+        NodeType = "ComponentToLocalSpace",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            {
+                Name = "ComponentPose",
+                Direction = "Input",
+                DataType = "ComponentPose",
+                bAllowMultipleConnections = false,
+            },
+            {
+                Name = "Pose",
+                Direction = "Output",
+                DataType = "Pose",
+                bAllowMultipleConnections = true,
+            },
+        },
+        Properties = {},
+    },
     SaveCachedPose = {
         NodeType = "SaveCachedPose",
         GraphTypes = { Pose = true },
@@ -192,6 +308,35 @@ local contracts = {
             { Name = "EnumType", ValueType = "SoftObjectPath", bRequired = true },
             { Name = "EnumEntries", ValueType = "String", bRequired = true },
             { Name = "BlendTime", ValueType = "Float", bRequired = false },
+        },
+    },
+    Slot = {
+        NodeType = "Slot",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            { Name = "Source", Direction = "Input", DataType = "Pose", bAllowMultipleConnections = false },
+            { Name = "Pose", Direction = "Output", DataType = "Pose", bAllowMultipleConnections = true },
+        },
+        Properties = {
+            { Name = "SlotName", ValueType = "Name", bRequired = true },
+            { Name = "bAlwaysUpdateSourcePose", ValueType = "Bool", bRequired = false },
+        },
+    },
+    LayeredBlendPerBone = {
+        NodeType = "LayeredBlendPerBone",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            { Name = "BasePose", Direction = "Input", DataType = "Pose", bAllowMultipleConnections = false },
+            { Name = "BlendPose", Direction = "Input", DataType = "Pose", bAllowMultipleConnections = false },
+            { Name = "BlendWeight", Direction = "Input", DataType = "Float", bAllowMultipleConnections = false },
+            { Name = "Pose", Direction = "Output", DataType = "Pose", bAllowMultipleConnections = true },
+        },
+        Properties = {
+            { Name = "BranchFilters", ValueType = "String", bRequired = true },
+            { Name = "bMeshSpaceRotationBlend", ValueType = "Bool", bRequired = false },
+            { Name = "bMeshSpaceScaleBlend", ValueType = "Bool", bRequired = false },
+            { Name = "CurveBlendOption", ValueType = "Name", bRequired = false },
+            { Name = "bBlendRootMotionBasedOnRootBone", ValueType = "Bool", bRequired = false },
         },
     },
 }

@@ -1,50 +1,13 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "SKWeaponComponent.h"
-#include "SKWeapon.h"
-#include "GameFramework/Character.h"
+#include "Weapon/SKWeaponComponent.h"
 
+/**
+ * 创建旧 SKWeaponComponent 序列化模板的兼容实例。
+ * 本类不增加状态、默认资源或装载流程，全部运行时行为仅继承 USKWeaponManagerComponent；
+ * 因而旧蓝图可以安全加载，同时仍只有一套 Lua WeaponManager 业务逻辑。
+ * 仅允许 Unreal 对旧资产反序列化时在游戏线程构造。
+ */
 USKWeaponComponent::USKWeaponComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
-}
-
-void USKWeaponComponent::InitWeapon()
-{
-	if (!DefaultWeaponClass)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("USKWeaponComponent::InitWeapon — DefaultWeaponClass 未设置，请在蓝图侧配置"));
-		return;
-	}
-
-	ACharacter* Owner = Cast<ACharacter>(GetOwner());
-	if (!Owner)
-	{
-		return;
-	}
-
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = Owner;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	CurrentWeapon = GetWorld()->SpawnActor<ASKWeapon>(DefaultWeaponClass, SpawnParams);
-	if (CurrentWeapon)
-	{
-		USkeletalMeshComponent* Mesh = Owner->GetMesh();
-		if (!Mesh) return;
-
-		// 优先使用 WeaponAttachSocket，不存在则回退到 WeaponAttachBoneFallback（骨骼名称）
-		// DoesSocketExist 只检查 Socket 不检查骨骼名，骨骼名直接传 AttachToComponent 也可用
-		FName TargetSocket = WeaponAttachSocket;
-		if (!Mesh->DoesSocketExist(WeaponAttachSocket))
-		{
-			TargetSocket = WeaponAttachBoneFallback;
-		}
-
-		CurrentWeapon->AttachToComponent(
-			Mesh,
-			FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-			TargetSocket
-		);
-	}
 }

@@ -13,6 +13,11 @@ const FName SekiroAnimGraphIRNames::StateResultNode(TEXT("StateResult"));
 const FName SekiroAnimGraphIRNames::SequencePlayerNode(TEXT("SequencePlayer"));
 const FName SekiroAnimGraphIRNames::StateMachineNode(TEXT("StateMachine"));
 const FName SekiroAnimGraphIRNames::InertializationNode(TEXT("Inertialization"));
+const FName SekiroAnimGraphIRNames::LocalToComponentSpaceNode(TEXT("LocalToComponentSpace"));
+const FName SekiroAnimGraphIRNames::ComponentToLocalSpaceNode(TEXT("ComponentToLocalSpace"));
+const FName SekiroAnimGraphIRNames::OrientationWarpingNode(TEXT("OrientationWarping"));
+const FName SekiroAnimGraphIRNames::FootPlacementNode(TEXT("FootPlacement"));
+const FName SekiroAnimGraphIRNames::LegIKNode(TEXT("LegIK"));
 const FName SekiroAnimGraphIRNames::SaveCachedPoseNode(TEXT("SaveCachedPose"));
 const FName SekiroAnimGraphIRNames::UseCachedPoseNode(TEXT("UseCachedPose"));
 const FName SekiroAnimGraphIRNames::BoolPropertyGetterNode(TEXT("BoolPropertyGetter"));
@@ -21,7 +26,10 @@ const FName SekiroAnimGraphIRNames::BytePropertyGetterNode(TEXT("BytePropertyGet
 const FName SekiroAnimGraphIRNames::EnumPropertyGetterNode(TEXT("EnumPropertyGetter"));
 const FName SekiroAnimGraphIRNames::BlendListByBoolNode(TEXT("BlendListByBool"));
 const FName SekiroAnimGraphIRNames::BlendListByEnumNode(TEXT("BlendListByEnum"));
+const FName SekiroAnimGraphIRNames::SlotNode(TEXT("Slot"));
+const FName SekiroAnimGraphIRNames::LayeredBlendPerBoneNode(TEXT("LayeredBlendPerBone"));
 const FName SekiroAnimGraphIRNames::PoseData(TEXT("Pose"));
+const FName SekiroAnimGraphIRNames::ComponentPoseData(TEXT("ComponentPose"));
 const FName SekiroAnimGraphIRNames::BoolData(TEXT("Bool"));
 const FName SekiroAnimGraphIRNames::FloatData(TEXT("Float"));
 const FName SekiroAnimGraphIRNames::ByteData(TEXT("Byte"));
@@ -102,6 +110,12 @@ namespace SekiroAnimGraphIRValidation
     const FName InvalidVariable(TEXT("IR.InvalidVariable"));
     const FName DuplicateVariable(TEXT("IR.DuplicateVariable"));
     const FName InvalidTransitionGate(TEXT("IR.InvalidTransitionGate"));
+    const FName InvalidLayoutStyle(TEXT("IR.InvalidLayoutStyle"));
+    const FName InvalidLayoutGrid(TEXT("IR.InvalidLayoutGrid"));
+    const FName DuplicateLayoutGrid(TEXT("IR.DuplicateLayoutGrid"));
+    const FName InvalidLayoutItem(TEXT("IR.InvalidLayoutItem"));
+    const FName DuplicateLayoutElement(TEXT("IR.DuplicateLayoutElement"));
+    const FName OccupiedLayoutCell(TEXT("IR.OccupiedLayoutCell"));
 
     /**
      * 向验证结果追加一条错误诊断，不执行日志输出或资产加载。
@@ -530,6 +544,22 @@ void USekiroAnimGraphIRLibrary::Canonicalize(FSekiroAnimBlueprintIR& Blueprint)
                 return Left.DeclarationOrder < Right.DeclarationOrder;
             });
 
+            Graph.Layout.Grids.Sort([](const FSekiroAnimIRLayoutGrid& Left, const FSekiroAnimIRLayoutGrid& Right)
+            {
+                return Left.Name.Compare(Right.Name, ESearchCase::CaseSensitive) < 0;
+            });
+            for (FSekiroAnimIRLayoutGrid& Grid : Graph.Layout.Grids)
+            {
+                Grid.Items.Sort([](const FSekiroAnimIRLayoutItem& Left, const FSekiroAnimIRLayoutItem& Right)
+                {
+                    if (Left.DeclarationOrder != Right.DeclarationOrder)
+                    {
+                        return Left.DeclarationOrder < Right.DeclarationOrder;
+                    }
+                    return Left.ElementId.Compare(Right.ElementId, ESearchCase::CaseSensitive) < 0;
+                });
+            }
+
             Graph.StateMachine.States.Sort([](const FSekiroAnimIRState& Left, const FSekiroAnimIRState& Right)
             {
                 const int32 IdComparison = Left.Id.Compare(Right.Id, ESearchCase::CaseSensitive);
@@ -701,6 +731,71 @@ bool USekiroAnimGraphIRLibrary::Validate(
                     FString::Printf(TEXT("Graph '%s' has no GraphType."), *Graph.Id),
                     Graph.Id,
                     Graph.SourceLocation);
+            }
+
+            const uint8 LayoutStyleValue = static_cast<uint8>(Graph.Layout.Style);
+            if (LayoutStyleValue > static_cast<uint8>(ESekiroAnimIRLayoutStyle::HierarchicalBlocks))
+            {
+                AddError(OutDiagnostics, InvalidLayoutStyle,
+                    FString::Printf(TEXT("Graph '%s' has an invalid LayoutStyle value."), *Graph.Id),
+                    Graph.Id, Graph.SourceLocation);
+            }
+
+            TSet<FString> LayoutElementIds;
+            for (const FSekiroAnimIRNode& Node : Graph.Nodes) LayoutElementIds.Add(Node.Id);
+            for (const FSekiroAnimIRState& State : Graph.StateMachine.States) LayoutElementIds.Add(State.Id);
+            TSet<FString> LayoutGridNames;
+            TSet<FString> PlacedElementIds;
+            for (const FSekiroAnimIRLayoutGrid& Grid : Graph.Layout.Grids)
+            {
+                if (Grid.Name.IsEmpty() || Grid.RegionColumn < 0 || Grid.RegionRow < 0
+                    || Grid.CellWidth <= 0 || Grid.CellHeight <= 0)
+                {
+                    AddError(OutDiagnostics, InvalidLayoutGrid,
+                        FString::Printf(TEXT("Graph '%s' contains invalid Layout Grid '%s'."), *Graph.Id, *Grid.Name),
+                        Graph.Id, Graph.SourceLocation);
+                }
+                if (LayoutGridNames.Contains(Grid.Name))
+                {
+                    AddError(OutDiagnostics, DuplicateLayoutGrid,
+                        FString::Printf(TEXT("Graph '%s' contains duplicate Layout Grid '%s'."), *Graph.Id, *Grid.Name),
+                        Graph.Id, Graph.SourceLocation);
+                }
+                LayoutGridNames.Add(Grid.Name);
+
+                TSet<FString> OccupiedCells;
+                for (const FSekiroAnimIRLayoutItem& Item : Grid.Items)
+                {
+                    if (!LayoutElementIds.Contains(Item.ElementId) || Item.Column < 0 || Item.Row < 0
+                        || Item.ColumnSpan <= 0 || Item.RowSpan <= 0)
+                    {
+                        AddError(OutDiagnostics, InvalidLayoutItem,
+                            FString::Printf(TEXT("Layout Grid '%s' contains invalid element '%s'."), *Grid.Name, *Item.ElementId),
+                            Item.ElementId, Graph.SourceLocation);
+                    }
+                    if (PlacedElementIds.Contains(Item.ElementId))
+                    {
+                        AddError(OutDiagnostics, DuplicateLayoutElement,
+                            FString::Printf(TEXT("Layout element '%s' is placed more than once."), *Item.ElementId),
+                            Item.ElementId, Graph.SourceLocation);
+                    }
+                    PlacedElementIds.Add(Item.ElementId);
+                    for (int32 ColumnOffset = 0; ColumnOffset < Item.ColumnSpan; ++ColumnOffset)
+                    {
+                        for (int32 RowOffset = 0; RowOffset < Item.RowSpan; ++RowOffset)
+                        {
+                            const FString Cell = FString::Printf(TEXT("%d:%d"),
+                                Item.Column + ColumnOffset, Item.Row + RowOffset);
+                            if (OccupiedCells.Contains(Cell))
+                            {
+                                AddError(OutDiagnostics, OccupiedLayoutCell,
+                                    FString::Printf(TEXT("Layout Grid '%s' cell %s is occupied more than once."), *Grid.Name, *Cell),
+                                    Item.ElementId, Graph.SourceLocation);
+                            }
+                            OccupiedCells.Add(Cell);
+                        }
+                    }
+                }
             }
 
             for (const FSekiroAnimIRNode& Node : Graph.Nodes)

@@ -65,20 +65,20 @@ end
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-    FSekiroLuaTransitionRuntimeCacheTest,
-    "Sekiro.AnimGraphIR.Runtime.TransitionRuleCache",
+    FSekiroLuaTransitionRuntimeDirectTest,
+    "Sekiro.AnimGraphIR.Runtime.DirectTransitionRule",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 /**
- * 验证运行时入口支持 metatable 继承、严格 boolean 降级，并按 AnimInstance 隔离发布缓存。
+ * 验证运行时入口按每次调用直接执行 Lua，支持 metatable 继承并对非 boolean 返回降级为 false。
  * 测试只使用 package.preload 内存模块与 transient UAnimInstance；由 Automation Framework 在游戏线程执行。
  *
  * @param Parameters Automation Framework 参数，本测试不使用。
  * @return 始终返回 true 以完成断言收集。
  */
-bool FSekiroLuaTransitionRuntimeCacheTest::RunTest(const FString& Parameters)
+bool FSekiroLuaTransitionRuntimeDirectTest::RunTest(const FString& Parameters)
 {
-    const FString ModuleName(TEXT("SekiroAnimGraphIRTests.RuntimeTransitionCache"));
+    const FString ModuleName(TEXT("SekiroAnimGraphIRTests.RuntimeDirectTransition"));
     UnLua::FLuaEnv* Environment = SekiroLuaTransitionRuntimeTests::GetOrActivateEnvironment();
     TestNotNull(TEXT("UnLua environment is available"), Environment);
     if (Environment == nullptr) return true;
@@ -101,26 +101,14 @@ bool FSekiroLuaTransitionRuntimeCacheTest::RunTest(const FString& Parameters)
 
     TestTrue(
         TEXT("Inherited true rule evaluates"),
-        USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
-            FirstInstance,
-            ModuleName,
-            TEXT("InheritedTrue")));
-    TestTrue(
-        TEXT("Inherited true rule is cached"),
-        USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
+        USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
             FirstInstance,
             ModuleName,
             TEXT("InheritedTrue")));
 
     TestFalse(
         TEXT("False rule evaluates false"),
-        USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
-            FirstInstance,
-            ModuleName,
-            TEXT("FalseRule")));
-    TestFalse(
-        TEXT("False result is cached"),
-        USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
+        USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
             FirstInstance,
             ModuleName,
             TEXT("FalseRule")));
@@ -131,20 +119,14 @@ bool FSekiroLuaTransitionRuntimeCacheTest::RunTest(const FString& Parameters)
         1);
     TestFalse(
         TEXT("Non-boolean rule degrades to false"),
-        USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
-            FirstInstance,
-            ModuleName,
-            TEXT("InvalidRule")));
-    TestFalse(
-        TEXT("Non-boolean failure publishes false"),
-        USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
+        USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
             FirstInstance,
             ModuleName,
             TEXT("InvalidRule")));
 
     TestTrue(
-        TEXT("First instance publishes mutable true"),
-        USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
+        TEXT("Mutable rule initially evaluates true"),
+        USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
             FirstInstance,
             ModuleName,
             TEXT("MutableRule")));
@@ -152,24 +134,18 @@ bool FSekiroLuaTransitionRuntimeCacheTest::RunTest(const FString& Parameters)
         TEXT("package.loaded[\"%s\"].MutableRule = function(self) return false end"),
         *ModuleName);
     TestTrue(
-        TEXT("Loaded module rule is changed for the second instance"),
-        Environment->DoString(MutationChunk, TEXT("SekiroAnimGraphIRTests.RuntimeTransitionCache.Mutate")));
+        TEXT("Loaded module rule is changed"),
+        Environment->DoString(MutationChunk, TEXT("SekiroAnimGraphIRTests.RuntimeDirectTransition.Mutate")));
     TestFalse(
-        TEXT("Second instance publishes mutable false"),
-        USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
+        TEXT("Second instance observes mutable false directly"),
+        USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
             SecondInstance,
             ModuleName,
             TEXT("MutableRule")));
-    TestTrue(
-        TEXT("First instance cache remains isolated"),
-        USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
+    TestFalse(
+        TEXT("First instance also observes the latest Lua rule without a cache"),
+        USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
             FirstInstance,
-            ModuleName,
-            TEXT("MutableRule")));
-    TestFalse(
-        TEXT("Second instance cache stores its own value"),
-        USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
-            SecondInstance,
             ModuleName,
             TEXT("MutableRule")));
     return true;

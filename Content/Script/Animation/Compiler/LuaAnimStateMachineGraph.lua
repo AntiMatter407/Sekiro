@@ -1,9 +1,12 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- StateMachine Node 拥有的内部状态机 Graph。
 -- 本类只声明 Entry、State 和 Transition；它不是 AnimNode，也不能直接连接 Pose Pin。
 local CompilerClass = require("Animation.Compiler.CompilerClass")
 local IRSchema = require("Animation.Compiler.IRSchema")
 local LuaAnimState = require("Animation.Compiler.LuaAnimState")
 local LuaAnimTransition = require("Animation.Compiler.LuaAnimTransition")
+local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 
 ---@class LuaAnimStateMachineGraphConfig
 ---@field Blueprint LuaAnimBlueprint 所属动画蓝图编译实例。
@@ -53,8 +56,32 @@ function LuaAnimStateMachineGraph:Initialize(config)
     self.EntryStateId = ""
     self.States = {}
     self.Transitions = {}
+    self.LayoutStyle = LayoutStyle.HierarchicalBlocks
+    self.LayoutGrids = {}
+    self.LayoutGridNames = {}
+    self.LayoutElementIds = {}
     self.StateNames = {}
     self.TransitionKeys = {}
+end
+
+---创建当前 StateMachine Graph 独占的布局分区；Grid:Place 只接受本状态机的 State。
+---@param name string 状态机内唯一的布局分区名。
+---@param settings LuaGraphLayoutGridSettings|nil 分区区域、单元格间距和风格覆盖。
+---@return LuaGraphLayoutGrid grid 可继续 Place 当前状态机 State 的布局分区。
+function LuaAnimStateMachineGraph:Grid(name, settings)
+    local valid_name = IRSchema.RequireSemanticName(name, "Layout Grid")
+    assert(self.LayoutGridNames[valid_name] == nil, string.format(
+        "StateMachine '%s' contains duplicate Layout Grid '%s'",
+        self.OwnerNode.Name,
+        valid_name))
+    local grid = LuaGraphLayoutGrid:New({
+        Graph = self,
+        Name = valid_name,
+        Settings = settings,
+    })
+    self.LayoutGridNames[valid_name] = grid
+    table.insert(self.LayoutGrids, grid)
+    return grid
 end
 
 ---声明 State 顶点，并立即创建由该 State 独占的 StatePose Graph。
@@ -161,6 +188,12 @@ function LuaAnimStateMachineGraph:ToIR()
         table.insert(transitions, transition:ToIR())
     end
 
+    ---@type SekiroAnimIRLayoutGrid[]
+    local layout_grids = {}
+    for _, grid in ipairs(self.LayoutGrids) do
+        table.insert(layout_grids, grid:ToIR())
+    end
+
     return {
         Id = self.Id,
         Name = self.Name,
@@ -172,6 +205,10 @@ function LuaAnimStateMachineGraph:ToIR()
             EntryStateId = self.EntryStateId,
             States = states,
             Transitions = transitions,
+        },
+        Layout = {
+            Style = self.LayoutStyle,
+            Grids = layout_grids,
         },
         DeclarationOrder = self.DeclarationOrder,
         SourceLocation = self.SourceLocation,

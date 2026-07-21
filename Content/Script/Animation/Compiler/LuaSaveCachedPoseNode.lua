@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Save Cached Pose 的 Lua 编译期节点类型。
 -- 节点只声明原生缓存入口和名字，Pose 缓存生命周期由 UE AnimInstance 管理。
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")

@@ -4,7 +4,6 @@
 #include "Containers/StringConv.h"
 #include "LuaEnv.h"
 #include "Misc/ScopeExit.h"
-#include "Misc/ScopeRWLock.h"
 #include "Modules/ModuleManager.h"
 #include "UnLuaBase.h"
 #include "UnLuaModule.h"
@@ -15,28 +14,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogSekiroLuaTransitionRuntime, Log, All);
 
 namespace SekiroLuaTransitionRuntimePrivate
 {
-    /** 以实例地址、模块名和规则名共同标识一份发布缓存。 */
-    struct FTransitionRuleCacheKey
-    {
-        const UAnimInstance* AnimInstance = nullptr; // 只用于哈希比较，不在读路径解引用
-        FString LuaModuleName;                       // require 模块名
-        FString RuleFunctionName;                    // Lua 导出函数名
-    };
-
-    /** 缓存值同时保留弱实例，供游戏线程删除已销毁实例的条目。 */
-    struct FTransitionRuleCacheEntry
-    {
-        TWeakObjectPtr<UAnimInstance> WeakAnimInstance; // 游戏线程清理依据
-        bool bValue = false;                            // 工作线程读取的布尔快照
-    };
-
-    bool operator==(const FTransitionRuleCacheKey& Left, const FTransitionRuleCacheKey& Right);
-    uint32 GetTypeHash(const FTransitionRuleCacheKey& Key);
-
-    FRWLock CacheLock;
-    TMap<FTransitionRuleCacheKey, FTransitionRuleCacheEntry> RuleCache;
-    TSet<FTransitionRuleCacheKey> ReportedErrors;
-
     /** Inst 代理内保存真实 UObject userdata 的字段名；UnLua 方法调用也识别同一 Object 约定。 */
     constexpr const char* AnimInstanceObjectField = "Object";
 
@@ -230,138 +207,6 @@ namespace SekiroLuaTransitionRuntimePrivate
     }
 
     /**
-     * 比较 Transition Rule 缓存键的全部语义字段。
-     * 函数不解引用 AnimInstance，不访问 UObject 或 Lua，可在任意线程调用。
-     *
-     * @param Left 左侧只读缓存键。
-     * @param Right 右侧只读缓存键。
-     * @return 三个键字段完全一致时返回 true。
-     */
-    bool operator==(const FTransitionRuleCacheKey& Left, const FTransitionRuleCacheKey& Right)
-    {
-        return Left.AnimInstance == Right.AnimInstance
-            && Left.LuaModuleName == Right.LuaModuleName
-            && Left.RuleFunctionName == Right.RuleFunctionName;
-    }
-
-    /**
-     * 计算包含实例、模块和规则名的组合哈希。
-     * 函数不解引用实例、不访问 UObject 或 Lua，可在任意线程调用。
-     *
-     * @param Key 待哈希的只读缓存键。
-     * @return 可供 TMap/TSet 使用的稳定进程内哈希值。
-     */
-    uint32 GetTypeHash(const FTransitionRuleCacheKey& Key)
-    {
-        uint32 Hash = PointerHash(Key.AnimInstance);
-        Hash = HashCombine(Hash, GetTypeHash(Key.LuaModuleName));
-        return HashCombine(Hash, GetTypeHash(Key.RuleFunctionName));
-    }
-
-    /**
-     * 构造一份不解引用实例的缓存键。
-     * 函数只复制字符串与裸指针，可在任意线程调用。
-     *
-     * @param AnimInstance 作为缓存隔离维度的动画实例，可为空。
-     * @param LuaModuleName require 模块名。
-     * @param RuleFunctionName Lua 规则函数名。
-     * @return 包含三个完整维度的值语义缓存键。
-     */
-    FTransitionRuleCacheKey MakeCacheKey(
-        const UAnimInstance* AnimInstance,
-        const FString& LuaModuleName,
-        const FString& RuleFunctionName)
-    {
-        FTransitionRuleCacheKey Key;
-        Key.AnimInstance = AnimInstance;
-        Key.LuaModuleName = LuaModuleName;
-        Key.RuleFunctionName = RuleFunctionName;
-        return Key;
-    }
-
-    /**
-     * 删除弱实例已失效的缓存及其错误去重标记。
-     * 函数会查询 TWeakObjectPtr，只能在游戏线程调用；写锁期间不执行 Lua 或日志输出。
-     *
-     * @return 无返回值。
-     */
-    void RemoveStaleEntries()
-    {
-        check(IsInGameThread());
-        FWriteScopeLock WriteLock(CacheLock);
-        for (TMap<FTransitionRuleCacheKey, FTransitionRuleCacheEntry>::TIterator Iterator =
-                RuleCache.CreateIterator();
-            Iterator;
-            ++Iterator)
-        {
-            if (Iterator.Value().WeakAnimInstance.IsValid()) continue;
-            ReportedErrors.Remove(Iterator.Key());
-            Iterator.RemoveCurrent();
-        }
-    }
-
-    /**
-     * 在写锁内发布某个实例 Rule 的最新布尔快照。
-     * 函数构造 TWeakObjectPtr，只能在游戏线程调用；不执行 Lua 或 UObject 反射。
-     *
-     * @param Key 包含实例、模块和规则名的完整缓存键，实例必须非空。
-     * @param bValue 要发布给动画工作线程的结果。
-     * @return 无返回值。
-     */
-    void PublishValue(const FTransitionRuleCacheKey& Key, const bool bValue)
-    {
-        check(IsInGameThread());
-        FTransitionRuleCacheEntry Entry;
-        Entry.WeakAnimInstance = const_cast<UAnimInstance*>(Key.AnimInstance);
-        Entry.bValue = bValue;
-
-        FWriteScopeLock WriteLock(CacheLock);
-        RuleCache.Add(Key, Entry);
-    }
-
-    /**
-     * 对同一实例、模块和规则组合只输出一次错误日志。
-     * 函数只在游戏线程调用；去重集合受写锁保护，日志在释放锁后输出。
-     *
-     * @param Key 发生错误的完整缓存键。
-     * @param Message 已格式化的人类可读错误消息。
-     * @return 本次是首次错误并已输出日志时返回 true，否则返回 false。
-     */
-    bool LogErrorOnce(const FTransitionRuleCacheKey& Key, const FString& Message)
-    {
-        bool bShouldLog = false;
-        {
-            FWriteScopeLock WriteLock(CacheLock);
-            if (!ReportedErrors.Contains(Key))
-            {
-                ReportedErrors.Add(Key);
-                bShouldLog = true;
-            }
-        }
-
-        if (bShouldLog)
-        {
-            UE_LOG(LogSekiroLuaTransitionRuntime, Error, TEXT("%s"), *Message);
-        }
-        return bShouldLog;
-    }
-
-    /**
-     * 将失败结果发布为 false，并按完整缓存键执行日志去重。
-     * 函数只能在游戏线程调用；它不抛出 Lua 错误，也不修改模块 table。
-     *
-     * @param Key 失败调用的完整缓存键。
-     * @param Message 面向日志的失败原因。
-     * @return 始终返回 false，便于入口直接返回降级结果。
-     */
-    bool PublishFailure(const FTransitionRuleCacheKey& Key, const FString& Message)
-    {
-        PublishValue(Key, false);
-        LogErrorOnce(Key, Message);
-        return false;
-    }
-
-    /**
      * 从已 require 的模块解析函数；若函数尚未导出，则先调用无参 CompileIR 完成 fresh require 初始化再重试。
      * 函数只能在游戏线程、持有当前 UnLua 主栈时调用；成功后目标函数位于栈顶，失败时栈内容由外层作用域统一恢复。
      *
@@ -435,39 +280,43 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateBlueprintUpdateAnimation(
 }
 
 /**
- * 在游戏线程 require Lua 模块，经 table/metatable 查找规则函数，并以实际 UAnimInstance 作为 self 调用。
- * 函数只接受严格 Lua boolean 返回；任意加载、查找、调用或类型错误都会发布 false，并对同一实例/模块/规则去重日志。
- * 调用开始时清理失效弱实例缓存；Lua 栈在所有路径恢复，不保留 Lua wrapper 或 table 引用。
+ * 从当前 Transition Rule Graph 按需 require Lua 模块，经 table/metatable 查找规则函数，
+ * 并以 AnimInstance 代理作为 Inst 参数直接执行。规则约定为只读，本函数不缓存也不预计算其他 Transition。
+ * 函数只接受严格 Lua boolean 返回；任意加载、查找、调用或类型错误均记录日志并返回 false。
+ * 必须在游戏线程调用；Lua 来源 AnimBlueprint 由编辑器工厂强制关闭多线程动画更新。
+ * Lua 栈在所有路径恢复，函数不保留 Lua wrapper 或 table 引用。
  *
- * @param AnimInstance 本次规则所属的实际动画实例；不能为空，实例地址参与缓存隔离。
+ * @param AnimInstance 本次规则所属的实际动画实例；不能为空，函数不保留引用。
  * @param LuaModuleName 交给 require 的模块名，不是文件系统路径，不能为空。
  * @param RuleFunctionName 从模块导出 table（含 __index 继承链）查找的函数名，不能为空。
  * @return Lua 严格返回 true 时返回 true；其他返回、错误或线程不符时返回 false。
  */
-bool USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
+bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     UAnimInstance* AnimInstance,
     const FString& LuaModuleName,
     const FString& RuleFunctionName)
 {
     using namespace SekiroLuaTransitionRuntimePrivate;
 
-    if (!IsInGameThread()) return false;
-    RemoveStaleEntries();
-    if (AnimInstance == nullptr) return false;
-
-    const FTransitionRuleCacheKey Key = MakeCacheKey(
-        AnimInstance,
-        LuaModuleName,
-        RuleFunctionName);
-    if (LuaModuleName.IsEmpty() || RuleFunctionName.IsEmpty())
+    if (!IsInGameThread())
     {
-        return PublishFailure(Key, TEXT("Lua transition module and rule names must not be empty."));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("EvaluateLuaTransitionRule must run on the game thread."));
+        return false;
+    }
+    if (!IsValid(AnimInstance)
+        || AnimInstance->HasAnyFlags(RF_BeginDestroyed | RF_FinishDestroyed)
+        || LuaModuleName.IsEmpty()
+        || RuleFunctionName.IsEmpty())
+    {
+        return false;
     }
 
     IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
     if (UnLuaModule == nullptr)
     {
-        return PublishFailure(Key, TEXT("UnLua module is unavailable."));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error, TEXT("UnLua module is unavailable."));
+        return false;
     }
     if (!UnLuaModule->IsActive())
     {
@@ -477,7 +326,10 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
     UnLua::FLuaEnv* Environment = UnLuaModule->GetEnv(AnimInstance);
     if (Environment == nullptr)
     {
-        return PublishFailure(Key, TEXT("UnLua environment is unavailable for AnimInstance."));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("UnLua environment is unavailable for AnimInstance '%s'."),
+            *AnimInstance->GetPathName());
+        return false;
     }
 
     lua_State* State = Environment->GetMainState();
@@ -490,78 +342,46 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateAndCacheTransitionRule(
     if (lua_pcall(State, 1, 1, 0) != LUA_OK)
     {
         const FString Error = UTF8_TO_TCHAR(lua_tostring(State, -1));
-        return PublishFailure(
-            Key,
-            FString::Printf(TEXT("require('%s') failed: %s"), *LuaModuleName, *Error));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("require('%s') failed: %s"), *LuaModuleName, *Error);
+        return false;
     }
     if (!lua_istable(State, -1))
     {
-        return PublishFailure(
-            Key,
-            FString::Printf(TEXT("Lua module '%s' did not return a table."), *LuaModuleName));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("Lua module '%s' did not return a table."), *LuaModuleName);
+        return false;
     }
 
     const int32 ModuleTableIndex = lua_absindex(State, -1);
     if (!PushRuntimeFunction(State, ModuleTableIndex, RuleFunctionName))
     {
-        return PublishFailure(
-            Key,
-            FString::Printf(
-                TEXT("Lua module '%s' does not export function '%s'."),
-                *LuaModuleName,
-                *RuleFunctionName));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("Lua module '%s' does not export function '%s'."),
+            *LuaModuleName,
+            *RuleFunctionName);
+        return false;
     }
 
-    UnLua::PushUObject(State, AnimInstance);
+    PushAnimInstanceProxy(State, AnimInstance);
     if (lua_pcall(State, 1, 1, 0) != LUA_OK)
     {
         const FString Error = UTF8_TO_TCHAR(lua_tostring(State, -1));
-        return PublishFailure(
-            Key,
-            FString::Printf(
-                TEXT("Lua transition rule '%s.%s' failed: %s"),
-                *LuaModuleName,
-                *RuleFunctionName,
-                *Error));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("Lua transition rule '%s.%s' failed: %s"),
+            *LuaModuleName,
+            *RuleFunctionName,
+            *Error);
+        return false;
     }
     if (!lua_isboolean(State, -1))
     {
-        return PublishFailure(
-            Key,
-            FString::Printf(
-                TEXT("Lua transition rule '%s.%s' must return boolean."),
-                *LuaModuleName,
-                *RuleFunctionName));
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error,
+            TEXT("Lua transition rule '%s.%s' must return boolean."),
+            *LuaModuleName,
+            *RuleFunctionName);
+        return false;
     }
 
-    const bool bResult = lua_toboolean(State, -1) != 0;
-    PublishValue(Key, bResult);
-    return bResult;
-}
-
-/**
- * 从 FRWLock 保护的发布缓存读取最近一次 Transition Rule 结果。
- * 函数不执行 Lua、不加载模块、不创建弱指针，也不调用 UObject 方法或反射；可由动画工作线程并发调用。
- * 未发布、空实例或键不匹配均安全返回 false。
- *
- * @param AnimInstance 要查询的动画实例裸指针，仅作为缓存键比较，不会解引用，可为空。
- * @param LuaModuleName 缓存键中的 require 模块名。
- * @param RuleFunctionName 缓存键中的 Lua 函数名。
- * @return 找到完整匹配条目时返回其布尔快照，否则返回 false。
- */
-bool USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
-    const UAnimInstance* AnimInstance,
-    const FString& LuaModuleName,
-    const FString& RuleFunctionName)
-{
-    using namespace SekiroLuaTransitionRuntimePrivate;
-
-    if (AnimInstance == nullptr) return false;
-    const FTransitionRuleCacheKey Key = MakeCacheKey(
-        AnimInstance,
-        LuaModuleName,
-        RuleFunctionName);
-    FReadScopeLock ReadLock(CacheLock);
-    const FTransitionRuleCacheEntry* Entry = RuleCache.Find(Key);
-    return Entry != nullptr ? Entry->bValue : false;
+    return lua_toboolean(State, -1) != 0;
 }

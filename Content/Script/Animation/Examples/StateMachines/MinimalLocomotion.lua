@@ -1,3 +1,4 @@
+-- Lua 类型：动画蓝图编译描述/状态机模块；编译对象是纯 Lua 表，运行时规则仅通过显式 Inst 访问 AnimInstance。
 -- 可被多个动画蓝图引用的最小移动状态机。
 -- 本文件只关心 Entry、State、Transition、状态内部动画和运行时进入条件。
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")

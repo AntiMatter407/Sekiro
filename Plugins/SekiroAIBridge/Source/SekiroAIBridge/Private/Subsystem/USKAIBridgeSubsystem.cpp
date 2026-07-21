@@ -1,4 +1,4 @@
-#include "Subsystem/USKAIBridgeSubsystem.h"
+﻿#include "Subsystem/USKAIBridgeSubsystem.h"
 #include "Server/FSKAIBridgeServer.h"
 #include "Protocol/FSKJsonRpcMessage.h"
 #include "Tools/USKAIToolRegistry.h"
@@ -19,6 +19,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
+#include "Misc/CoreDelegates.h"
 
 // ============================================================================
 // 生命周期
@@ -36,6 +37,8 @@ void USKAIBridgeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
     AccessControl = new FSKAccessControl();
     ToolRegistry = NewObject<USKAIToolRegistry>(this);
     RegisterAllTools();
+    EndFrameDelegateHandle = FCoreDelegates::OnEndFrame.AddUObject(
+        this, &USKAIBridgeSubsystem::ProcessPendingToolsCalls);
 
     if (!Settings->bAutoStartServer)
     {
@@ -74,9 +77,18 @@ void USKAIBridgeSubsystem::Deinitialize()
 {
     UE_LOG(LogSekiroAIBridge, Log, TEXT("========== AI桥接子系统关闭 =========="));
 
+    if (EndFrameDelegateHandle.IsValid())
+    {
+        FCoreDelegates::OnEndFrame.Remove(EndFrameDelegateHandle);
+        EndFrameDelegateHandle.Reset();
+    }
+    PendingToolCalls.Reset();
+
     if (Server)
     {
         Server->Shutdown();
+        Server->OnMessageReceived.Unbind();
+        Server->OnClientDisconnected.Unbind();
         delete Server;
         Server = nullptr;
     }
@@ -239,12 +251,7 @@ void USKAIBridgeSubsystem::OnMessageReceived(const FString& JsonLine)
             const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
             if (Message.Params->TryGetObject(ParamsObj))
             {
-                // 通知模式：跳过确认，直接执行
-                FString NotifResult = HandleToolsCall(FString(), *ParamsObj);
-                if (!NotifResult.IsEmpty())
-                {
-                    UE_LOG(LogSekiroAIBridge, Verbose, TEXT("通知 tools/call 结果被丢弃: %s"), *NotifResult.Left(200));
-                }
+                QueueToolsCall(FString(), *ParamsObj, true);
             }
         }
         return;
@@ -276,7 +283,8 @@ void USKAIBridgeSubsystem::OnMessageReceived(const FString& JsonLine)
         const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
         if (Message.Params.IsValid() && Message.Params->TryGetObject(ParamsObj))
         {
-            Response = HandleToolsCall(Id, *ParamsObj);
+            QueueToolsCall(Id, *ParamsObj, false);
+            return;
         }
         else
         {
@@ -305,9 +313,58 @@ void USKAIBridgeSubsystem::OnMessageReceived(const FString& JsonLine)
     }
 }
 
+/**
+ * 保存一个已经通过协议解析和认证检查的工具调用，等待主循环帧尾串行执行。
+ * 本函数只允许在 GameThread 调用；Params 必须是有效的 tools/call 对象，队列通过共享引用延长其生命周期。
+ * Id 是原始 JSON-RPC 请求 ID，通知可为空；bIsNotification 明确控制是否回包，避免用空 ID 猜测消息类型。
+ * 本函数不执行工具、不发送响应；它会修改 PendingToolCalls，实际副作用最早发生在后续 OnEndFrame。
+ */
+void USKAIBridgeSubsystem::QueueToolsCall(
+    const FString& Id,
+    const TSharedPtr<FJsonObject>& Params,
+    bool bIsNotification)
+{
+    check(IsInGameThread());
+    if (!Params.IsValid()) return;
+
+    FSekiroPendingToolCall PendingCall;
+    PendingCall.Id = Id;
+    PendingCall.Params = Params;
+    PendingCall.bIsNotification = bIsNotification;
+    PendingToolCalls.Add(MoveTemp(PendingCall));
+}
+
+/**
+ * 在引擎完成当前帧 TickFunction 调度后执行队首工具调用，并把有 ID 请求的结果送回 TCP 发送队列。
+ * 本函数由 FCoreDelegates::OnEndFrame 在 GameThread 调用；每帧只消费一个元素以保持严格 FIFO，
+ * 并隔离连续的蓝图编译/重实例化操作。通知仍会执行但不会响应；服务端已关闭时仅丢弃响应。
+ * 重入保护保证工具内部触发嵌套帧尾广播时不会重复消费队列；本函数会执行工具产生的编辑器副作用。
+ */
+void USKAIBridgeSubsystem::ProcessPendingToolsCalls()
+{
+    check(IsInGameThread());
+    if (bIsProcessingToolCall || PendingToolCalls.IsEmpty()) return;
+
+    TGuardValue<bool> ProcessingGuard(bIsProcessingToolCall, true);
+    FSekiroPendingToolCall PendingCall = MoveTemp(PendingToolCalls[0]);
+    PendingToolCalls.RemoveAt(0, 1, false);
+
+    if (!PendingCall.Params.IsValid()) return;
+
+    FString Response = HandleToolsCall(
+        PendingCall.Id,
+        PendingCall.Params,
+        PendingCall.bIsNotification);
+    if (!PendingCall.bIsNotification && !Response.IsEmpty() && Server)
+    {
+        Server->EnqueueResponse(Response);
+    }
+}
+
 void USKAIBridgeSubsystem::ResetClientAuth()
 {
     bAuthenticated = false;
+    PendingToolCalls.Reset();
     UE_LOG(LogSekiroAIBridge, Log, TEXT("客户端断开，认证状态已重置"));
 }
 
@@ -347,9 +404,18 @@ FString USKAIBridgeSubsystem::HandleToolsList(const FString& Id)
 // tools/call 处理（含确认和安全检查）
 // ============================================================================
 
-FString USKAIBridgeSubsystem::HandleToolsCall(const FString& Id, const TSharedPtr<FJsonObject>& Params)
+/**
+ * 校验并同步执行一个已经延迟到安全帧尾的工具调用，再生成 JSON-RPC/MCP 格式结果。
+ * 本函数只允许由 ProcessPendingToolsCalls 在 GameThread 调用；它不负责调度或直接发送响应。
+ * Id 是待原样回传的请求 ID；Params 必须包含工具名，可选 arguments 对象；bIsNotification 控制确认语义和回包。
+ * 返回完整 JSON-RPC 响应或错误字符串；通知和成功执行返回空字符串。工具执行可能修改编辑器和资产状态。
+ */
+FString USKAIBridgeSubsystem::HandleToolsCall(
+    const FString& Id,
+    const TSharedPtr<FJsonObject>& Params,
+    bool bIsNotification)
 {
-    const bool bIsNotification = Id.IsEmpty();
+    check(IsInGameThread());
 
     FString ToolName;
     if (!Params->TryGetStringField(TEXT("name"), ToolName))

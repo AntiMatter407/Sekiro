@@ -1,11 +1,21 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Pose Graph 的 Lua 编译期类。
 -- Graph 持有节点与 Link，并自动创建唯一 OutputPose 根节点。
 local CompilerClass = require("Animation.Compiler.CompilerClass")
 local IRSchema = require("Animation.Compiler.IRSchema")
+local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")
+local LuaComponentToLocalSpaceNode = require("Animation.Compiler.LuaComponentToLocalSpaceNode")
+local LuaFootPlacementNode = require("Animation.Compiler.LuaFootPlacementNode")
 local LuaInertializationNode = require("Animation.Compiler.LuaInertializationNode")
+local LuaLegIKNode = require("Animation.Compiler.LuaLegIKNode")
+local LuaLayeredBlendPerBoneNode = require("Animation.Compiler.LuaLayeredBlendPerBoneNode")
+local LuaLocalToComponentSpaceNode = require("Animation.Compiler.LuaLocalToComponentSpaceNode")
+local LuaOrientationWarpingNode = require("Animation.Compiler.LuaOrientationWarpingNode")
 local LuaSaveCachedPoseNode = require("Animation.Compiler.LuaSaveCachedPoseNode")
 local LuaSequencePlayerNode = require("Animation.Compiler.LuaSequencePlayerNode")
+local LuaSlotNode = require("Animation.Compiler.LuaSlotNode")
 local LuaUseCachedPoseNode = require("Animation.Compiler.LuaUseCachedPoseNode")
 local LuaPropertyGetterNode = require("Animation.Compiler.LuaPropertyGetterNode")
 local LuaBlendListByBoolNode = require("Animation.Compiler.LuaBlendListByBoolNode")
@@ -55,6 +65,10 @@ function LuaAnimGraph:Initialize(config)
     self.Nodes = {}
     self.Links = {}
     self.NodeNames = {}
+    self.LayoutStyle = LayoutStyle.HierarchicalBlocks
+    self.LayoutGrids = {}
+    self.LayoutGridNames = {}
+    self.LayoutElementIds = {}
 
     ---@type LuaAnimNode
     local output_node = LuaAnimNode:New({
@@ -69,6 +83,26 @@ function LuaAnimGraph:Initialize(config)
     self:AddNode(output_node)
     self.RootNodeId = output_node.Id
     self.Result = output_node.Result
+end
+
+---创建当前 Pose Graph 独占的布局分区；多个 Grid 通过 RegionColumn/RegionRow 分隔画布区域。
+---@param name string Graph 内唯一的布局分区名。
+---@param settings LuaGraphLayoutGridSettings|nil 分区区域、单元格间距和风格覆盖。
+---@return LuaGraphLayoutGrid grid 可继续 Place 当前 Graph 节点的布局分区。
+function LuaAnimGraph:Grid(name, settings)
+    local valid_name = IRSchema.RequireSemanticName(name, "Layout Grid")
+    assert(self.LayoutGridNames[valid_name] == nil, string.format(
+        "Graph '%s' contains duplicate Layout Grid '%s'",
+        self.Name,
+        valid_name))
+    local grid = LuaGraphLayoutGrid:New({
+        Graph = self,
+        Name = valid_name,
+        Settings = settings,
+    })
+    self.LayoutGridNames[valid_name] = grid
+    table.insert(self.LayoutGrids, grid)
+    return grid
 end
 
 ---登记一个节点对象并分配确定性的声明顺序。
@@ -162,6 +196,105 @@ end
 function LuaAnimGraph:Inertialization(name)
     ---@type LuaInertializationNode
     local node = LuaInertializationNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Slot 节点；调用方必须显式设置 SlotName，并把基础姿势连接到 Source。
+---@param name string Graph 内的节点语义名。
+---@return LuaSlotNode node 提供 Source 输入和 Pose 输出的 Slot 节点。
+function LuaAnimGraph:Slot(name)
+    ---@type LuaSlotNode
+    local node = LuaSlotNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建固定一个覆盖姿势的原生 Layered Blend Per Bone 节点。
+---调用方必须设置 BranchFilters，并分别连接 BasePose、BlendPose；BlendWeight 可选连接。
+---@param name string Graph 内的节点语义名。
+---@return LuaLayeredBlendPerBoneNode node 提供分骨骼姿势混合 Pin 的节点。
+function LuaAnimGraph:LayeredBlendPerBone(name)
+    ---@type LuaLayeredBlendPerBoneNode
+    local node = LuaLayeredBlendPerBoneNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Local To Component Space 节点，为 Skeletal Control 提供组件空间姿势。
+---@param name string Graph 内的节点语义名。
+---@return LuaLocalToComponentSpaceNode node 提供 LocalPose 输入和 ComponentPose 输出的转换节点。
+function LuaAnimGraph:LocalToComponentSpace(name)
+    ---@type LuaLocalToComponentSpaceNode
+    local node = LuaLocalToComponentSpaceNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Component To Local Space 节点，使 Skeletal Control 输出可继续连接普通 Pose 节点。
+---@param name string Graph 内的节点语义名。
+---@return LuaComponentToLocalSpaceNode node 提供 ComponentPose 输入和 Pose 输出的转换节点。
+function LuaAnimGraph:ComponentToLocalSpace(name)
+    ---@type LuaComponentToLocalSpaceNode
+    local node = LuaComponentToLocalSpaceNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Orientation Warping 节点，使用手动角度旋转下半身并经脊柱反向补偿上半身。
+---@param name string Graph 内的节点语义名。
+---@return LuaOrientationWarpingNode node 提供姿势、角度和强度输入的方向扭曲节点。
+function LuaAnimGraph:OrientationWarping(name)
+    ---@type LuaOrientationWarpingNode
+    local node = LuaOrientationWarpingNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Foot Placement 节点，由 UE 完成双脚地面检测、脚部锁定、坡面旋转和骨盆补偿。
+---@param name string Graph 内节点语义名。
+---@return LuaFootPlacementNode node 提供组件空间姿势输入、强度输入和姿势输出的节点。
+function LuaAnimGraph:FootPlacement(name)
+    ---@type LuaFootPlacementNode
+    local node = LuaFootPlacementNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Leg IK 节点，根据 IK 脚目标求解一条或多条 FK 腿链。
+---@param name string Graph 内节点语义名。
+---@return LuaLegIKNode node 提供组件空间姿势输入、强度输入和姿势输出的节点。
+function LuaAnimGraph:LegIK(name)
+    ---@type LuaLegIKNode
+    local node = LuaLegIKNode:New({
         Graph = self,
         Name = name,
         SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
@@ -300,6 +433,12 @@ function LuaAnimGraph:ToIR()
         table.insert(nodes, node:ToIR())
     end
 
+    ---@type SekiroAnimIRLayoutGrid[]
+    local layout_grids = {}
+    for _, grid in ipairs(self.LayoutGrids) do
+        table.insert(layout_grids, grid:ToIR())
+    end
+
     return {
         Id = self.Id,
         Name = self.Name,
@@ -311,6 +450,10 @@ function LuaAnimGraph:ToIR()
             EntryStateId = "",
             States = {},
             Transitions = {},
+        },
+        Layout = {
+            Style = self.LayoutStyle,
+            Grids = layout_grids,
         },
         DeclarationOrder = self.DeclarationOrder,
         SourceLocation = self.SourceLocation,

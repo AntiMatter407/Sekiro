@@ -1,4 +1,8 @@
-# Lua AnimGraph 运行时架构
+# Lua AnimGraph 运行时架构（历史动态 Pose 方案）
+
+> **历史文档**：本文记录已经废弃的 Lua Pose Host、自定义运行时状态机和只读快照方案，不代表当前 `ABP_Sekiro`。
+> 当前实现由 Lua 编译期声明 Graph，经 `CompileIR -> Validator -> NodeFactory` 生成原生 `UAnimBlueprint`；运行时 Lua 只更新 AnimInstance 参数并按需执行 `CanEnter_*(Inst)`。
+> 当前权威说明：[Lua AnimBlueprint 编译器设计](design/lua-anim-blueprint-compiler.md) / [Lua 动画蓝图编写手册](lua-anim-blueprint-authoring-guide.md)。
 
 本文依据 UE5.2 动画运行时源码和 `Saved/Animation原理.txt`，说明 C++ 动画蓝图的底层求值方式、当前 Lua 实现的对应关系，以及本项目采用的复刻边界。
 

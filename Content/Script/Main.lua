@@ -1,3 +1,4 @@
+-- Lua 类型：UnLua UObject 运行时类；self 表示真实 UObject，可直接访问其反射属性与函数。
 --
 -- DESCRIPTION
 --
@@ -5,10 +6,11 @@
 -- @AUTHOR **
 -- @DATE ${date} ${time}
 --
-package.cpath = package.cpath .. ';C:/Users/guoya/AppData/Roaming/JetBrains/Rider2026.1/plugins/IntelliJ-EmmyLua/debugger/emmy/windows/x64/?.dll'
-local dbg = require('emmy_core')
-dbg.tcpListen('localhost', 9966)
-
+-- Main.lua 只在游戏世界启动后加载；编辑器调试开关关闭时，这里才开放 9966 端口。
+-- 开关开启时模块已被 require，Start 会安全保持现有监听，不重复绑定端口。
+---@type LuaDebuggerModule
+local LuaDebugger = require("Debug.LuaDebugger")
+LuaDebugger.Start()
 
 ---@type BP_SKGameState_C
 local M = UnLua.Class()

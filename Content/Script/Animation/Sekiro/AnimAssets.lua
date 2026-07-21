@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 local SekiroAnimations = {}
 
 -- 里面动画Forward，Left，Right，Back是相对角色朝向
@@ -137,12 +138,14 @@ SekiroAnimations.Locomotion = {
 -- Jump 动画按“原地”和“方向”两组组织。
 -- 方向后缀相对角色朝向：锁定模式直接使用八方向资源，非锁定模式转向输入方向并使用 Forward 资源。
 SekiroAnimations.Jump = {
+    -- 非锁定
     Stand_Jump_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200000.Anim_Sekiro_a000_200000",
     Crouch_Jump_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200100.Anim_Sekiro_a000_200100",
     Jump_Loop = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201030.Anim_Sekiro_a000_201030",
     Jump_Light_Stand = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201040.Anim_Sekiro_a000_201040",
     Jump_Heavy_Stand = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200021.Anim_Sekiro_a000_200021",
     Jump_Heavy_Crouch = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_200121.Anim_Sekiro_a000_200121",
+    Jump_Unlock_Forward_Start = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201010.Anim_Sekiro_a000_201010",
 
     -- 方向 Start/Land 原始资产包含 RootMotion；InAir 原始资产没有 RootMotion，空中轨迹由 CharacterMovement 物理计算。
     Jump_Start_Forward = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201100.Anim_Sekiro_a000_201100",
@@ -173,5 +176,101 @@ SekiroAnimations.Jump = {
     Jump_Land_BackRight = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_201147.Anim_Sekiro_a000_201147",
 
 }
+
+-- 人工核验的武器切换动画。
+-- 资源语义以 Saved/AnimationTemp-Attack.txt 为准，不使用旧自动分类脚本中的推测名称。
+SekiroAnimations.Weapon = {
+    Sheathe = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_700500.Anim_Sekiro_a000_700500",
+    Draw = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a000_700510.Anim_Sekiro_a000_700510",
+}
+
+-- 人工核验的招架姿势、移动、受击中断和空中招架动画。
+SekiroAnimations.Guard = {
+    Idle = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_002000.Anim_Sekiro_a050_002000",
+    Move_Forward = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_002200.Anim_Sekiro_a050_002200",
+    Move_Back = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_002201.Anim_Sekiro_a050_002201",
+    Move_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_002202.Anim_Sekiro_a050_002202",
+    Move_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_002203.Anim_Sekiro_a050_002203",
+    Interrupted = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120100.Anim_Sekiro_a050_120100",
+    Interrupted_Heavy = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120200.Anim_Sekiro_a050_120200",
+
+    Raise = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_203000.Anim_Sekiro_a050_203000",
+    Shake = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_203005.Anim_Sekiro_a050_203005",
+    Lower = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_203010.Anim_Sekiro_a050_203010",
+
+    Air_Raise = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_203300.Anim_Sekiro_a050_203300",
+    Air_Idle = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_203310.Anim_Sekiro_a050_203310",
+    Air_Lower = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_203320.Anim_Sekiro_a050_203320",
+}
+
+-- 人工核验的弹反分型动画；Stage 表示同一弹反类型内的连续阶段。
+SekiroAnimations.Deflect = {
+    Type_01_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130100.Anim_Sekiro_a050_130100",
+    Type_01_Stage_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130101.Anim_Sekiro_a050_130101",
+    Type_01_Stage_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130102.Anim_Sekiro_a050_130102",
+    Type_02_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130200.Anim_Sekiro_a050_130200",
+    Type_02_Stage_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130201.Anim_Sekiro_a050_130201",
+    Type_02_Stage_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130202.Anim_Sekiro_a050_130202",
+    Type_03_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130300.Anim_Sekiro_a050_130300",
+    Type_03_Stage_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130301.Anim_Sekiro_a050_130301",
+    Type_03_Stage_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130302.Anim_Sekiro_a050_130302",
+    Type_04_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130700.Anim_Sekiro_a050_130700",
+}
+
+-- 人工核验的基础攻击动画。
+-- Combo_01~03 是短按连段；Charged_Thrust_* 只用于长按攻击，不能打断已经开始的短按连段。
+SekiroAnimations.Attack = {
+    Charged_Thrust_Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300000.Anim_Sekiro_a050_300000",
+    Charged_Thrust_Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300001.Anim_Sekiro_a050_300001",
+    Combo_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300020.Anim_Sekiro_a050_300020",
+    Combo_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300030.Anim_Sekiro_a050_300030",
+    Combo_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300040.Anim_Sekiro_a050_300040",
+
+    Air_Combo_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_308000.Anim_Sekiro_a050_308000",
+    Air_Combo_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_308010.Anim_Sekiro_a050_308010",
+    Air_Combo_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_308020.Anim_Sekiro_a050_308020",
+
+    Land_Combo_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_308050.Anim_Sekiro_a050_308050",
+    Land_Combo_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_308060.Anim_Sekiro_a050_308060",
+    Land_Combo_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_308070.Anim_Sekiro_a050_308070",
+
+    Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300100.Anim_Sekiro_a050_300100",
+    Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_300110.Anim_Sekiro_a050_300110",
+}
+
+-- ShowDebug Animation 使用 UObject 短名输出当前 Sequence Player 资产。
+-- 这里反向建立索引，使 C++ 调试宿主无需硬编码项目的 Lua 表结构。
+local lua_asset_name_by_native_name = {}
+
+---将一组 Lua 动画资产注册到 UObject 短名反向索引。
+---@param group_name string Lua 资产分组名，例如 Locomotion。
+---@param group_assets table<string, string> 资产键到 UE 对象路径的映射表。
+---@return nil 无返回值，仅更新模块内部的反向索引。
+local function register_lua_asset_names(group_name, group_assets)
+    for asset_name, asset_path in pairs(group_assets) do
+        local native_asset_name = asset_path:match("%.([^%.]+)$")
+        if native_asset_name ~= nil and lua_asset_name_by_native_name[native_asset_name] == nil then
+            lua_asset_name_by_native_name[native_asset_name] = string.format(
+                "AnimAssets.%s.%s",
+                group_name,
+                asset_name
+            )
+        end
+    end
+end
+
+register_lua_asset_names("Locomotion", SekiroAnimations.Locomotion)
+register_lua_asset_names("Jump", SekiroAnimations.Jump)
+register_lua_asset_names("Weapon", SekiroAnimations.Weapon)
+register_lua_asset_names("Guard", SekiroAnimations.Guard)
+register_lua_asset_names("Deflect", SekiroAnimations.Deflect)
+register_lua_asset_names("Attack", SekiroAnimations.Attack)
+
+---查询 ShowDebug Animation 中原生动画资产对应的 Lua 语义名。
+---@param native_asset_name string Sequence Player 输出的 UObject 短名。
+---@return string|nil lua_asset_name 已注册时返回 AnimAssets.<Group>.<Key>，否则返回 nil。
+function SekiroAnimations.GetLuaAssetName(native_asset_name)
+    return lua_asset_name_by_native_name[native_asset_name]
+end
 
 return SekiroAnimations

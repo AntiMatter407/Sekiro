@@ -12,6 +12,7 @@
 #include "SekiroLuaAnimBlueprintEditorBinding.h"
 #include "SekiroLuaAnimBlueprintAutoCompileScheduler.h"
 #include "UnLuaFunctionLibrary.h"
+#include "UnLuaModule.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSekiroAnimBlueprintExtEditor, Log, All);
 
@@ -44,12 +45,35 @@ private:
 };
 
 /**
- * 注册 Lua Animation 目录 watcher、PreBeginPIE 委托和官方动画蓝图工具栏扩展。
- * 由模块管理器在编辑器启动时于游戏线程调用；工具栏回调提供有效 ToolkitCommands 后才包装 Compile/F7。
+ * 激活编辑器 UnLua Env，按用户开关决定是否立即启动 Lua 调试，再注册源码 watcher、PIE 委托和工具栏。
+ * 由模块管理器在编辑器启动时于游戏线程调用；调试器失败只记录日志，不阻止编辑器启动。
  */
 void FSekiroAnimBlueprintExtEditorModule::StartupModule()
 {
     bShuttingDown = false;
+
+    FSekiroLuaAnimBlueprintEditorBinding::PrepareEditorLuaDebugBeforeEnvCreation();
+    IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
+    if (UnLuaModule != nullptr)
+    {
+        if (!UnLuaModule->IsActive()) UnLuaModule->SetActive(true);
+        UnLuaModule->GetEnv();
+        if (!FSekiroLuaAnimBlueprintEditorBinding::ApplyEditorLuaDebugSetting())
+        {
+            UE_LOG(
+                LogSekiroAnimBlueprintExtEditor,
+                Warning,
+                TEXT("Editor Lua debugging is enabled, but the listener could not be started; editor startup will continue."));
+        }
+    }
+    else
+    {
+        UE_LOG(
+            LogSekiroAnimBlueprintExtEditor,
+            Warning,
+            TEXT("UnLua module is unavailable; editor Lua debugger listener was not started."));
+    }
+
     Scheduler = MakeShared<FSekiroLuaAnimBlueprintAutoCompileScheduler, ESPMode::ThreadSafe>();
     RegisterScriptWatcher();
     PreBeginPIEHandle = FEditorDelegates::PreBeginPIE.AddRaw(
@@ -108,7 +132,7 @@ void FSekiroAnimBlueprintExtEditorModule::ShutdownModule()
 }
 
 /**
- * 为一个实际动画蓝图编辑器创建或复用命令绑定，并把三个 Lua 控件追加到原生 Compile 区段。
+ * 为一个实际动画蓝图编辑器创建或复用命令绑定，并把 Lua 编译、调试与来源控件追加到原生 Compile 区段。
  * 只能由 IAnimationBlueprintEditorModule 在游戏线程调用；不会在 ToolMenus 动态构建阶段查询 ToolkitCommands。
  *
  * @param CommandList 官方回调提供的当前编辑器有效命令列表。

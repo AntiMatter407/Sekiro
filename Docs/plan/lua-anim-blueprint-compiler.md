@@ -99,7 +99,7 @@
 - Pose Link 通过真实 Pin 与 Graph Schema 建立；Entry、并行 Transition、混合时长、优先级和 Linear BlendMode 已落到原生状态机拓扑。
 - StatePose 内嵌 StateMachine 可递归生成；IR Graph、Node、State、Transition 稳定 ID 会生成确定性 `GraphGuid`/`NodeGuid`。
 - `SekiroEditor Win64 Development` 编译通过；`Automation RunTests Sekiro.AnimGraphIR` 于 2026-07-14 最终实际发现并执行 52 项，52 项全部成功，退出码为 0。
-- 第三阶段验收时只生成 Transition 原生规则 Graph 和默认布尔 Result；第四阶段现已接通 `RuleFunctionName` 缓存并提供保存入口，覆盖与增量重建仍未开放。
+- 第三阶段验收时只生成 Transition 原生规则 Graph 和默认布尔 Result；第四阶段最终改为每条 Transition Graph 按需直接调用 `RuleFunctionName`，覆盖与增量重建仍未开放。
 
 ## 第四阶段任务
 
@@ -107,17 +107,19 @@
 |------|------|------|
 | 11.1 | `LuaModule -> CompileIR -> NodeFactory -> 保存资产` 一键入口 | 已完成 |
 | 11.2 | EventGraph 自动生成 `BlueprintUpdateAnimation` override | 已完成 |
-| 11.3 | 游戏线程执行 Lua `CanEnter_*` 并发布规则快照 | 已完成 |
-| 11.4 | Transition Rule Graph 在线程安全缓存上读取 bool Result | 已完成 |
-| 11.5 | 一键保存、运行时 true/false 规则和缓存隔离测试 | 已完成，51/51 全套测试通过 |
+| 11.3 | 游戏线程按原生状态机检查顺序执行 Lua `CanEnter_*` | 已完成 |
+| 11.4 | Transition Rule Graph 直接调用 Lua Rule 并连接 bool Result | 已完成 |
+| 11.5 | Lua 来源 AnimBlueprint 关闭多线程 Update，补齐直调与 Gate 测试 | 已完成 |
 
 ## 第四阶段验收记录
 
 - `CompileLuaModuleToAnimBlueprintAsset` 可从模块名完成 Lua 导入、IR 校验、原生 NodeFactory、蓝图编译和 package 保存；已有资产仍明确拒绝覆盖。
-- 生成的 `BlueprintUpdateAnimation` Event 会按 Canonical IR 顺序调用 `EvaluateAndCacheTransitionRule`，并把实际 AnimInstance 作为 `self` 传给 Lua 规则。
-- Lua VM 只在游戏线程运行；缓存以 AnimInstance、Lua 模块名和规则函数名三者隔离，并用 `FRWLock` 发布给动画工作线程。
-- 每个原生 Transition Graph 使用标记为 `BlueprintThreadSafe` 的 `GetCachedTransitionRule` 连接 `bCanEnterTransition`，不在动画线程调用 Lua 或 UObject 反射。
-- Lua 的 `CanEnter_*` 可在 PIE 中通过 UnLua/Rider Lua 断点调试；热重载后的下一次规则刷新通过 `require` 取得当前模块导出表。
+- 生成的 `BlueprintUpdateAnimation` Event 只调用 Lua 动画参数更新，不再串联所有 Transition Rule。
+- 每个原生 Transition Graph 使用 `EvaluateLuaTransitionRule` 按需调用对应 Lua 函数，将实际 AnimInstance 作为显式 `Inst` 传入，再与原生 Gate 组合后连接 `bCanEnterTransition`。
+- Lua 来源 AnimBlueprint 关闭 `bUseMultiThreadedAnimationUpdate`，保证 UnLua VM 和 UObject 反射只在游戏线程执行；Pose 计算仍由 UE 原生 AnimNode 完成。
+- Lua 的 `CanEnter_*` 可在 PIE 中通过 UnLua/Rider Lua 断点调试；断点只在原生状态机检查当前状态的对应出边时命中。
+- 2026-07-16 完成单线程直调改造：`SekiroEditor Win64 Development` 编译通过，Factory 7/7 与 Runtime DirectTransitionRule 1/1 自动化测试通过。
+- `ABP_Sekiro` 已从 Lua 重新生成并保存；二次冷启动与 PIE 烟雾测试中，旧 `GetCachedTransitionRule` 节点、线程违反和 Lua Rule 错误均为零。
 - `SekiroEditor Win64 Development` 编译通过；`Automation RunTests Sekiro.AnimGraphIR` 于 2026-07-14 最终实际执行 52 项并全部成功。
 
 ## 遗留风险

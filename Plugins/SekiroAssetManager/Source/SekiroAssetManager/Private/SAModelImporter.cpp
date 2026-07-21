@@ -15,6 +15,8 @@
 #include "Misc/FeedbackContext.h"
 #include "SkinnedAssetCompiler.h"
 #include "Rendering/SkeletalMeshModel.h"
+#include "Misc/AutomationTest.h"
+#include "Materials/MaterialInterface.h"
 
 // ============================================================================
 // 骨骼解析
@@ -87,6 +89,101 @@ void SAModelImporter::ParseBones(const TArray<TSharedPtr<FJsonValue>>& BonesArra
             Bone.LocalRotation = Bone.WorldRotation; Bone.LocalTranslation = Bone.WorldTranslation; Bone.LocalScale = Bone.WorldScale;
         }
     }
+}
+
+/**
+ * 解析模型 JSON 中可选的 AuxiliaryBones 数组。每项必须声明 Name 与 ParentName，变换字段使用
+ * Translation/Rotation/Scale（同时兼容 LocalTranslation/LocalRotation/LocalScale）并直接表示 UE 局部空间：
+ * 位移单位为厘米，旋转为 xyzw 四元数，缩放无单位。本函数只校验 JSON 字段形状，不解析父级索引，也不修改主骨架。
+ * 只能在模型导入所在的编辑器线程调用。
+ *
+ * @param BonesArray JSON 的 AuxiliaryBones 数组，调用期间只读且不保留引用。
+ * @param OutBones 成功时追加解析结果；任一声明非法时清空本次已追加内容并返回 false。
+ * @return 所有声明均合法时返回 true；对象、名称、父级或变换数组格式非法时返回 false。
+ */
+bool SAModelImporter::ParseAuxiliaryBones(
+    const TArray<TSharedPtr<FJsonValue>>& BonesArray,
+    TArray<FSAImportBone>& OutBones)
+{
+    const int32 InitialBoneCount = OutBones.Num();
+    OutBones.Reserve(InitialBoneCount + BonesArray.Num());
+
+    for (int32 BoneIndex = 0; BoneIndex < BonesArray.Num(); ++BoneIndex)
+    {
+        const TSharedPtr<FJsonObject>* BoneObject = nullptr;
+        if (!BonesArray[BoneIndex]->TryGetObject(BoneObject) || !BoneObject || !BoneObject->IsValid())
+        {
+            UE_LOG(LogTemp, Error, TEXT("AuxiliaryBones[%d] must be a JSON object"), BoneIndex);
+            OutBones.SetNum(InitialBoneCount);
+            return false;
+        }
+
+        FString BoneName;
+        FString ParentName;
+        if (!(*BoneObject)->TryGetStringField(TEXT("Name"), BoneName) || BoneName.IsEmpty()
+            || !(*BoneObject)->TryGetStringField(TEXT("ParentName"), ParentName) || ParentName.IsEmpty())
+        {
+            UE_LOG(LogTemp, Error, TEXT("AuxiliaryBones[%d] requires non-empty Name and ParentName"), BoneIndex);
+            OutBones.SetNum(InitialBoneCount);
+            return false;
+        }
+
+        FSAImportBone Bone;
+        Bone.Name = FName(*BoneName);
+        Bone.ParentName = FName(*ParentName);
+
+        const TArray<TSharedPtr<FJsonValue>>* TranslationArray = nullptr;
+        const bool bHasTranslation = (*BoneObject)->HasField(TEXT("Translation"));
+        const bool bHasLocalTranslation = (*BoneObject)->HasField(TEXT("LocalTranslation"));
+        if (bHasTranslation)
+            (*BoneObject)->TryGetArrayField(TEXT("Translation"), TranslationArray);
+        else if (bHasLocalTranslation)
+            (*BoneObject)->TryGetArrayField(TEXT("LocalTranslation"), TranslationArray);
+        if ((bHasTranslation || bHasLocalTranslation) && (!TranslationArray || TranslationArray->Num() < 3))
+        {
+            UE_LOG(LogTemp, Error, TEXT("AuxiliaryBones[%d] Translation must contain three numbers"), BoneIndex);
+            OutBones.SetNum(InitialBoneCount);
+            return false;
+        }
+        if (TranslationArray)
+            Bone.LocalTranslation = ParseVector3(*TranslationArray);
+
+        const TArray<TSharedPtr<FJsonValue>>* RotationArray = nullptr;
+        const bool bHasRotation = (*BoneObject)->HasField(TEXT("Rotation"));
+        const bool bHasLocalRotation = (*BoneObject)->HasField(TEXT("LocalRotation"));
+        if (bHasRotation)
+            (*BoneObject)->TryGetArrayField(TEXT("Rotation"), RotationArray);
+        else if (bHasLocalRotation)
+            (*BoneObject)->TryGetArrayField(TEXT("LocalRotation"), RotationArray);
+        if ((bHasRotation || bHasLocalRotation) && (!RotationArray || RotationArray->Num() < 4))
+        {
+            UE_LOG(LogTemp, Error, TEXT("AuxiliaryBones[%d] Rotation must contain four xyzw numbers"), BoneIndex);
+            OutBones.SetNum(InitialBoneCount);
+            return false;
+        }
+        if (RotationArray)
+            Bone.LocalRotation = ParseQuat(*RotationArray);
+
+        const TArray<TSharedPtr<FJsonValue>>* ScaleArray = nullptr;
+        const bool bHasScale = (*BoneObject)->HasField(TEXT("Scale"));
+        const bool bHasLocalScale = (*BoneObject)->HasField(TEXT("LocalScale"));
+        if (bHasScale)
+            (*BoneObject)->TryGetArrayField(TEXT("Scale"), ScaleArray);
+        else if (bHasLocalScale)
+            (*BoneObject)->TryGetArrayField(TEXT("LocalScale"), ScaleArray);
+        if ((bHasScale || bHasLocalScale) && (!ScaleArray || ScaleArray->Num() < 3))
+        {
+            UE_LOG(LogTemp, Error, TEXT("AuxiliaryBones[%d] Scale must contain three numbers"), BoneIndex);
+            OutBones.SetNum(InitialBoneCount);
+            return false;
+        }
+        if (ScaleArray)
+            Bone.LocalScale = ParseVector3(*ScaleArray);
+
+        OutBones.Add(MoveTemp(Bone));
+    }
+
+    return true;
 }
 
 // ============================================================================
@@ -313,6 +410,16 @@ bool SAModelImporter::ParseFromFile(const FString& JsonPath, FSAModelData& OutDa
     if (Root->TryGetArrayField(TEXT("FlverBones"), FlverBonesArr))
         ParseBones(*FlverBonesArr, OutData.FlverBones);
 
+    const TArray<TSharedPtr<FJsonValue>>* AuxiliaryBonesArray = nullptr;
+    if (Root->HasField(TEXT("AuxiliaryBones"))
+        && (!Root->TryGetArrayField(TEXT("AuxiliaryBones"), AuxiliaryBonesArray)
+            || !AuxiliaryBonesArray
+            || !ParseAuxiliaryBones(*AuxiliaryBonesArray, OutData.AuxiliaryBones)))
+    {
+        UE_LOG(LogTemp, Error, TEXT("AuxiliaryBones 解析失败: %s"), *JsonPath);
+        return false;
+    }
+
     const TArray<TSharedPtr<FJsonValue>>* MatsArr = nullptr;
     const TArray<TSharedPtr<FJsonValue>>* ResolvedMatsArr = nullptr;
     Root->TryGetArrayField(TEXT("ResolvedMaterials"), ResolvedMatsArr);
@@ -323,8 +430,9 @@ bool SAModelImporter::ParseFromFile(const FString& JsonPath, FSAModelData& OutDa
     if (Root->TryGetArrayField(TEXT("Meshes"), MeshesArr))
         ParseMeshes(*MeshesArr, OutData.Meshes);
 
-    UE_LOG(LogTemp, Log, TEXT("解析完成: %d 骨骼, %d FlverBones, %d 材质, %d 网格"),
-        OutData.Bones.Num(), OutData.FlverBones.Num(), OutData.Materials.Num(), OutData.Meshes.Num());
+    UE_LOG(LogTemp, Log, TEXT("解析完成: %d 骨骼, %d FlverBones, %d AuxiliaryBones, %d 材质, %d 网格"),
+        OutData.Bones.Num(), OutData.FlverBones.Num(), OutData.AuxiliaryBones.Num(),
+        OutData.Materials.Num(), OutData.Meshes.Num());
     return true;
 }
 
@@ -338,11 +446,144 @@ bool SAModelImporter::ParseFromFile(const FString& JsonPath, FSAModelData& OutDa
 
 
 
+/**
+ * 将已解析的无蒙皮辅助骨骼追加到完成朝向转换与独立 Root 合成后的参考骨架数组。
+ * 声明严格按数组顺序解析父级：父级必须是既有骨骼或更早声明的辅助骨骼；函数不会重排声明，
+ * 不会修改任何既有骨骼的名称、父级或变换。校验全部通过后才提交追加，因此失败不会留下部分结果。
+ * 只能在模型导入所在的编辑器线程调用。
+ *
+ * @param InOutSkeletonBones 输入为最终主骨架，成功时在尾部追加辅助骨骼；失败时保持原样。
+ * @param AuxiliaryBones 使用 UE 局部空间、厘米单位声明的辅助骨骼，只在调用期间读取。
+ * @param SkeletonName 仅用于诊断日志的骨架名称，可以为空。
+ * @return 全部辅助骨骼成功追加时返回 true；名称、父级或变换非法时返回 false。
+ */
+static bool AppendAuxiliaryBones(
+    TArray<FSAImportBone>& InOutSkeletonBones,
+    const TArray<FSAImportBone>& AuxiliaryBones,
+    const FString& SkeletonName)
+{
+    if (AuxiliaryBones.Num() == 0) return true;
+    if (InOutSkeletonBones.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Skeleton '%s' cannot append auxiliary bones to an empty reference skeleton"),
+            *SkeletonName);
+        return false;
+    }
+
+    TMap<FName, int32> ResolvedBoneIndices;
+    for (int32 BoneIndex = 0; BoneIndex < InOutSkeletonBones.Num(); ++BoneIndex)
+    {
+        const FName BoneName = InOutSkeletonBones[BoneIndex].Name;
+        if (BoneName.IsNone() || ResolvedBoneIndices.Contains(BoneName))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Skeleton '%s' has an invalid or duplicate existing bone name '%s'"),
+                *SkeletonName, *BoneName.ToString());
+            return false;
+        }
+        ResolvedBoneIndices.Add(BoneName, BoneIndex);
+    }
+
+    TSet<FName> DeclaredAuxiliaryNames;
+    for (int32 AuxiliaryIndex = 0; AuxiliaryIndex < AuxiliaryBones.Num(); ++AuxiliaryIndex)
+    {
+        const FName BoneName = AuxiliaryBones[AuxiliaryIndex].Name;
+        if (BoneName.IsNone() || ResolvedBoneIndices.Contains(BoneName) || DeclaredAuxiliaryNames.Contains(BoneName))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Skeleton '%s' AuxiliaryBones[%d] has invalid or duplicate name '%s'"),
+                *SkeletonName, AuxiliaryIndex, *BoneName.ToString());
+            return false;
+        }
+        DeclaredAuxiliaryNames.Add(BoneName);
+    }
+
+    TArray<int32> ResolvedParentIndices;
+    ResolvedParentIndices.Reserve(AuxiliaryBones.Num());
+    for (int32 AuxiliaryIndex = 0; AuxiliaryIndex < AuxiliaryBones.Num(); ++AuxiliaryIndex)
+    {
+        const FSAImportBone& Bone = AuxiliaryBones[AuxiliaryIndex];
+        const int32* ParentIndex = ResolvedBoneIndices.Find(Bone.ParentName);
+        if (!ParentIndex)
+        {
+            const TCHAR* FailureReason = DeclaredAuxiliaryNames.Contains(Bone.ParentName)
+                ? TEXT("is declared at or after its child")
+                : TEXT("does not exist");
+            UE_LOG(LogTemp, Error,
+                TEXT("Skeleton '%s' AuxiliaryBones[%d] parent '%s' %s"),
+                *SkeletonName, AuxiliaryIndex, *Bone.ParentName.ToString(), FailureReason);
+            return false;
+        }
+
+        const bool bInvalidTransform = Bone.LocalTranslation.ContainsNaN()
+            || Bone.LocalRotation.ContainsNaN()
+            || Bone.LocalRotation.SizeSquared() <= SMALL_NUMBER
+            || Bone.LocalScale.ContainsNaN()
+            || FMath::IsNearlyZero(Bone.LocalScale.X)
+            || FMath::IsNearlyZero(Bone.LocalScale.Y)
+            || FMath::IsNearlyZero(Bone.LocalScale.Z);
+        if (bInvalidTransform)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Skeleton '%s' AuxiliaryBones[%d] '%s' has an invalid local transform"),
+                *SkeletonName, AuxiliaryIndex, *Bone.Name.ToString());
+            return false;
+        }
+
+        ResolvedParentIndices.Add(*ParentIndex);
+        ResolvedBoneIndices.Add(Bone.Name, InOutSkeletonBones.Num() + AuxiliaryIndex);
+    }
+
+    TArray<FTransform> ReferenceComponentPoses;
+    ReferenceComponentPoses.SetNum(InOutSkeletonBones.Num() + AuxiliaryBones.Num());
+    for (int32 BoneIndex = 0; BoneIndex < InOutSkeletonBones.Num(); ++BoneIndex)
+    {
+        const FSAImportBone& Bone = InOutSkeletonBones[BoneIndex];
+        const FTransform LocalTransform(Bone.LocalRotation, Bone.LocalTranslation, Bone.LocalScale);
+        ReferenceComponentPoses[BoneIndex] = Bone.ParentIndex >= 0 && Bone.ParentIndex < BoneIndex
+            ? LocalTransform * ReferenceComponentPoses[Bone.ParentIndex]
+            : LocalTransform;
+    }
+
+    InOutSkeletonBones.Reserve(InOutSkeletonBones.Num() + AuxiliaryBones.Num());
+    for (int32 AuxiliaryIndex = 0; AuxiliaryIndex < AuxiliaryBones.Num(); ++AuxiliaryIndex)
+    {
+        FSAImportBone Bone = AuxiliaryBones[AuxiliaryIndex];
+        Bone.ParentIndex = ResolvedParentIndices[AuxiliaryIndex];
+        Bone.LocalRotation.Normalize();
+
+        const int32 NewBoneIndex = InOutSkeletonBones.Num();
+        const FTransform LocalTransform(Bone.LocalRotation, Bone.LocalTranslation, Bone.LocalScale);
+        const FTransform ComponentTransform = LocalTransform * ReferenceComponentPoses[Bone.ParentIndex];
+        ReferenceComponentPoses[NewBoneIndex] = ComponentTransform;
+        Bone.WorldTranslation = ComponentTransform.GetTranslation();
+        Bone.WorldRotation = ComponentTransform.GetRotation();
+        Bone.WorldScale = ComponentTransform.GetScale3D();
+        InOutSkeletonBones.Add(MoveTemp(Bone));
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("Skeleton '%s' appended %d unweighted auxiliary bones"),
+        *SkeletonName, AuxiliaryBones.Num());
+    return true;
+}
+
 // ============================================================================
 // Build Skeleton
 // ============================================================================
 
-USkeleton* SAModelImporter::BuildSkeleton(const TArray<FSAImportBone>& Bones, const FString& SkeletonName, const FString& PackagePath)
+/**
+ * 将源骨架转换为 UE 坐标系，确保唯一的单位变换顶层 Root，并在主骨架完成后追加已声明的辅助骨骼。
+ * 函数不改变输入数组，也不允许辅助骨骼重设既有层级；成功时会覆盖并保存目标 Skeleton 包。
+ * 只能在编辑器线程调用。
+ *
+ * @param Bones 按父级先于子级排列的源骨骼，只读且不保留引用。
+ * @param AuxiliaryBones 按父级先于子级声明的 UE 局部空间无蒙皮参考骨骼，只读且可为空。
+ * @param SkeletonName 新建 Skeleton 对象名称，同时用于错误诊断。
+ * @param PackagePath 要覆盖保存的 UE 长包名。
+ * @return 成功时返回由 UE 管理的新 Skeleton；骨架拓扑、辅助声明或保存前构建失败时返回 nullptr。
+ */
+USkeleton* SAModelImporter::BuildSkeleton(
+    const TArray<FSAImportBone>& Bones,
+    const TArray<FSAImportBone>& AuxiliaryBones,
+    const FString& SkeletonName,
+    const FString& PackagePath)
 {
     if (Bones.Num() == 0) return nullptr;
 
@@ -453,6 +694,9 @@ USkeleton* SAModelImporter::BuildSkeleton(const TArray<FSAImportBone>& Bones, co
         UE_LOG(LogTemp, Display, TEXT("Skeleton '%s' synthesized identity Root above %d source bones"),
             *SkeletonName, Bones.Num());
     }
+
+    if (!AppendAuxiliaryBones(SkeletonBones, AuxiliaryBones, SkeletonName))
+        return nullptr;
 
     {
         FString ExistingFilePath = FPackageName::LongPackageNameToFilename(*PackagePath, FPackageName::GetAssetPackageExtension());
@@ -743,12 +987,106 @@ USkeletalMesh* SAModelImporter::BuildSkeletalMesh(const FSAModelData& ModelData,
     return Mesh;
 }
 
+/**
+ * 按模型材质声明的稳定槽位顺序加载目标目录中已经存在的材质，并重新绑定到刚重建的 SkeletalMesh。
+ * 本函数不会创建、覆盖或保存材质资产，只会修改并保存传入网格；必须在编辑器游戏线程调用。
+ * 找不到某个材质时保留该槽为空并记录明确警告，禁止回退到其他槽位或按索引误绑。
+ *
+ * @param ModelData 已通过校验的模型数据，只读取材质名称和顺序，不保留引用。
+ * @param SkeletalMesh 需要恢复材质引用的已构建网格，不能为空，由 UE 管理生命周期。
+ * @param TargetPackagePath 模型资产所在的长包目录；已有材质必须位于其 Materials 子目录。
+ * @param OutBoundMaterialCount 返回成功绑定的材质槽数量，调用开始时重置为零。
+ * @return 网格材质数组有效且修改后的网格包保存成功时返回 true；输入无效或保存失败时返回 false。
+ */
+static bool BindExistingMaterials(
+    const FSAModelData& ModelData,
+    USkeletalMesh* SkeletalMesh,
+    const FString& TargetPackagePath,
+    int32& OutBoundMaterialCount)
+{
+    OutBoundMaterialCount = 0;
+    if (!SkeletalMesh)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Cannot bind existing materials to a null SkeletalMesh"));
+        return false;
+    }
+
+    TArray<FSkeletalMaterial>& SkeletalMaterials = SkeletalMesh->GetMaterials();
+    const int32 MaterialSlotCount = FMath::Min(ModelData.Materials.Num(), SkeletalMaterials.Num());
+    for (int32 MaterialIndex = 0; MaterialIndex < MaterialSlotCount; ++MaterialIndex)
+    {
+        const FString SafeName = SAMaterialImporter::SanitizeMaterialName(ModelData.Materials[MaterialIndex].Name);
+        const FString MaterialAssetName = FString::Printf(TEXT("M_%s"), *SafeName);
+        const FString MaterialObjectPath = FString::Printf(
+            TEXT("%s/Materials/%s.%s"),
+            *TargetPackagePath,
+            *MaterialAssetName,
+            *MaterialAssetName);
+        UMaterialInterface* ExistingMaterial = LoadObject<UMaterialInterface>(nullptr, *MaterialObjectPath);
+        if (!ExistingMaterial)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("Existing material not found for slot %d '%s': %s"),
+                MaterialIndex,
+                *ModelData.Materials[MaterialIndex].Name,
+                *MaterialObjectPath);
+            continue;
+        }
+
+        SkeletalMaterials[MaterialIndex].MaterialInterface = ExistingMaterial;
+        ++OutBoundMaterialCount;
+    }
+
+    SkeletalMesh->PostEditChange();
+    SkeletalMesh->MarkPackageDirty();
+
+    UPackage* MeshPackage = SkeletalMesh->GetOutermost();
+    if (!MeshPackage)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Cannot save material bindings: SkeletalMesh has no package"));
+        return false;
+    }
+
+    const FString MeshFileName = FPackageName::LongPackageNameToFilename(
+        MeshPackage->GetName(),
+        FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    SaveArgs.Error = GWarn;
+    if (!UPackage::SavePackage(MeshPackage, SkeletalMesh, *MeshFileName, SaveArgs))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to save existing material bindings: %s"), *MeshPackage->GetName());
+        return false;
+    }
+
+    return true;
+}
+
 // ============================================================================
 // Main Import
 // ============================================================================
 
-bool SAModelImporter::Import(const FString& JsonPath, const FString& TargetPackagePath, const TArray<FString>& TextureSourceDirs,
-                              USkeletalMesh*& OutSkeletalMesh, USkeleton*& OutSkeleton)
+/**
+ * 从模型 JSON 重建 Skeleton 与 SkeletalMesh，并按需重建材质资产。函数会覆盖目标骨架和网格包；
+ * bImportMaterials 为 false 时不会创建或覆盖材质资源，而会按稳定命名重新绑定目标目录中的已有材质。
+ * 辅助骨骼仅来自 JSON 声明，不包含项目特定名称。
+ * 只能在编辑器线程调用，调用期间会同步等待 SkeletalMesh 编译完成并保存生成的资产包。
+ *
+ * @param JsonPath 模型 JSON 的本地文件路径，必须可读且包含主骨架与网格数据。
+ * @param TargetPackagePath 生成资产所在的 UE 长包目录，不保留调用方字符串引用。
+ * @param TextureSourceDirs 材质导入使用的纹理搜索目录；跳过材质时忽略。
+ * @param OutSkeletalMesh 成功时接收新建的网格资产，失败时可能为空；对象由 UE 管理。
+ * @param OutSkeleton 成功时接收新建的骨架资产，失败时可能为空；对象由 UE 管理。
+ * @param bImportMaterials true 时保持完整导入行为，false 时重建骨架与网格并复用已有材质资产。
+ * @return 骨架与网格均成功生成时返回 true；解析或任一必要构建步骤失败时返回 false。
+ */
+bool SAModelImporter::Import(
+    const FString& JsonPath,
+    const FString& TargetPackagePath,
+    const TArray<FString>& TextureSourceDirs,
+    USkeletalMesh*& OutSkeletalMesh,
+    USkeleton*& OutSkeleton,
+    bool bImportMaterials)
 {
     FSAModelData ModelData;
     if (!ParseFromFile(JsonPath, ModelData))
@@ -763,16 +1101,188 @@ bool SAModelImporter::Import(const FString& JsonPath, const FString& TargetPacka
     FString SkeletonPackagePath = TargetPackagePath / SkeletonName;
     FString MeshPackagePath     = TargetPackagePath / MeshName;
 
-    OutSkeleton = BuildSkeleton(ModelData.Bones, SkeletonName, SkeletonPackagePath);
+    OutSkeleton = BuildSkeleton(ModelData.Bones, ModelData.AuxiliaryBones, SkeletonName, SkeletonPackagePath);
     if (!OutSkeleton) { UE_LOG(LogTemp, Error, TEXT("Skeleton build failed")); return false; }
 
     OutSkeletalMesh = BuildSkeletalMesh(ModelData, OutSkeleton, MeshPackagePath);
     if (!OutSkeletalMesh) { UE_LOG(LogTemp, Error, TEXT("SkeletalMesh build failed")); return false; }
 
-    // Build materials: uses TargetPackagePath as base ? Materials/ and Textures/ subfolders
-    TArray<UMaterial*> Materials = SAMaterialImporter::BuildAll(ModelData, OutSkeletalMesh, TargetPackagePath, TextureSourceDirs);
-    UE_LOG(LogTemp, Log, TEXT("Materials built: %d"), Materials.Num());
+    if (bImportMaterials)
+    {
+        // Build materials: uses TargetPackagePath as base ? Materials/ and Textures/ subfolders
+        const TArray<UMaterial*> Materials = SAMaterialImporter::BuildAll(
+            ModelData, OutSkeletalMesh, TargetPackagePath, TextureSourceDirs);
+        UE_LOG(LogTemp, Log, TEXT("Materials built: %d"), Materials.Num());
+    }
+    else
+    {
+        int32 BoundMaterialCount = 0;
+        if (!BindExistingMaterials(ModelData, OutSkeletalMesh, TargetPackagePath, BoundMaterialCount))
+            return false;
+
+        UE_LOG(LogTemp, Display,
+            TEXT("Material asset rebuild skipped for model '%s'; rebound %d/%d existing materials"),
+            *ModelData.AssetName,
+            BoundMaterialCount,
+            ModelData.Materials.Num());
+    }
 
     return true;
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSAModelAuxiliaryBoneParsingTest,
+    "Sekiro.AssetManager.Model.AuxiliaryBones.Parse",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证可选 AuxiliaryBones JSON 的标准字段、Local 前缀兼容字段、默认变换和 UE 厘米单位解析。
+ * 测试只在 Intermediate 目录创建一个短期 JSON 文件并在解析后删除，不创建 UE 资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成全部断言收集。
+ */
+bool FSAModelAuxiliaryBoneParsingTest::RunTest(const FString& Parameters)
+{
+    const FString Json = TEXT(R"JSON(
+{
+    "AssetName": "AuxiliaryTest",
+    "SkeletonName": "AuxiliaryTest_Skeleton",
+    "AuxiliaryBones": [
+        {
+            "Name": "ReferenceA",
+            "ParentName": "Root",
+            "Translation": [10.0, 20.0, 30.0],
+            "Rotation": [0.0, 0.0, 0.0, 1.0],
+            "Scale": [1.0, 2.0, 3.0]
+        },
+        {
+            "Name": "ReferenceB",
+            "ParentName": "ReferenceA",
+            "LocalTranslation": [1.0, 2.0, 3.0]
+        }
+    ]
+}
+)JSON");
+    const FString JsonPath = FPaths::CreateTempFilename(
+        *FPaths::ProjectIntermediateDir(), TEXT("SAModelAuxiliaryBones"), TEXT(".json"));
+    if (!TestTrue(TEXT("temporary JSON is written"), FFileHelper::SaveStringToFile(Json, *JsonPath)))
+        return true;
+
+    FSAModelData ModelData;
+    const bool bParsed = SAModelImporter::ParseFromFile(JsonPath, ModelData);
+    IFileManager::Get().Delete(*JsonPath, false, true);
+
+    if (!TestTrue(TEXT("AuxiliaryBones JSON parses"), bParsed)) return true;
+    if (!TestEqual(TEXT("two auxiliary bones parsed"), ModelData.AuxiliaryBones.Num(), 2)) return true;
+
+    const FSAImportBone& ReferenceA = ModelData.AuxiliaryBones[0];
+    const FSAImportBone& ReferenceB = ModelData.AuxiliaryBones[1];
+    TestTrue(TEXT("standard translation remains in UE centimeters"),
+        ReferenceA.LocalTranslation.Equals(FVector(10.0, 20.0, 30.0)));
+    TestTrue(TEXT("standard rotation remains unchanged"), ReferenceA.LocalRotation.Equals(FQuat::Identity));
+    TestTrue(TEXT("standard scale parses"), ReferenceA.LocalScale.Equals(FVector(1.0, 2.0, 3.0)));
+    TestTrue(TEXT("LocalTranslation alias parses"), ReferenceB.LocalTranslation.Equals(FVector(1.0, 2.0, 3.0)));
+    TestTrue(TEXT("omitted rotation defaults to identity"), ReferenceB.LocalRotation.Equals(FQuat::Identity));
+    TestTrue(TEXT("omitted scale defaults to one"), ReferenceB.LocalScale.Equals(FVector::OneVector));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSAModelAuxiliaryBoneAppendTest,
+    "Sekiro.AssetManager.Model.AuxiliaryBones.AppendValidation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证辅助骨骼只追加在既有骨架尾部、允许引用更早的辅助父级，并原子拒绝重复名、缺失父级和后置父级。
+ * 测试仅操作内存中的导入中间结构，不创建或保存 UE 资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成全部断言收集。
+ */
+bool FSAModelAuxiliaryBoneAppendTest::RunTest(const FString& Parameters)
+{
+    TArray<FSAImportBone> SkeletonBones;
+    FSAImportBone RootBone;
+    RootBone.Name = FName(TEXT("Root"));
+    SkeletonBones.Add(RootBone);
+
+    FSAImportBone ExistingBone;
+    ExistingBone.Name = FName(TEXT("Existing"));
+    ExistingBone.ParentName = RootBone.Name;
+    ExistingBone.ParentIndex = 0;
+    ExistingBone.LocalTranslation = FVector(5.0, 0.0, 0.0);
+    SkeletonBones.Add(ExistingBone);
+    const TArray<FSAImportBone> OriginalSkeletonBones = SkeletonBones;
+
+    TArray<FSAImportBone> ValidAuxiliaryBones;
+    FSAImportBone ReferenceA;
+    ReferenceA.Name = FName(TEXT("ReferenceA"));
+    ReferenceA.ParentName = RootBone.Name;
+    ReferenceA.LocalTranslation = FVector(10.0, 0.0, 0.0);
+    ValidAuxiliaryBones.Add(ReferenceA);
+    FSAImportBone ReferenceB;
+    ReferenceB.Name = FName(TEXT("ReferenceB"));
+    ReferenceB.ParentName = ReferenceA.Name;
+    ReferenceB.LocalTranslation = FVector(0.0, 20.0, 0.0);
+    ValidAuxiliaryBones.Add(ReferenceB);
+
+    TestTrue(TEXT("valid ordered auxiliary bones append"),
+        AppendAuxiliaryBones(SkeletonBones, ValidAuxiliaryBones, TEXT("TestSkeleton")));
+    TestEqual(TEXT("two auxiliary bones are appended"), SkeletonBones.Num(), 4);
+    TestEqual(TEXT("first auxiliary parent resolves to Root"), SkeletonBones[2].ParentIndex, 0);
+    TestEqual(TEXT("second auxiliary parent resolves to prior auxiliary"), SkeletonBones[3].ParentIndex, 2);
+    TestTrue(TEXT("existing bone transform is unchanged"),
+        SkeletonBones[1].LocalTranslation.Equals(OriginalSkeletonBones[1].LocalTranslation));
+    TestTrue(TEXT("nested auxiliary component translation is derived without altering local pose"),
+        SkeletonBones[3].WorldTranslation.Equals(FVector(10.0, 20.0, 0.0)));
+
+    TArray<FSAImportBone> DuplicateTarget = OriginalSkeletonBones;
+    TArray<FSAImportBone> DuplicateAuxiliary;
+    FSAImportBone DuplicateBone = ReferenceA;
+    DuplicateBone.Name = ExistingBone.Name;
+    DuplicateAuxiliary.Add(DuplicateBone);
+    AddExpectedError(
+        TEXT("has invalid or duplicate name 'Existing'"),
+        EAutomationExpectedErrorFlags::Contains,
+        1);
+    TestFalse(TEXT("existing name collision is rejected"),
+        AppendAuxiliaryBones(DuplicateTarget, DuplicateAuxiliary, TEXT("TestSkeleton")));
+    TestEqual(TEXT("duplicate failure is atomic"), DuplicateTarget.Num(), OriginalSkeletonBones.Num());
+
+    TArray<FSAImportBone> MissingParentTarget = OriginalSkeletonBones;
+    TArray<FSAImportBone> MissingParentAuxiliary;
+    FSAImportBone MissingParentBone = ReferenceA;
+    MissingParentBone.ParentName = FName(TEXT("Missing"));
+    MissingParentAuxiliary.Add(MissingParentBone);
+    AddExpectedError(
+        TEXT("parent 'Missing' does not exist"),
+        EAutomationExpectedErrorFlags::Contains,
+        1);
+    TestFalse(TEXT("missing parent is rejected"),
+        AppendAuxiliaryBones(MissingParentTarget, MissingParentAuxiliary, TEXT("TestSkeleton")));
+    TestEqual(TEXT("missing parent failure is atomic"), MissingParentTarget.Num(), OriginalSkeletonBones.Num());
+
+    TArray<FSAImportBone> LateParentTarget = OriginalSkeletonBones;
+    TArray<FSAImportBone> LateParentAuxiliary;
+    FSAImportBone ChildBeforeParent = ReferenceB;
+    ChildBeforeParent.Name = FName(TEXT("ChildBeforeParent"));
+    ChildBeforeParent.ParentName = FName(TEXT("LateParent"));
+    LateParentAuxiliary.Add(ChildBeforeParent);
+    FSAImportBone LateParent = ReferenceA;
+    LateParent.Name = FName(TEXT("LateParent"));
+    LateParentAuxiliary.Add(LateParent);
+    AddExpectedError(
+        TEXT("parent 'LateParent' is declared at or after its child"),
+        EAutomationExpectedErrorFlags::Contains,
+        1);
+    TestFalse(TEXT("parent declared after child is rejected"),
+        AppendAuxiliaryBones(LateParentTarget, LateParentAuxiliary, TEXT("TestSkeleton")));
+    TestEqual(TEXT("late parent failure is atomic"), LateParentTarget.Num(), OriginalSkeletonBones.Num());
+    return true;
+}
+
+#endif
 

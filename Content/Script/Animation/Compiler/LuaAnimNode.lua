@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Lua AnimGraph 节点的编译期抽象。
 -- 节点只声明 Pin 和类型化 Property，不负责运行时 Update、Evaluate 或 Pose 计算。
 local CompilerClass = require("Animation.Compiler.CompilerClass")

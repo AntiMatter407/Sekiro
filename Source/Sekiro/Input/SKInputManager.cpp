@@ -1,9 +1,12 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SKInputManager.h"
+#include "Animation/AnimInstance.h"
 #include "Camera/SKCameraManagerComponent.h"
 #include "Character/SKCharacter.h"
 #include "Movement/SKMovementComponent.h"
+#include "Weapon/SKWeapon.h"
+#include "Weapon/SKWeaponManagerComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/Character.h"
@@ -75,6 +78,22 @@ namespace
 		OutDirection = (Forward * Normalized.Y + Right * Normalized.X).GetSafeNormal2D();
 		return !OutDirection.IsNearlyZero();
 	}
+
+    /**
+     * 判断离散输入名是否属于禁战区域需要屏蔽的上半身战斗动作。
+     * 本函数只做稳定语义名比较，不访问 UObject，可在游戏线程输入路径中调用。
+     *
+     * @param ActionName 输入缓冲或 Lua 接口使用的动作名，不区分大小写。
+     * @return Attack、Guard、Prosthetic 或 Grapple 时返回 true，否则返回 false。
+     */
+    static bool IsSKRestrictedCombatAction(FName ActionName)
+    {
+        const FString NormalizedName = ActionName.ToString().ToLower();
+        return NormalizedName == TEXT("attack")
+            || NormalizedName == TEXT("guard")
+            || NormalizedName == TEXT("prosthetic")
+            || NormalizedName == TEXT("grapple");
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -95,7 +114,7 @@ void USKInputManager::SetupInput(UEnhancedInputComponent* Input)
 
 	// ── 移动/视角 ──
 	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &USKInputManager::OnMove);
-	Input->BindAction(MoveAction, ETriggerEvent::Completed, this, &USKInputManager::OnMove);
+	Input->BindAction(MoveAction, ETriggerEvent::Completed, this, &USKInputManager::OnMoveCompleted);
 	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &USKInputManager::OnLook);
 
 	// ── 跳跃 ──
@@ -144,11 +163,121 @@ void USKInputManager::AddMappingContext(APlayerController* PC)
 	}
 }
 
+/**
+ * 增加一个禁战区域引用计数，并在首次进入时仅发布受限状态。
+ * 本函数不清理输入、不改变姿态或移动档位，也不播放武器动画；具体策略由 Lua 编排。
+ * 必须在游戏线程调用，无参数且无返回值。
+ */
+void USKInputManager::EnterRestrictedZone()
+{
+    RestrictedZoneCount++;
+}
+
+/**
+ * 减少一个禁战区域引用计数；计数归零只代表退出全部区域，不主动恢复任何输入状态。
+ * 多余离开调用会被限制在零并记录告警，必须在游戏线程调用。
+ */
+void USKInputManager::ExitRestrictedZone()
+{
+    if (RestrictedZoneCount <= 0)
+    {
+        RestrictedZoneCount = 0;
+        UE_LOG(LogTemp, Warning, TEXT("SKInputManager received unmatched restricted-zone exit. Owner=%s"), *GetNameSafe(GetOwner()));
+        return;
+    }
+
+    RestrictedZoneCount--;
+}
+
+/**
+ * 查询角色是否位于至少一个禁战区域，不修改输入状态。
+ *
+ * @return 区域计数大于零时返回 true，否则返回 false。
+ */
+bool USKInputManager::IsRestrictedZoneActive() const
+{
+    return RestrictedZoneCount > 0;
+}
+
+/**
+ * 查询当前成对登记的禁战区域数量，不修改输入状态。
+ *
+ * @return 非负区域计数；多个区域重叠时可能大于一。
+ */
+int32 USKInputManager::GetRestrictedZoneCount() const
+{
+    return RestrictedZoneCount;
+}
+
+/**
+ * 清除禁战区域禁止的上半身战斗与新 Dodge/Step 意图，并移除同名缓冲条目。
+ * 函数会结束攻击、防御、义手和冲刺按住状态，但不会清除 bDodgeActive 或角色 Dodging，
+ * 因而已经开始的 Step 可以完成；必须由 Lua 在游戏线程按区域边沿显式调用。
+ */
+void USKInputManager::ClearRestrictedActionStateForScript()
+{
+    bAttackPressed = false;
+    bGrapplePressed = false;
+    bProstheticPressed = false;
+    bDodgePressed = false;
+    bAttackHeld = false;
+    bGuardHeld = false;
+    bProstheticHeld = false;
+    bDodgeHeld = false;
+    AttackHoldTime = 0.f;
+    ProstheticHoldTime = 0.f;
+    DodgeHoldTime = 0.f;
+
+    InputBuffer.RemoveAll([](const FSKBufferedInput& Entry)
+    {
+        return IsSKRestrictedCombatAction(Entry.Action)
+            || Entry.Action.ToString().Equals(TEXT("Dodge"), ESearchCase::IgnoreCase);
+    });
+}
+
+/**
+ * 查询所属角色 WeaponManager 最近启动的上半身 Slot 动画是否仍在播放或混合。
+ * 本接口只提供跨组件只读桥接，不决定退出区域后的输入锁策略；该策略由 Lua 编排。
+ * 必须在游戏线程调用。
+ *
+ * @return WeaponManager 存在且其 Slot 动画仍在播放时返回 true，否则返回 false。
+ */
+bool USKInputManager::IsOwnerWeaponSlotAnimationPlaying() const
+{
+    const ASKCharacter* Character = Cast<ASKCharacter>(GetOwner());
+    const USKWeaponManagerComponent* WeaponManager = Character ? Character->GetWeaponManager() : nullptr;
+    return WeaponManager && WeaponManager->IsCharacterSlotAnimationPlaying();
+}
+
+/**
+ * 查询所属角色当前武器的展示状态并转换为稳定名称，供 Lua 判断 Drawn/Sheathed。
+ * 本接口不切换挂载、不播放动画；角色、管理器或武器缺失时返回 None，避免脚本误判为已拔刀。
+ * 必须在游戏线程调用。
+ *
+ * @return Drawn、Sheathed 或依赖缺失时的 None。
+ */
+FName USKInputManager::GetOwnerWeaponPresentationName() const
+{
+    const ASKCharacter* Character = Cast<ASKCharacter>(GetOwner());
+    const USKWeaponManagerComponent* WeaponManager = Character ? Character->GetWeaponManager() : nullptr;
+    const ASKWeapon* Weapon = WeaponManager ? WeaponManager->GetCurrentWeapon() : nullptr;
+    if (!Weapon) return NAME_None;
+
+    return Weapon->GetWeaponPresentation() == ESKWeaponPresentation::Sheathed
+        ? FName(TEXT("Sheathed"))
+        : FName(TEXT("Drawn"));
+}
+
 //////////////////////////////////////////////////////////////////////////
 // 消费型意图
 
 bool USKInputManager::ConsumeAttackPressed()
 {
+	if (IsRestrictedZoneActive())
+	{
+		bAttackPressed = false;
+		return false;
+	}
 	if (bAttackPressed)
 	{
 		bAttackPressed = false;
@@ -169,6 +298,11 @@ bool USKInputManager::ConsumeJumpPressed()
 
 bool USKInputManager::ConsumeDodgePressed()
 {
+	if (IsRestrictedZoneActive())
+	{
+		bDodgePressed = false;
+		return false;
+	}
 	if (bDodgePressed)
 	{
 		bDodgePressed = false;
@@ -209,6 +343,11 @@ bool USKInputManager::ConsumeHealingGourdPressed()
 
 bool USKInputManager::ConsumeGrapplePressed()
 {
+	if (IsRestrictedZoneActive())
+	{
+		bGrapplePressed = false;
+		return false;
+	}
 	if (bGrapplePressed)
 	{
 		bGrapplePressed = false;
@@ -219,6 +358,11 @@ bool USKInputManager::ConsumeGrapplePressed()
 
 bool USKInputManager::ConsumeProstheticPressed()
 {
+	if (IsRestrictedZoneActive())
+	{
+		bProstheticPressed = false;
+		return false;
+	}
 	if (bProstheticPressed)
 	{
 		bProstheticPressed = false;
@@ -292,6 +436,15 @@ bool USKInputManager::ConsumeMenuPressed()
 
 bool USKInputManager::ConsumeBufferedInput(FName Action)
 {
+	if (IsRestrictedZoneActive()
+		&& (IsSKRestrictedCombatAction(Action) || Action.ToString().Equals(TEXT("Dodge"), ESearchCase::IgnoreCase)))
+	{
+		InputBuffer.RemoveAll([Action](const FSKBufferedInput& Entry)
+		{
+			return Entry.Action == Action;
+		});
+		return false;
+	}
 	// 升序遍历：移除匹配的第一个条目（FIFO 消费，先入先出）
 	for (int32 i = 0; i < InputBuffer.Num(); ++i)
 	{
@@ -329,17 +482,17 @@ FVector2D USKInputManager::GetLookIntent() const
 
 bool USKInputManager::IsAttackHeld() const
 {
-	return bAttackHeld;
+	return !IsRestrictedZoneActive() && bAttackHeld;
 }
 
 bool USKInputManager::IsGuardHeld() const
 {
-	return bGuardHeld;
+	return !IsRestrictedZoneActive() && bGuardHeld;
 }
 
 bool USKInputManager::IsProstheticHeld() const
 {
-	return bProstheticHeld;
+	return !IsRestrictedZoneActive() && bProstheticHeld;
 }
 
 bool USKInputManager::IsDodgeHeld() const
@@ -542,6 +695,64 @@ bool USKInputManager::AddMovementImpulseFromScreen(float InputX, float InputY, f
 	return true;
 }
 
+/**
+ * 按控制器朝向把屏幕空间输入转换为世界方向，并精确替换角色当前水平速度。
+ * 该接口只提供通用物理写入，不决定何时起跳或使用何种速度；应在游戏线程、CharacterMovement 求值前调用。
+ * 水平速度为零时允许输入轴同时为零，用于明确清除上一帧残留惯性；垂直速度始终保持不变。
+ * 非零写入会把本帧 MaxWalkSpeed 至少提高到目标速度，避免输入和 Movement Lua 同帧更新时被旧速度上限截断；后续帧仍由 Movement 策略覆盖。
+ *
+ * @param InputX 屏幕空间横向输入，通常为 [-1, 1]，负数表示左移。
+ * @param InputY 屏幕空间纵向输入，通常为 [-1, 1]，负数表示后退。
+ * @param HorizontalSpeed 目标水平速度，单位 cm/s；负值按零处理。
+ * @return 成功写入或清除水平速度时返回 true；角色、移动组件或非零输入方向无效时返回 false。
+ */
+bool USKInputManager::SetHorizontalVelocityFromScreen(float InputX, float InputY, float HorizontalSpeed)
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return false;
+
+	UCharacterMovementComponent* Movement = Owner->GetCharacterMovement();
+	if (!Movement) return false;
+
+	const float SafeHorizontalSpeed = FMath::Max(0.f, HorizontalSpeed);
+	if (SafeHorizontalSpeed <= UE_KINDA_SMALL_NUMBER)
+	{
+		Movement->Velocity.X = 0.f;
+		Movement->Velocity.Y = 0.f;
+		return true;
+	}
+
+	FVector WorldDirection = FVector::ZeroVector;
+	if (!ResolveSKScreenInputWorldDirection(Owner, InputX, InputY, WorldDirection)) return false;
+
+	const FVector HorizontalVelocity = WorldDirection * SafeHorizontalSpeed;
+	Movement->MaxWalkSpeed = FMath::Max(Movement->MaxWalkSpeed, SafeHorizontalSpeed);
+	Movement->Velocity.X = HorizontalVelocity.X;
+	Movement->Velocity.Y = HorizontalVelocity.Y;
+	return true;
+}
+
+/**
+ * 切换所属角色动画实例的 Root Motion 消费模式，供 Lua 在物理跳跃发生前明确转移位移所有权。
+ * 忽略模式只阻止动画 Root Motion 覆盖 CharacterMovement 速度，不停止动画姿势、曲线或 Notify 求值。
+ * 只能在游戏线程调用；Lua 必须在角色落地后恢复 RootMotionFromEverything，避免影响地面动画位移。
+ *
+ * @param bIgnored true 使用 IgnoreRootMotion，false 恢复 RootMotionFromEverything。
+ * @return 成功找到角色 Mesh 和 AnimInstance 并设置模式时返回 true，否则返回 false。
+ */
+bool USKInputManager::SetOwnerAnimRootMotionIgnored(bool bIgnored)
+{
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner || !Owner->GetMesh()) return false;
+
+	UAnimInstance* AnimInstance = Owner->GetMesh()->GetAnimInstance();
+	if (!AnimInstance) return false;
+
+	AnimInstance->SetRootMotionMode(
+		bIgnored ? ERootMotionMode::IgnoreRootMotion : ERootMotionMode::RootMotionFromEverything);
+	return true;
+}
+
 bool USKInputManager::AddLookInputToCamera(float InputX, float InputY)
 {
 	ACharacter* Owner = OwnerCharacter.Get();
@@ -676,6 +887,12 @@ void USKInputManager::SetMovementTierByName(FName TierName)
 void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
 {
 	const FString NormalizedName = ActionName.ToString().ToLower();
+	if (IsRestrictedZoneActive()
+		&& bPressed
+		&& (IsSKRestrictedCombatAction(ActionName) || NormalizedName == TEXT("dodge")))
+	{
+		return;
+	}
 	if (NormalizedName == TEXT("attack")) bAttackPressed = bPressed;
 	else if (NormalizedName == TEXT("jump")) bJumpPressed = bPressed;
 	else if (NormalizedName == TEXT("dodge")) bDodgePressed = bPressed;
@@ -695,6 +912,12 @@ void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
 void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
 {
 	const FString NormalizedName = ActionName.ToString().ToLower();
+	if (IsRestrictedZoneActive()
+		&& bHeld
+		&& IsSKRestrictedCombatAction(ActionName))
+	{
+		return;
+	}
 	if (NormalizedName == TEXT("attack")) bAttackHeld = bHeld;
 	else if (NormalizedName == TEXT("guard")) bGuardHeld = bHeld;
 	else if (NormalizedName == TEXT("dodge")) bDodgeHeld = bHeld;
@@ -704,6 +927,12 @@ void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
 
 void USKInputManager::AddBufferedInput(FName Action, int32 Priority, float Lifetime)
 {
+	if (IsRestrictedZoneActive()
+		&& (IsSKRestrictedCombatAction(Action) || Action.ToString().Equals(TEXT("Dodge"), ESearchCase::IgnoreCase)))
+	{
+		return;
+	}
+
 	FSKBufferedInput Entry;
 	Entry.Action = Action;
 	Entry.Priority = Priority;
@@ -754,14 +983,26 @@ bool USKInputManager::ToggleLockTargetInViewForScript()
 //////////////////////////////////////////////////////////////////////////
 // 生命周期
 
+/**
+ * 缓存所属角色，并为原生 UnLua 组件补发一次标准 ReceiveBeginPlay 生命周期。
+ * UE 只会在蓝图生成类或非原生组件的 UActorComponent::BeginPlay 中派发 ReceiveBeginPlay，
+ * 因此本函数仅为纯原生类补发；蓝图子类继续使用引擎派发路径，避免 Lua 初始化执行两次。
+ * 本函数由 UE 在游戏线程调用，不绑定输入，也不直接调用 Lua Initialize。
+ */
 void USKInputManager::BeginPlay()
 {
+	const bool bEngineDispatchesReceiveBeginPlay =
+		GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint)
+		|| !GetClass()->HasAnyClassFlags(CLASS_Native);
+
 	Super::BeginPlay();
 	OwnerCharacter = Cast<ACharacter>(GetOwner());
 	UE_LOG(LogTemp, Log, TEXT("InputManager[%s]: BeginPlay Owner=%s Class=%s"),
 		*GetNameSafe(this),
 		*GetNameSafe(OwnerCharacter.Get()),
 		*GetNameSafe(OwnerCharacter.IsValid() ? OwnerCharacter->GetClass() : nullptr));
+
+	if (!bEngineDispatchesReceiveBeginPlay) ReceiveBeginPlay();
 }
 
 void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -795,17 +1036,6 @@ void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 			}
 		}
 	}
-	if (MoveInputReleaseBufferRemaining > 0.f)
-	{
-		MoveInputReleaseBufferRemaining = FMath::Max(0.f, MoveInputReleaseBufferRemaining - DeltaTime);
-		if (MoveInputReleaseBufferRemaining <= 0.f)
-		{
-			MoveIntent = FVector2D::ZeroVector;
-			MoveInputAmount = 0.f;
-			ApplyDesiredMovementTier(MoveInputAmount);
-		}
-	}
-
 	// ── 连段窗口 ──
 	TimeSinceLastAttack += DeltaTime;
 	if (TimeSinceLastAttack > 0.5f)
@@ -879,19 +1109,12 @@ void USKInputManager::OnMove(const FInputActionValue& Value)
 	const FVector2D Input = LuaInput;
 	const float RawInputAmount = FMath::Clamp(Input.Size(), 0.f, 1.f);
 	const bool bHasRawMoveInput = RawInputAmount > 0.1f;
-	if (bHasRawMoveInput)
-	{
-		MoveInputAmount = RawInputAmount;
-		MoveIntent = Input.GetSafeNormal();
-		MoveInputReleaseBufferRemaining = MoveInputReleaseBufferDuration;
-	}
-	else if (MoveInputReleaseBufferRemaining <= 0.f)
-	{
-		MoveInputAmount = 0.f;
-		MoveIntent = FVector2D::ZeroVector;
-	}
+	if (!bHasRawMoveInput) return;
 
-	const FVector2D Normalized = bHasRawMoveInput ? Input.GetSafeNormal() : FVector2D::ZeroVector;
+	MoveInputAmount = RawInputAmount;
+	MoveIntent = Input.GetSafeNormal();
+
+	const FVector2D Normalized = Input.GetSafeNormal();
 
 	// ── 世界空间方向 ──
 	const AController* Controller = Owner->GetController();
@@ -901,11 +1124,8 @@ void USKInputManager::OnMove(const FInputActionValue& Value)
 	const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 	const FVector Right   = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 
-	if (bHasRawMoveInput)
-	{
-		Owner->AddMovementInput(Forward, Normalized.Y);
-		Owner->AddMovementInput(Right,   Normalized.X);
-	}
+	Owner->AddMovementInput(Forward, Normalized.Y);
+	Owner->AddMovementInput(Right,   Normalized.X);
 
 	// ── 冲刺状态更新 ──
 	if (USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
@@ -917,7 +1137,7 @@ void USKInputManager::OnMove(const FInputActionValue& Value)
 				ApplyDesiredMovementTier(MoveInputAmount);
 			}
 		}
-		else if (!Owner->GetCharacterMovement()->IsFalling() && (bHasRawMoveInput || MoveInputReleaseBufferRemaining <= 0.f))
+		else if (!Owner->GetCharacterMovement()->IsFalling())
 		{
 			ApplyDesiredMovementTier(MoveInputAmount);
 		}
@@ -929,6 +1149,26 @@ void USKInputManager::OnMove(const FInputActionValue& Value)
 	{
 		SekiroOwner->SetDodgeDirection(Normalized.Y, Normalized.X);
 	}
+}
+
+/**
+ * 处理 Enhanced Input 对 MoveAction 发出的 Completed 边沿。
+ *
+ * @param Value Completed 事件携带的动作值；释放语义由事件类型决定，因此本函数不依赖该值判断。
+ * @return 无返回值；Lua 返回 true 时由脚本完成清理，否则执行原生回退逻辑。
+ * @thread 仅在游戏线程的 Enhanced Input 分发阶段调用，可安全访问角色、移动组件与 UnLua。
+ */
+void USKInputManager::OnMoveCompleted(const FInputActionValue& /*Value*/)
+{
+	if (TryCallLuaInputEvent(TEXT("OnMoveCompleted"))) return;
+
+	MoveIntent = FVector2D::ZeroVector;
+	MoveInputAmount = 0.f;
+
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner || Owner->GetCharacterMovement()->IsFalling()) return;
+
+	ApplyDesiredMovementTier(0.f);
 }
 
 void USKInputManager::OnLook(const FInputActionValue& Value)

@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- DSL(Domain-Specific Language),领域特定语言
 -- AnimGraph IR 的 EmmyLua 静态类型声明。
 -- 本模块只供 Rider/LuaLS 建立字段补全与类型跳转，不参与 Lua 编译器运行时流程。
@@ -15,6 +16,28 @@
 ---@alias SekiroAnimIRPinDirection '"Input"'|'"Output"'
 
 ---@alias SekiroAnimIRGraphType '"Pose"'|'"StatePose"'|'"StateMachine"'
+---@alias SekiroAnimIRLayoutStyle '"Auto"'|'"LeftToRight"'|'"RightToLeft"'|'"TopToBottom"'|'"BottomToTop"'|'"CompactGrid"'|'"Radial"'|'"HierarchicalBlocks"'
+
+---@class SekiroAnimIRLayoutItem
+---@field ElementId string 当前 Graph 内节点或状态的稳定 ID。
+---@field Column number 分区内非负整数列。
+---@field Row number 分区内非负整数行。
+---@field ColumnSpan number 横向占用单元格数。
+---@field RowSpan number 纵向占用单元格数。
+---@field DeclarationOrder number 分区内声明顺序。
+
+---@class SekiroAnimIRLayoutGrid
+---@field Name string Graph 内唯一分区名。
+---@field RegionColumn number 分区区域列。
+---@field RegionRow number 分区区域行。
+---@field CellWidth number 单元格横向像素间距。
+---@field CellHeight number 单元格纵向像素间距。
+---@field LayoutStyle SekiroAnimIRLayoutStyle 分区风格覆盖。
+---@field Items SekiroAnimIRLayoutItem[] 显式放置元素。
+
+---@class SekiroAnimIRGraphLayout
+---@field Style SekiroAnimIRLayoutStyle Graph 中未显式放置元素的自动布局风格。
+---@field Grids SekiroAnimIRLayoutGrid[] 显式布局分区。
 
 ---@class SekiroAnimIRSourceLocation
 ---@field LuaModule string 声明来源的 Lua 模块名。
@@ -100,6 +123,7 @@
 ---@field Nodes SekiroAnimIRNode[] Graph 内节点声明。
 ---@field Links SekiroAnimIRLink[] Graph 内 Pose Link 声明。
 ---@field StateMachine SekiroAnimIRStateMachine 状态机拓扑；Pose Graph 中为空拓扑。
+---@field Layout SekiroAnimIRGraphLayout 编辑器布局元数据，不参与运行时求值。
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Graph 源码位置。
 

@@ -1,8 +1,8 @@
 # Sekiro AnimBlueprint Extension 插件 - 技术方案
 
 > 更新日期：2026-07-08  
-> 状态：历史方案，仅保留早期 Lua Transition 包装设计记录。当前实现已切换为 Lua AnimBlueprint Host：`USekiroLuaAnimInstance` 直接继承 `UAnimInstance`，AnimBlueprint 只放 Host 节点，状态机和动画流程由 Lua 编写。  
-> 当前主线请以 `Docs/plan/sekiro-anim-blueprint-extension-plugin.md` 和 `Docs/lua-anim-blueprint-authoring-guide.md` 为准。
+> 状态：历史方案，记录早期 Lua Transition 包装以及随后采用的 Lua AnimBlueprint Host 演进；两者都已被当前原生 AnimBlueprint 编译方案替代。
+> 当前主线请以 `Docs/plan/lua-anim-blueprint-compiler.md`、`Docs/design/lua-anim-blueprint-compiler.md` 和 `Docs/lua-anim-blueprint-authoring-guide.md` 为准。
 
 ## 1. 当前目标
 

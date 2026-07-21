@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- StateMachine 中一条原生 Transition 的编译期对象。
 -- 对象公开 BlendDuration、PriorityOrder 和 BlendMode，使用方式对应动画蓝图 Transition 详情设置。
 local CompilerClass = require("Animation.Compiler.CompilerClass")

@@ -1,5 +1,7 @@
 # ABP Locomotion 层设计
 
+> **历史方案**：本文记录早期以 Speed BlendSpace1D 替换离散 Locomotion 状态的方案，不代表当前 Lua 源动画蓝图。当前 `ABP_Sekiro` 使用明确 SequencePlayer、嵌套原生状态机、Sync Group 与 Inertialization；现状以 [ABP_Sekiro Lua AnimBlueprint V2](design/sekiro-lua-anim-blueprint-v2.md) 为准。
+
 > 父方案：[sekiro-asset-pipeline.md](sekiro-asset-pipeline.md) — Sekiro 资产管线总览
 > 关联方案：[implementation-plan.md](implementation-plan.md) — 分阶段实施计划
 

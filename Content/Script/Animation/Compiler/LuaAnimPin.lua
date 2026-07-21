@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- AnimGraph 节点 Pin 的编译期对象。
 -- Pin 只记录类型和连接方向；Connect 最终生成原生 AnimGraph Link IR。
 local CompilerClass = require("Animation.Compiler.CompilerClass")

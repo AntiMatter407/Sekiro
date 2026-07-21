@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- StateMachine Graph 中的编译期 State 顶点。
 -- 每个 State 独占一个 LuaAnimStateGraph；GraphId 是所有权边，不允许多个 State 共享。
 local CompilerClass = require("Animation.Compiler.CompilerClass")

@@ -531,6 +531,8 @@ namespace SekiroAnimGraphIRLua
     bool ParseNode(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRNode& OutNode);
     bool ParseState(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRState& OutState);
     bool ParseTransition(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRTransition& OutTransition);
+    bool ParseLayoutItem(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayoutItem& OutItem);
+    bool ParseLayoutGrid(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayoutGrid& OutGrid);
     bool ParseGraph(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRGraph& OutGraph);
     bool ParseLayer(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayer& OutLayer);
     bool ParseVariable(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRVariable& OutVariable);
@@ -996,6 +998,96 @@ namespace SekiroAnimGraphIRLua
             && ParseArrayField(Context, StateMachineIndex, "Transitions", Path + TEXT(".Transitions"), SourceLocation, OutStateMachine.Transitions, &ParseTransition);
     }
 
+    /** 把 Lua LayoutStyle 稳定字符串转换为 C++ 枚举；未知值追加可定位诊断。 */
+    bool ParseLayoutStyle(
+        FParseContext& Context,
+        const FString& Value,
+        const FString& Path,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        ESekiroAnimIRLayoutStyle& OutStyle)
+    {
+        if (Value == TEXT("Auto")) OutStyle = ESekiroAnimIRLayoutStyle::Auto;
+        else if (Value == TEXT("LeftToRight")) OutStyle = ESekiroAnimIRLayoutStyle::LeftToRight;
+        else if (Value == TEXT("RightToLeft")) OutStyle = ESekiroAnimIRLayoutStyle::RightToLeft;
+        else if (Value == TEXT("TopToBottom")) OutStyle = ESekiroAnimIRLayoutStyle::TopToBottom;
+        else if (Value == TEXT("BottomToTop")) OutStyle = ESekiroAnimIRLayoutStyle::BottomToTop;
+        else if (Value == TEXT("CompactGrid")) OutStyle = ESekiroAnimIRLayoutStyle::CompactGrid;
+        else if (Value == TEXT("Radial")) OutStyle = ESekiroAnimIRLayoutStyle::Radial;
+        else if (Value == TEXT("HierarchicalBlocks")) OutStyle = ESekiroAnimIRLayoutStyle::HierarchicalBlocks;
+        else
+        {
+            AddLuaError(
+                Context,
+                InvalidEnumValue,
+                FString::Printf(TEXT("Field '%s' has unsupported LayoutStyle '%s'."), *Path, *Value),
+                Path,
+                SourceLocation);
+            return false;
+        }
+        return true;
+    }
+
+    /** 解析一个显式布局元素的稳定 ID、单元格、跨度和声明顺序。 */
+    bool ParseLayoutItem(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const FString& Path,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        FSekiroAnimIRLayoutItem& OutItem)
+    {
+        return ReadStringField(Context, TableIndex, "ElementId", Path + TEXT(".ElementId"), SourceLocation, OutItem.ElementId)
+            && ReadInt32Field(Context, TableIndex, "Column", Path + TEXT(".Column"), SourceLocation, OutItem.Column)
+            && ReadInt32Field(Context, TableIndex, "Row", Path + TEXT(".Row"), SourceLocation, OutItem.Row)
+            && ReadInt32Field(Context, TableIndex, "ColumnSpan", Path + TEXT(".ColumnSpan"), SourceLocation, OutItem.ColumnSpan)
+            && ReadInt32Field(Context, TableIndex, "RowSpan", Path + TEXT(".RowSpan"), SourceLocation, OutItem.RowSpan)
+            && ReadInt32Field(Context, TableIndex, "DeclarationOrder", Path + TEXT(".DeclarationOrder"), SourceLocation, OutItem.DeclarationOrder);
+    }
+
+    /** 解析一个 Graph 布局分区；像素间距只用于编辑器坐标，不参与运行时编译。 */
+    bool ParseLayoutGrid(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const FString& Path,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        FSekiroAnimIRLayoutGrid& OutGrid)
+    {
+        FString StyleName;
+        return ReadStringField(Context, TableIndex, "Name", Path + TEXT(".Name"), SourceLocation, OutGrid.Name)
+            && ReadInt32Field(Context, TableIndex, "RegionColumn", Path + TEXT(".RegionColumn"), SourceLocation, OutGrid.RegionColumn)
+            && ReadInt32Field(Context, TableIndex, "RegionRow", Path + TEXT(".RegionRow"), SourceLocation, OutGrid.RegionRow)
+            && ReadInt32Field(Context, TableIndex, "CellWidth", Path + TEXT(".CellWidth"), SourceLocation, OutGrid.CellWidth)
+            && ReadInt32Field(Context, TableIndex, "CellHeight", Path + TEXT(".CellHeight"), SourceLocation, OutGrid.CellHeight)
+            && ReadStringField(Context, TableIndex, "LayoutStyle", Path + TEXT(".LayoutStyle"), SourceLocation, StyleName)
+            && ParseLayoutStyle(Context, StyleName, Path + TEXT(".LayoutStyle"), SourceLocation, OutGrid.LayoutStyle)
+            && ParseArrayField(Context, TableIndex, "Items", Path + TEXT(".Items"), SourceLocation, OutGrid.Items, &ParseLayoutItem);
+    }
+
+    /** 解析可选 Graph.Layout；旧 IR 缺少字段时保留 Auto 与空分区以维持兼容。 */
+    bool ParseGraphLayoutField(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const FString& Path,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        FSekiroAnimIRGraphLayout& OutLayout)
+    {
+        const int32 InitialTop = lua_gettop(Context.State);
+        ON_SCOPE_EXIT { lua_settop(Context.State, InitialTop); };
+        const int32 Type = lua_getfield(Context.State, lua_absindex(Context.State, TableIndex), "Layout");
+        if (Type == LUA_TNIL) return true;
+        if (Type != LUA_TTABLE)
+        {
+            AddLuaError(Context, InvalidFieldType,
+                FString::Printf(TEXT("Field '%s' must be table."), *Path), Path, SourceLocation);
+            return false;
+        }
+
+        const int32 LayoutIndex = lua_absindex(Context.State, -1);
+        FString StyleName;
+        return ReadStringField(Context, LayoutIndex, "Style", Path + TEXT(".Style"), SourceLocation, StyleName)
+            && ParseLayoutStyle(Context, StyleName, Path + TEXT(".Style"), SourceLocation, OutLayout.Style)
+            && ParseArrayField(Context, LayoutIndex, "Grids", Path + TEXT(".Grids"), SourceLocation, OutLayout.Grids, &ParseLayoutGrid);
+    }
+
     /**
      * 解析 Graph、通用节点连接以及可选语义由 GraphType 决定的状态机内容。
      *
@@ -1021,6 +1113,7 @@ namespace SekiroAnimGraphIRLua
             && ParseArrayField(Context, TableIndex, "Nodes", Path + TEXT(".Nodes"), OutGraph.SourceLocation, OutGraph.Nodes, &ParseNode)
             && ParseArrayField(Context, TableIndex, "Links", Path + TEXT(".Links"), OutGraph.SourceLocation, OutGraph.Links, &ParseLink)
             && ParseStateMachineField(Context, TableIndex, Path + TEXT(".StateMachine"), OutGraph.SourceLocation, OutGraph.StateMachine)
+            && ParseGraphLayoutField(Context, TableIndex, Path + TEXT(".Layout"), OutGraph.SourceLocation, OutGraph.Layout)
             && ReadInt32Field(Context, TableIndex, "DeclarationOrder", Path + TEXT(".DeclarationOrder"), OutGraph.SourceLocation, OutGraph.DeclarationOrder);
     }
 

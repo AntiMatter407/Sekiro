@@ -9,12 +9,13 @@
 // ============================================================================
 // ASKCharacter — 只狼玩家角色
 //     输入状态委托给 USKInputManager 组件
+//     速度与角色朝向策略委托给 USKMovementComponent 的 Lua 模块
 //     动画参数由 USKAnimInstance 读取并交给 AnimBlueprint 编排
 // ============================================================================
 
 class USpringArmComponent;
 class UCameraComponent;
-class USKWeaponComponent;
+class USKWeaponManagerComponent;
 class USKInputManager;
 class USKCameraManagerComponent;
 class USKLockOnIndicatorComponent;
@@ -36,7 +37,8 @@ public:
 	FORCEINLINE USKInputManager* GetInputManager() const { return InputManager; }
 	FORCEINLINE USKCameraManagerComponent* GetCameraManager() const { return CameraManager; }
 	FORCEINLINE USKLockOnIndicatorComponent* GetLockOnIndicator() const { return LockOnIndicator; }
-	FORCEINLINE USKWeaponComponent* GetWeaponComponent() const { return WeaponComponent; }
+	/** 返回角色持有的原生武器管理组件；不转移所有权，角色构造完成后应始终非空。 */
+	FORCEINLINE USKWeaponManagerComponent* GetWeaponManager() const { return WeaponManager; }
 
 	// ── 闪避状态接口（由 USKInputManager 调用）────────────
 
@@ -46,7 +48,6 @@ public:
 	void SetDodgeDirection(float Fwd, float Lateral);     // 设置闪避方向
 
 protected:
-	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
@@ -59,7 +60,7 @@ protected:
 	TObjectPtr<UCameraComponent> FollowCamera;            // 跟随相机
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<USKWeaponComponent> WeaponComponent;       // 武器组件
+	TObjectPtr<USKWeaponManagerComponent> WeaponManager; // 武器管理组件
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USKInputManager> InputManager;             // 输入处理组件

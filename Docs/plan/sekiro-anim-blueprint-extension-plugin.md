@@ -1,9 +1,10 @@
-# Sekiro AnimBlueprint Extension 插件 - 计划
+# Sekiro AnimBlueprint Extension 插件 - 历史计划
 
-> 状态：第一阶段 Lua Pose Graph 已接入 `ABP_Sekiro` | 创建：2026-07-06 | 更新：2026-07-13
-> 关联：[技术方案](../design/sekiro-anim-blueprint-extension-plugin.md) / [Lua 动画蓝图编写手册](../lua-anim-blueprint-authoring-guide.md) / [Lua AnimGraph 运行时架构](../lua-animgraph-runtime-architecture.md)
+> 状态：历史方案，仅保留动态 Lua Pose Host 与运行时快照方案的演进记录。该方案已经废弃，不代表当前 `ABP_Sekiro`。
+> 当前主线：[Lua AnimBlueprint 编译器进度](lua-anim-blueprint-compiler.md) / [编译器设计](../design/lua-anim-blueprint-compiler.md) / [Lua 动画蓝图编写手册](../lua-anim-blueprint-authoring-guide.md)
+> 创建：2026-07-06 | 最后更新：2026-07-13
 
-## 当前方向
+## 当时采用的方向
 
 当前需求已从“包装每条 Transition Rule”调整为“AnimBlueprint 只作为 UnLua 绑定宿主，状态机和动画流程由 Lua 编写，并通过 C++ 接口提交当前 Pose”：
 

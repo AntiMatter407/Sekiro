@@ -40,7 +40,7 @@ FString USekiroLuaAnimBlueprintFactory::GetDefaultNewAssetName() const
 }
 
 /**
- * 委托原生 UAnimBlueprintFactory 创建标准动画蓝图，再附加唯一 Lua 源元数据。
+ * 委托原生 UAnimBlueprintFactory 创建标准动画蓝图，再附加唯一 Lua 源元数据并关闭多线程动画更新。
  * 必须在游戏线程调用；Skeleton、ParentClass 与模板配置完全沿用父 Factory。
  *
  * @param Class 内容浏览器请求的资产类，必须兼容 UAnimBlueprint。
@@ -80,6 +80,7 @@ UObject* USekiroLuaAnimBlueprintFactory::FactoryCreateNew(
         USekiroLuaAnimBlueprintExtension::Request(AnimBlueprint);
     if (Extension == nullptr) return nullptr;
 
+    AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
     Extension->LuaModuleName = LuaModuleName;
     Extension->SourceMode = ESekiroLuaAnimBlueprintSourceMode::Lua;
     Extension->MarkSourceDirty(TEXT("Lua animation blueprint source has not been compiled."));

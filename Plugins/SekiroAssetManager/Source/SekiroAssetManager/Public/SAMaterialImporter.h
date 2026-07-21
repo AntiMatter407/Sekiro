@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "SAImportData.h"
@@ -39,6 +39,9 @@ public:
                                   const TArray<FString>& TextureSourceDirs = TArray<FString>(),
                                   const FString& TexturePackagePath = TEXT(""));
 
+    /// 将外部材质槽名转换为材质资产使用的稳定安全名称。
+    static FString SanitizeMaterialName(const FString& RawName);
+
 private:
     // ── 工具函数 ──
 
@@ -57,8 +60,6 @@ private:
     static EMaterialProperty PropertyForSemantic(const FString& SemanticKey);
 
     /// 清理材质名中的非法字符（替换为下划线）
-    static FString SanitizeMaterialName(const FString& RawName);
-
     /// 从 ResolvedTextures 语义映射加载 UTexture2D
     /// @param ResolvedTextures 语义键 → 纹理文件名（如 "albedo" → "BD_M_9000_Body_a.dds"）
     /// @param SearchPaths 纹理搜索的 UE 包路径列表

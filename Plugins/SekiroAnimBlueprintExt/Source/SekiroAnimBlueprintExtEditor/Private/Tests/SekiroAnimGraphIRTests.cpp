@@ -1457,7 +1457,7 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
 {
     const TConstArrayView<FSekiroAnimIRNodeContract> Contracts =
         FSekiroAnimGraphNodeRegistry::GetContracts();
-    TestEqual(TEXT("Registry exposes seven built-in NodeTypes"), Contracts.Num(), 7);
+    TestEqual(TEXT("Registry exposes twenty built-in NodeTypes"), Contracts.Num(), 20);
 
     const FSekiroAnimIRNodeContract* OutputPose =
         FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::OutputPoseNode);
@@ -1505,6 +1505,121 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
         }
     }
     TestTrue(TEXT("SequencePlayer requires a SoftObjectPath Sequence property"), bFoundRequiredSequence);
+
+    const FSekiroAnimIRNodeContract* LocalToComponent =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::LocalToComponentSpaceNode);
+    TestNotNull(TEXT("LocalToComponentSpace contract is registered"), LocalToComponent);
+    if (LocalToComponent)
+    {
+        TestEqual(TEXT("LocalToComponentSpace has two Pins"), LocalToComponent->Pins.Num(), 2);
+        if (LocalToComponent->Pins.Num() == 2)
+        {
+            TestEqual(
+                TEXT("LocalToComponentSpace consumes local Pose"),
+                LocalToComponent->Pins[0].DataType,
+                SekiroAnimGraphIRNames::PoseData);
+            TestEqual(
+                TEXT("LocalToComponentSpace produces component Pose"),
+                LocalToComponent->Pins[1].DataType,
+                SekiroAnimGraphIRNames::ComponentPoseData);
+        }
+    }
+
+    const FSekiroAnimIRNodeContract* ComponentToLocal =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::ComponentToLocalSpaceNode);
+    TestNotNull(TEXT("ComponentToLocalSpace contract is registered"), ComponentToLocal);
+    if (ComponentToLocal && ComponentToLocal->Pins.Num() == 2)
+    {
+        TestEqual(
+            TEXT("ComponentToLocalSpace consumes component Pose"),
+            ComponentToLocal->Pins[0].DataType,
+            SekiroAnimGraphIRNames::ComponentPoseData);
+        TestEqual(
+            TEXT("ComponentToLocalSpace produces local Pose"),
+            ComponentToLocal->Pins[1].DataType,
+            SekiroAnimGraphIRNames::PoseData);
+    }
+
+    const FSekiroAnimIRNodeContract* OrientationWarping =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::OrientationWarpingNode);
+    TestNotNull(TEXT("OrientationWarping contract is registered"), OrientationWarping);
+    if (OrientationWarping)
+    {
+        TestEqual(
+            TEXT("OrientationWarping keeps the AnimationWarping editor class path"),
+            OrientationWarping->EditorNodeClassPath.ToString(),
+            FString(TEXT("/Script/AnimationWarpingEditor.AnimGraphNode_OrientationWarping")));
+        TestEqual(TEXT("OrientationWarping has four Pins"), OrientationWarping->Pins.Num(), 4);
+        TestEqual(TEXT("OrientationWarping has six properties"), OrientationWarping->Properties.Num(), 6);
+        if (OrientationWarping->Pins.Num() == 4)
+        {
+            TestEqual(
+                TEXT("OrientationWarping input uses component Pose type"),
+                OrientationWarping->Pins[0].DataType,
+                SekiroAnimGraphIRNames::ComponentPoseData);
+            TestEqual(
+                TEXT("OrientationWarping output uses component Pose type"),
+                OrientationWarping->Pins[3].DataType,
+                SekiroAnimGraphIRNames::ComponentPoseData);
+        }
+    }
+
+    const FSekiroAnimIRNodeContract* FootPlacement =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::FootPlacementNode);
+    TestNotNull(TEXT("FootPlacement contract is registered"), FootPlacement);
+    if (FootPlacement)
+    {
+        TestEqual(
+            TEXT("FootPlacement keeps the AnimationWarping editor class path"),
+            FootPlacement->EditorNodeClassPath.ToString(),
+            FString(TEXT("/Script/AnimationWarpingEditor.AnimGraphNode_FootPlacement")));
+        TestEqual(TEXT("FootPlacement has three Pins"), FootPlacement->Pins.Num(), 3);
+        TestEqual(TEXT("FootPlacement has fourteen properties"), FootPlacement->Properties.Num(), 14);
+        TestEqual(
+            TEXT("FootPlacement consumes component Pose"),
+            FootPlacement->Pins[0].DataType,
+            SekiroAnimGraphIRNames::ComponentPoseData);
+        TestEqual(
+            TEXT("FootPlacement exposes Float Alpha"),
+            FootPlacement->Pins[1].DataType,
+            SekiroAnimGraphIRNames::FloatData);
+        TestEqual(
+            TEXT("FootPlacement produces component Pose"),
+            FootPlacement->Pins[2].DataType,
+            SekiroAnimGraphIRNames::ComponentPoseData);
+        TestTrue(TEXT("FootPlacement IK root is required"), FootPlacement->Properties[0].bRequired);
+        TestTrue(TEXT("FootPlacement pelvis is required"), FootPlacement->Properties[1].bRequired);
+        TestTrue(TEXT("FootPlacement legs are required"), FootPlacement->Properties[2].bRequired);
+        TestEqual(
+            TEXT("FootPlacement exposes optional Name PlantLockType"),
+            FootPlacement->Properties[4].Name,
+            FName(TEXT("PlantLockType")));
+        TestEqual(
+            TEXT("FootPlacement PlantLockType uses Name storage"),
+            FootPlacement->Properties[4].ValueType,
+            ESekiroAnimIRValueType::Name);
+        TestFalse(
+            TEXT("FootPlacement PlantLockType is optional"),
+            FootPlacement->Properties[4].bRequired);
+    }
+
+    const FSekiroAnimIRNodeContract* LegIK =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::LegIKNode);
+    TestNotNull(TEXT("LegIK contract is registered"), LegIK);
+    if (LegIK)
+    {
+        TestEqual(
+            TEXT("LegIK keeps the AnimGraph editor class path"),
+            LegIK->EditorNodeClassPath.ToString(),
+            FString(TEXT("/Script/AnimGraph.AnimGraphNode_LegIK")));
+        TestEqual(TEXT("LegIK has three Pins"), LegIK->Pins.Num(), 3);
+        TestEqual(TEXT("LegIK has three properties"), LegIK->Properties.Num(), 3);
+        TestEqual(
+            TEXT("LegIK MaxIterations uses integer storage"),
+            LegIK->Properties[2].ValueType,
+            ESekiroAnimIRValueType::Integer);
+        TestTrue(TEXT("LegIK legs are required"), LegIK->Properties[0].bRequired);
+    }
 
     const FSekiroAnimIRNodeContract* SaveCachedPose =
         FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::SaveCachedPoseNode);
@@ -1564,6 +1679,49 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
                 UseCachedPose->Properties[0].ValueType,
                 ESekiroAnimIRValueType::String);
             TestTrue(TEXT("UseCachedPose CacheName is required"), UseCachedPose->Properties[0].bRequired);
+        }
+    }
+
+    const FSekiroAnimIRNodeContract* Slot =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::SlotNode);
+    TestNotNull(TEXT("Slot contract is registered"), Slot);
+    if (Slot)
+    {
+        TestEqual(
+            TEXT("Slot keeps the UE5.2 editor node class path"),
+            Slot->EditorNodeClassPath.ToString(),
+            FString(TEXT("/Script/AnimGraph.AnimGraphNode_Slot")));
+        TestEqual(TEXT("Slot has Source and Pose Pins"), Slot->Pins.Num(), 2);
+        TestEqual(TEXT("Slot has two properties"), Slot->Properties.Num(), 2);
+        if (!Slot->Properties.IsEmpty())
+        {
+            TestEqual(TEXT("Slot property is SlotName"), Slot->Properties[0].Name, FName(TEXT("SlotName")));
+            TestTrue(TEXT("SlotName is required"), Slot->Properties[0].bRequired);
+        }
+    }
+
+    const FSekiroAnimIRNodeContract* LayeredBlend =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::LayeredBlendPerBoneNode);
+    TestNotNull(TEXT("LayeredBlendPerBone contract is registered"), LayeredBlend);
+    if (LayeredBlend)
+    {
+        TestEqual(
+            TEXT("LayeredBlendPerBone keeps the UE5.2 editor node class path"),
+            LayeredBlend->EditorNodeClassPath.ToString(),
+            FString(TEXT("/Script/AnimGraph.AnimGraphNode_LayeredBoneBlend")));
+        TestEqual(TEXT("LayeredBlendPerBone has four Pins"), LayeredBlend->Pins.Num(), 4);
+        TestEqual(TEXT("LayeredBlendPerBone has five properties"), LayeredBlend->Properties.Num(), 5);
+        if (LayeredBlend->Pins.Num() == 4 && !LayeredBlend->Properties.IsEmpty())
+        {
+            TestEqual(
+                TEXT("LayeredBlendPerBone exposes Float BlendWeight"),
+                LayeredBlend->Pins[2].DataType,
+                SekiroAnimGraphIRNames::FloatData);
+            TestEqual(
+                TEXT("LayeredBlendPerBone property is BranchFilters"),
+                LayeredBlend->Properties[0].Name,
+                FName(TEXT("BranchFilters")));
+            TestTrue(TEXT("BranchFilters is required"), LayeredBlend->Properties[0].bRequired);
         }
     }
 

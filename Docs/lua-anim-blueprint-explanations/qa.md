@@ -136,9 +136,9 @@
 
 ### 追问：CanEnter 的 AnimInstance 参数如何传入，是否还需要 self 语法糖？
 
-编译器取得裸函数引用并复制到主动画蓝图模块；运行时 C++ `EvaluateAndCacheTransitionRule()` 使用 `UnLua::PushUObject(State, AnimInstance)` 显式压入当前 AnimInstance，再以一个参数调用 Lua 函数。既然来源是显式注入，项目统一写成 `function Class.CanEnter_Key(Inst)`，不用冒号或隐式 `self`。
+编译器取得裸函数引用并复制到主动画蓝图模块；运行时对应 Transition Rule Graph 调用 C++ `EvaluateLuaTransitionRule()`，将当前 AnimInstance 包装为可直接访问属性和函数的 `Inst` 代理，再以一个参数调用 Lua 函数。既然来源是显式注入，项目统一写成 `function Class.CanEnter_Key(Inst)`，不用冒号或隐式 `self`。
 
-Lua 在游戏线程读取反射属性并返回严格 boolean，C++ 将结果发布到线程安全缓存；生成的原生 Transition Graph 通过 `GetCachedTransitionRule()` 读取快照，动画工作线程不会直接执行 Lua。
+Lua 来源 AnimBlueprint 关闭多线程 Update。原生状态机检查当前状态的某条出边时，该 Transition Graph 才在游戏线程调用 Lua，读取反射属性并将严格 boolean 直接交给 Transition Result。
 
 ### 追问：`MinimalLocomotion:StateGraph_Move` 里的 `self` 是什么？
 
@@ -154,7 +154,7 @@ Lua 在游戏线程读取反射属性并返回严格 boolean，C++ 将结果发�
 
 `LuaAnimStateMachine` 是无状态的业务定义基类；`LuaStateMachineNode` 是放在 Pose 或 StatePose Graph 中、对外输出 Pose 的编译期 AnimNode；`LuaAnimStateMachineGraph` 是该节点独占的内部拓扑，保存 Entry、State 和 Transition。
 
-节点同时保存可在 Lua 编译期操作的 `OwnedGraph` 对象，以及可写入 IR 的 `OwnedGraphId`。所有 Graph 扁平登记在所属 Layer，C++ 根据 `OwnedGraphId` 找到内部拓扑，创建 `UAnimGraphNode_StateMachine` 和 `UAnimationStateMachineGraph`，再由 UE 编译为运行时 `FAnimNode_StateMachine`。Lua 编译期对象不参与每帧 Pose 求值；运行时 Transition Lua 函数只在游戏线程接收显式 `Inst`，原生 Transition Graph 读取其缓存结果。
+节点同时保存可在 Lua 编译期操作的 `OwnedGraph` 对象，以及可写入 IR 的 `OwnedGraphId`。所有 Graph 扁平登记在所属 Layer，C++ 根据 `OwnedGraphId` 找到内部拓扑，创建 `UAnimGraphNode_StateMachine` 和 `UAnimationStateMachineGraph`，再由 UE 编译为运行时 `FAnimNode_StateMachine`。Lua 编译期对象不参与每帧 Pose 求值；运行时 Transition Lua 函数只在游戏线程接收显式 `Inst`，对应原生 Transition Graph 按需直接使用其返回结果。
 
 完整解释见 [LuaStateMachineNode](LuaStateMachineNode.md)。
 
@@ -190,9 +190,9 @@ C++ 分别生成 `UAnimStateNode`、其自动创建的 `UAnimationStateGraph`，
 
 完整解释见 [LuaAnimState](LuaAnimState.md)、[LuaAnimStateGraph](LuaAnimStateGraph.md) 和 [LuaAnimTransition](LuaAnimTransition.md)。
 
-### 修正：Lua Transition 缓存发布由生成的 Event Graph 驱动
+### 修正：Lua Transition 改为由各自 Rule Graph 按需调用
 
-之前仅搜索普通 C++ 调用表达式，遗漏了 Factory 动态生成的 K2 调用节点。`BuildEventGraph()` 会创建 `BlueprintUpdateAnimation` override，并为每条 Transition 串联 `EvaluateAndCacheTransitionRule()`；原生 Transition Graph 再通过 `GetCachedTransitionRule()` 读取快照，因此发布与读取链已经存在。
+旧实现在 `BuildEventGraph()` 中为所有 Transition 串联规则调用，这与 UE 只检查当前状态出边的语义不一致。现在 `BuildEventGraph()` 只生成 Lua 动画参数更新；`BuildTransitionRuleGraph()` 为每条 Transition 生成 `EvaluateLuaTransitionRule()`，只在原生状态机真正检查该边时进入 Lua。
 
 仍需单独验证打包后的 Lua 模块导出生命周期：外部状态机的完整规则函数目前在 `CompileIR()` 时复制到主模块 table，全新运行时进程只 `require` 模块时需要确保这些规则已经可见。
 
@@ -220,7 +220,7 @@ Lua 动画蓝图声明如何与 C++ 和 UE 原生 AnimGraph 结构挂钩？
 
 Lua 编译器对象不会直接继承或持有 C++ `FAnimNode`。动画蓝图模块通过 `CompileIR()` 返回纯 Lua table；C++ 使用 UnLua `require` 模块并调用该函数，再把 table 严格解析为 `FSekiroAnimBlueprintIR`。Validator 和 Node Registry 校验后，Factory 创建真正的 `UAnimBlueprint`、`UAnimGraphNode_*`、State、Transition、Pin 和 Graph 连接，最后调用 UE Blueprint Compiler 生成运行时 `FAnimNode_*` 与 `FPoseLink`。
 
-运行时 Pose 完全由原生动画系统更新和求值。Factory 还会生成 `BlueprintUpdateAnimation` 规则刷新链，在游戏线程通过 UnLua 把真实 AnimInstance 作为显式 `Inst` 传给 `CanEnter_*`，然后由原生 Transition Graph 在线程安全路径读取缓存。
+运行时 Pose 完全由原生动画系统更新和求值。Factory 为每条原生 Transition Graph 生成 Lua 直调节点，在游戏线程通过 UnLua 把真实 AnimInstance 作为显式 `Inst` 传给 `CanEnter_*`，规则返回值直接参与原生 Transition Result。
 
 完整解释见 [Lua 到 UE 原生动画结构的编译与运行链](LuaToNativePipeline.md)。
 

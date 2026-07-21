@@ -297,7 +297,7 @@ C++ Factory 读取 StateMachine Node 后执行：
 4. 为原生 Graph 写入稳定 `GraphGuid` 和名称；
 5. 创建 Entry、State、Transition 编辑器节点；
 6. 为每个 State 构建原生 StatePose Graph；
-7. 为 Transition 构建读取缓存规则的原生 Transition Graph；
+7. 为 Transition 构建按需直接调用 Lua Rule 的原生 Transition Graph；
 8. 交给 UE 动画蓝图编译器生成运行时 AnimNode 和 `FPoseLink`。
 
 最终对应关系是：
@@ -331,9 +331,9 @@ Main AnimGraph
 进入 PIE 或打包游戏后：
 
 - Pose 更新、状态权重、动画混合由 UE 原生 AnimNode 执行；
-- 原生状态机继续使用 UE 的更新、缓存和多线程求值体系；
-- Lua Transition 规则在游戏线程读取 `Inst`，结果写入线程安全缓存；
-- 原生 Transition Graph 只读取缓存结果，不会在动画工作线程直接运行 Lua；
+- 原生状态机继续负责状态、权重、Transition 和 Pose 混合；
+- Lua 来源 AnimBlueprint 关闭多线程 Update，Transition Graph 在游戏线程按需调用 Lua Rule；
+- Lua Transition 规则直接读取显式 `Inst` 并返回严格 boolean，不通过中间缓存；
 - 编译期的 Lua Graph table 不参与每帧 Pose 求值。
 
 因此，这套系统模拟的是“用 Lua 写动画蓝图编辑器声明”，而不是“用 Lua 重写 `FAnimNode_StateMachine` 的运行时算法”。

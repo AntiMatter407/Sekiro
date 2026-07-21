@@ -1,11 +1,8 @@
 ﻿#include "Camera/SKCameraManagerComponent.h"
 
-#include "Animation/SKAnimInstance.h"
-#include "Input/SKInputManager.h"
 #include "Movement/SKMovementComponent.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
 #include "UnLua.h"
@@ -201,11 +198,6 @@ bool USKCameraManagerComponent::IsSprintCameraAligning() const
     return CameraMode == ESKCameraMode::SprintAlign;
 }
 
-float USKCameraManagerComponent::GetMoveDirectionAngle() const
-{
-    return MoveDirectionAngle;
-}
-
 void USKCameraManagerComponent::SetUseLuaCameraLogic(bool bNewUseLuaCameraLogic)
 {
     bUseLuaCameraLogic = bNewUseLuaCameraLogic;
@@ -258,38 +250,9 @@ FName USKCameraManagerComponent::GetCameraModeName() const
     return FName(TEXT("Free"));
 }
 
-void USKCameraManagerComponent::SetMoveDirectionAngleForScript(float NewMoveDirectionAngle)
-{
-    MoveDirectionAngle = NewMoveDirectionAngle;
-}
-
-void USKCameraManagerComponent::SetMovementRotationSettingsForScript(bool bOrientRotationToMovement, bool bUseControllerDesiredRotation)
-{
-    if (!OwnerCharacter) return;
-
-    UCharacterMovementComponent* CharacterMovement = OwnerCharacter->GetCharacterMovement();
-    if (!CharacterMovement) return;
-
-    CharacterMovement->bOrientRotationToMovement = bOrientRotationToMovement;
-    CharacterMovement->bUseControllerDesiredRotation = bUseControllerDesiredRotation;
-}
-
 bool USKCameraManagerComponent::IsMovementTierSprint() const
 {
     return MovementComponent && MovementComponent->CurrentMovementTier == ESKMovementTier::Sprint;
-}
-
-bool USKCameraManagerComponent::HasDesiredMoveYaw() const
-{
-    float TargetYaw = 0.f;
-    return GetDesiredMoveYaw(TargetYaw);
-}
-
-float USKCameraManagerComponent::GetDesiredMoveYawOrFallback(float FallbackYaw) const
-{
-    float TargetYaw = FallbackYaw;
-    GetDesiredMoveYaw(TargetYaw);
-    return TargetYaw;
 }
 
 bool USKCameraManagerComponent::HasLockTargetYaw() const
@@ -303,18 +266,6 @@ float USKCameraManagerComponent::GetLockTargetYawOrFallback(float FallbackYaw) c
     float TargetYaw = FallbackYaw;
     GetLockTargetYaw(TargetYaw);
     return TargetYaw;
-}
-
-bool USKCameraManagerComponent::HasOwnerVelocity() const
-{
-    return OwnerCharacter && !OwnerCharacter->GetVelocity().IsNearlyZero();
-}
-
-float USKCameraManagerComponent::GetOwnerVelocityYawOrFallback(float FallbackYaw) const
-{
-    if (!HasOwnerVelocity()) return FallbackYaw;
-
-    return OwnerCharacter->GetVelocity().Rotation().Yaw;
 }
 
 float USKCameraManagerComponent::GetOwnerYaw() const
@@ -332,24 +283,6 @@ float USKCameraManagerComponent::GetControllerYawOrFallback(float FallbackYaw) c
     return Controller->GetControlRotation().Yaw;
 }
 
-float USKCameraManagerComponent::NormalizeDeltaYaw(float FromYaw, float ToYaw) const
-{
-    return FMath::FindDeltaAngleDegrees(FromYaw, ToYaw);
-}
-
-bool USKCameraManagerComponent::IsActorYawOwnedByRootMotion() const
-{
-    if (!OwnerCharacter || !OwnerCharacter->GetMesh()) return false;
-
-    const USKAnimInstance* AnimInstance = Cast<USKAnimInstance>(OwnerCharacter->GetMesh()->GetAnimInstance());
-    return AnimInstance && AnimInstance->IsActorYawOwnedByRootMotion();
-}
-
-void USKCameraManagerComponent::ApplyActorYawForScript(float TargetYaw, float InterpSpeed, float DeltaTime)
-{
-    ApplyActorYaw(TargetYaw, InterpSpeed, DeltaTime);
-}
-
 void USKCameraManagerComponent::ApplyControllerYawForScript(float TargetYaw, float InterpSpeed, float DeltaTime)
 {
     ApplyControllerYaw(TargetYaw, InterpSpeed, DeltaTime);
@@ -365,19 +298,9 @@ void USKCameraManagerComponent::ClearPendingLookInputForScript()
     PendingLookInput = FVector2D::ZeroVector;
 }
 
-float USKCameraManagerComponent::GetSprintActorInterpSpeed() const
-{
-    return SprintActorInterpSpeed;
-}
-
 float USKCameraManagerComponent::GetSprintCameraYawInterpSpeed() const
 {
     return SprintCameraYawInterpSpeed;
-}
-
-float USKCameraManagerComponent::GetLockOnActorInterpSpeed() const
-{
-    return LockOnActorInterpSpeed;
 }
 
 float USKCameraManagerComponent::GetLockOnCameraYawInterpSpeed() const
@@ -385,16 +308,23 @@ float USKCameraManagerComponent::GetLockOnCameraYawInterpSpeed() const
     return LockOnCameraYawInterpSpeed;
 }
 
-float USKCameraManagerComponent::GetMinMoveInputForFacing() const
-{
-    return MinMoveInputForFacing;
-}
-
+/**
+ * 缓存相机运行时依赖，并为原生 UnLua 组件补发一次标准 ReceiveBeginPlay 生命周期。
+ * 蓝图生成类和非原生类已由 UActorComponent::BeginPlay 派发，本函数不会重复调用；
+ * 纯原生组件则在依赖缓存完成后派发，使 Lua 可安全调用反射接口配置相机。
+ * 本函数只在游戏线程执行，不直接调用 Lua Initialize。
+ */
 void USKCameraManagerComponent::BeginPlay()
 {
+    const bool bEngineDispatchesReceiveBeginPlay =
+        GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint)
+        || !GetClass()->HasAnyClassFlags(CLASS_Native);
+
     Super::BeginPlay();
 
     RefreshCachedComponents();
+
+    if (!bEngineDispatchesReceiveBeginPlay) ReceiveBeginPlay();
 }
 
 void USKCameraManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -408,30 +338,7 @@ void USKCameraManagerComponent::TickComponent(float DeltaTime, ELevelTick TickTy
         return;
     }
 
-    if (TryCallLuaCameraTick(DeltaTime))
-    {
-        PendingLookInput = FVector2D::ZeroVector;
-        return;
-    }
-
-    ValidateLockTarget();
-    CameraMode = ResolveCameraMode();
-    UpdateMovementRotationSettings();
-    UpdateMoveDirectionAngle();
-
-    if (CameraMode == ESKCameraMode::SprintAlign)
-    {
-        UpdateSprintAlignMode(DeltaTime);
-    }
-    else if (CameraMode == ESKCameraMode::LockOn)
-    {
-        UpdateLockOnMode(DeltaTime);
-    }
-    else
-    {
-        UpdateFreeMode(DeltaTime);
-    }
-
+    TryCallLuaCameraTick(DeltaTime);
     PendingLookInput = FVector2D::ZeroVector;
 }
 
@@ -486,13 +393,14 @@ void USKCameraManagerComponent::RefreshCachedComponents()
     }
     if (!OwnerCharacter) return;
 
-    if (!InputManager)
-    {
-        InputManager = OwnerCharacter->FindComponentByClass<USKInputManager>();
-    }
     if (!MovementComponent)
     {
         MovementComponent = Cast<USKMovementComponent>(OwnerCharacter->GetCharacterMovement());
+        if (MovementComponent)
+        {
+            // 相机读取 Movement Lua 已确定的档位和 ActorYaw，固定 Input → Movement → Camera 顺序。
+            AddTickPrerequisiteComponent(MovementComponent);
+        }
     }
 }
 
@@ -517,135 +425,6 @@ void USKCameraManagerComponent::ValidateLockTarget()
     }
 }
 
-ESKCameraMode USKCameraManagerComponent::ResolveCameraMode() const
-{
-    if (MovementComponent && MovementComponent->CurrentMovementTier == ESKMovementTier::Sprint)
-    {
-        return ESKCameraMode::SprintAlign;
-    }
-
-    if (IsLockedOn())
-    {
-        return ESKCameraMode::LockOn;
-    }
-
-    return ESKCameraMode::Free;
-}
-
-void USKCameraManagerComponent::UpdateMovementRotationSettings()
-{
-    if (!OwnerCharacter) return;
-
-    UCharacterMovementComponent* CharacterMovement = OwnerCharacter->GetCharacterMovement();
-    if (!CharacterMovement) return;
-
-    if (CameraMode == ESKCameraMode::LockOn)
-    {
-        CharacterMovement->bOrientRotationToMovement = false;
-        CharacterMovement->bUseControllerDesiredRotation = false;
-    }
-    else if (CameraMode == ESKCameraMode::SprintAlign)
-    {
-        CharacterMovement->bOrientRotationToMovement = false;
-        CharacterMovement->bUseControllerDesiredRotation = false;
-    }
-    else
-    {
-        CharacterMovement->bOrientRotationToMovement = false;
-        CharacterMovement->bUseControllerDesiredRotation = false;
-    }
-}
-
-void USKCameraManagerComponent::UpdateMoveDirectionAngle()
-{
-    if (!OwnerCharacter)
-    {
-        MoveDirectionAngle = 0.f;
-        return;
-    }
-
-    float TargetYaw = 0.f;
-    if (GetDesiredMoveYaw(TargetYaw))
-    {
-        MoveDirectionAngle = FMath::FindDeltaAngleDegrees(OwnerCharacter->GetActorRotation().Yaw, TargetYaw);
-        return;
-    }
-
-    const FVector Velocity = OwnerCharacter->GetVelocity();
-    if (!Velocity.IsNearlyZero())
-    {
-        const float VelocityYaw = Velocity.Rotation().Yaw;
-        MoveDirectionAngle = FMath::FindDeltaAngleDegrees(OwnerCharacter->GetActorRotation().Yaw, VelocityYaw);
-        return;
-    }
-
-    MoveDirectionAngle = 0.f;
-}
-
-void USKCameraManagerComponent::UpdateFreeMode(float DeltaTime)
-{
-    ApplyPendingLookInput();
-}
-
-void USKCameraManagerComponent::UpdateSprintAlignMode(float DeltaTime)
-{
-    float TargetYaw = 0.f;
-    if (!GetDesiredMoveYaw(TargetYaw))
-    {
-        TargetYaw = OwnerCharacter->GetActorRotation().Yaw;
-    }
-
-    if (!IsActorYawOwnedByRootMotion())
-    {
-        ApplyActorYaw(TargetYaw, SprintActorInterpSpeed, DeltaTime);
-    }
-
-    float CameraTargetYaw = 0.f;
-    if (IsLockedOn() && GetLockTargetYaw(CameraTargetYaw))
-    {
-        ApplyControllerYaw(CameraTargetYaw, LockOnCameraYawInterpSpeed, DeltaTime);
-        return;
-    }
-
-    ApplyPendingLookInput();
-}
-
-void USKCameraManagerComponent::UpdateLockOnMode(float DeltaTime)
-{
-    float TargetYaw = 0.f;
-    if (!GetLockTargetYaw(TargetYaw))
-    {
-        ApplyPendingLookInput();
-        return;
-    }
-
-    if (!IsActorYawOwnedByRootMotion())
-    {
-        ApplyActorYaw(TargetYaw, LockOnActorInterpSpeed, DeltaTime);
-    }
-    ApplyControllerYaw(TargetYaw, LockOnCameraYawInterpSpeed, DeltaTime);
-}
-
-bool USKCameraManagerComponent::GetDesiredMoveYaw(float& OutYaw) const
-{
-    if (!OwnerCharacter || !InputManager) return false;
-
-    const FVector2D MoveIntent = InputManager->GetMoveIntent();
-    if (MoveIntent.Size() < MinMoveInputForFacing) return false;
-
-    const AController* Controller = OwnerCharacter->GetController();
-    if (!Controller) return false;
-
-    const FRotator ControlYawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
-    const FVector Forward = FRotationMatrix(ControlYawRotation).GetUnitAxis(EAxis::X);
-    const FVector Right = FRotationMatrix(ControlYawRotation).GetUnitAxis(EAxis::Y);
-    const FVector DesiredDirection = (Forward * MoveIntent.Y + Right * MoveIntent.X).GetSafeNormal();
-    if (DesiredDirection.IsNearlyZero()) return false;
-
-    OutYaw = DesiredDirection.Rotation().Yaw;
-    return true;
-}
-
 bool USKCameraManagerComponent::GetLockTargetYaw(float& OutYaw) const
 {
     if (!OwnerCharacter || !IsLockedOn()) return false;
@@ -656,15 +435,6 @@ bool USKCameraManagerComponent::GetLockTargetYaw(float& OutYaw) const
 
     OutYaw = FlatDirection.Rotation().Yaw;
     return true;
-}
-
-void USKCameraManagerComponent::ApplyActorYaw(float TargetYaw, float InterpSpeed, float DeltaTime)
-{
-    if (!OwnerCharacter) return;
-
-    const FRotator CurrentRotation = OwnerCharacter->GetActorRotation();
-    const float NewYaw = InterpSKYawShortest(CurrentRotation.Yaw, TargetYaw, DeltaTime, InterpSpeed);
-    OwnerCharacter->SetActorRotation(FRotator(0.f, NewYaw, 0.f));
 }
 
 void USKCameraManagerComponent::ApplyControllerYaw(float TargetYaw, float InterpSpeed, float DeltaTime)

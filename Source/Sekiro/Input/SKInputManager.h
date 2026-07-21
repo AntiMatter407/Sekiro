@@ -56,6 +56,29 @@ public:
 	/** 添加 MappingContext 到 Enhanced Input 子系统 */
 	void AddMappingContext(APlayerController* PC);
 
+    // ── 输入限制区域 ──────────────────────────────────────────
+
+    UFUNCTION(BlueprintCallable, Category = "Input|Restriction")
+    void EnterRestrictedZone();                       // 增加禁战区域计数
+
+    UFUNCTION(BlueprintCallable, Category = "Input|Restriction")
+    void ExitRestrictedZone();                        // 减少禁战区域计数
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
+    bool IsRestrictedZoneActive() const;              // 是否位于至少一个禁战区域
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
+    int32 GetRestrictedZoneCount() const;              // 获取禁战区域计数
+
+    UFUNCTION(BlueprintCallable, Category = "Input|Restriction")
+    void ClearRestrictedActionStateForScript();       // 清理禁战动作意图
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
+    bool IsOwnerWeaponSlotAnimationPlaying() const;   // 查询所属角色的武器 Slot 动画
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
+    FName GetOwnerWeaponPresentationName() const;     // 查询所属角色武器展示状态
+
 	// ── 消费型意图（读取后自动清零）─────────────────────────
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
@@ -180,13 +203,13 @@ public:
 	float GetDodgeActiveDuration() const;             // 获取闪避有效时长
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	float GetMoveInputReleaseBufferDuration() const;  // 获取移动释放缓冲时长
+	float GetMoveInputReleaseBufferDuration() const;  // 兼容旧脚本；事件驱动移动输入不再使用该时长
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	float GetMoveInputReleaseBufferRemaining() const; // 获取移动释放缓冲剩余时长
+	float GetMoveInputReleaseBufferRemaining() const; // 兼容旧脚本；事件驱动移动输入始终保持为零
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	void SetMoveInputReleaseBufferRemaining(float RemainingTime); // 设置移动释放缓冲剩余时长
+	void SetMoveInputReleaseBufferRemaining(float RemainingTime); // 兼容旧脚本设置释放缓冲
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	float GetAnalogWalkEnterThreshold() const;        // 获取摇杆进入步行阈值
@@ -219,7 +242,7 @@ public:
 	float GetWorldTimeSecondsForScript() const;       // 获取世界时间
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	void SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining); // 写入移动意图
+	void SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining); // 写入移动意图；末参数仅为兼容旧接口
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	void ClearMoveIntentForScript();                  // 清空移动意图
@@ -232,6 +255,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	bool AddMovementImpulseFromScreen(float InputX, float InputY, float VelocityChange); // 按控制器朝向给角色添加水平速度冲量
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool SetHorizontalVelocityFromScreen(float InputX, float InputY, float HorizontalSpeed); // 按控制器朝向精确设置角色水平速度
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	bool SetOwnerAnimRootMotionIgnored(bool bIgnored); // 设置所属角色动画实例是否忽略动画 Root Motion
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	bool AddLookInputToCamera(float InputX, float InputY); // 将视角输入转发给相机组件
@@ -297,7 +326,8 @@ protected:
 	// ── 移动/视角回调 ───────────────────────────────────────
 
 	UFUNCTION()
-	void OnMove(const FInputActionValue& Value);     // 主移动输入
+	void OnMove(const FInputActionValue& Value);     // 持续移动输入
+	void OnMoveCompleted(const FInputActionValue& Value); // 移动输入完整释放
 	UFUNCTION()
 	void OnLook(const FInputActionValue& Value);     // 视角输入
 
@@ -451,6 +481,8 @@ private:
 
 	// ── 消费型意图标记（帧末清零）───────────────────────────
 
+    int32 RestrictedZoneCount = 0;                    // 当前重叠禁战区域数量
+
 	bool bAttackPressed = false;                     // 攻击按下标记
 	bool bJumpPressed = false;                       // 跳跃按下标记
 	bool bDodgePressed = false;                      // 闪避按下标记
@@ -470,7 +502,7 @@ private:
 
 	FVector2D MoveIntent = FVector2D::ZeroVector;    // 移动方向（归一化，X=右, Y=前）
 	float MoveInputAmount = 0.f;                     // 移动输入强度（0-1，摇杆轻推用于 Walk/Run 迟滞）
-	float MoveInputReleaseBufferRemaining = 0.f;     // 移动输入释放缓冲剩余时间（过滤 Enhanced Input 的瞬时 0 值）
+	float MoveInputReleaseBufferRemaining = 0.f;     // 兼容旧接口；事件驱动移动输入不再读取该值
 	FVector2D LookIntent = FVector2D::ZeroVector;    // 视角方向（原始值）
 	bool bAttackHeld = false;                        // 攻击键按住
 	bool bGuardHeld = false;                         // 防御键按住
@@ -489,7 +521,7 @@ private:
 	float DodgeActiveDuration = 0.35f;               // 短按闪避后保持闪避状态的默认时长
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
-	float MoveInputReleaseBufferDuration = 0.08f;    // 移动输入释放缓冲时长（防止 Alt+方向键等组合导致动画输入跳变）
+	float MoveInputReleaseBufferDuration = 0.08f;    // 兼容旧资产；事件驱动移动输入不再使用该配置
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Input", meta = (AllowPrivateAccess = "true"))
 	float AnalogWalkEnterThreshold = 0.50f;          // 从 Run 回到 Walk 的轻推阈值（低于该值才降档）

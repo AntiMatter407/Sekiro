@@ -32,11 +32,8 @@ public:
     /** 采集当前帧动画变量并计算项目移动状态。 */
     virtual void NativeUpdateAnimation(float DeltaSeconds) override;
 
-    // ── ActorYaw 控制权 ───────────────────────────────────────
-
-    /** 查询当前动画图是否接管角色世界 Yaw。 */
-    UFUNCTION(BlueprintPure, Category = "Animation|RootMotion")
-    bool IsActorYawOwnedByRootMotion() const;
+    /** 在 ShowDebug Animation 中附加当前活动动画资产的 Lua 语义名。 */
+    virtual void DisplayDebugInstance(FDisplayDebugManager& DisplayDebugManager, float& Indent) override;
 
     // ── Locomotion（Blueprint 读取） ────────────────────────────
 
@@ -158,6 +155,9 @@ public:
     float MoveDirectionAngle = 0.f;               // 输入移动方向相对角色朝向的角度
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
+    float MoveDirectionAngleBeforeRotation = 0.f; // Movement Lua 旋转角色前锁存的输入方向角
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
     float ActorYaw = 0.f;                         // 本帧角色世界 Yaw，供动画图锁定 Turn/Step 的绝对目标
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
@@ -165,9 +165,6 @@ public:
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
     uint32 bHasDesiredMoveYaw : 1;                // 当前是否存在可用的绝对移动目标 Yaw
-
-    UPROPERTY(BlueprintReadWrite, Category = "Locomotion|Rotation")
-    uint32 bActorYawOwnedByRootMotion : 1;        // 动画图是否接管角色世界 Yaw，默认关闭
 
     // ── Dodge（Blueprint 读取） ─────────────────────────────────
 

@@ -336,14 +336,14 @@ MinimalLocomotion.CanEnter_Idle_Move
     -> ABP 模块.CanEnter_MainStateMachine_Idle_Move
 ```
 
-生成的动画蓝图在 `BlueprintUpdateAnimation` 中调用 C++ `EvaluateAndCacheTransitionRule()`。C++ 找到模块中的完整规则函数后执行：
+生成的每条 Transition Rule Graph 会调用 C++ `EvaluateLuaTransitionRule()`。C++ 找到模块中的完整规则函数后，构造可直接访问 AnimInstance 属性和函数的 `Inst` 代理，再执行：
 
 ```cpp
-UnLua::PushUObject(State, AnimInstance);
+PushAnimInstanceProxy(State, AnimInstance);
 lua_pcall(State, 1, 1, 0);
 ```
 
-`PushUObject` 把当前真实 `UAnimInstance` 包装为 UnLua userdata 并压入 Lua 栈；`lua_pcall` 指定一个参数，所以该 userdata 成为规则函数的第一个形参，也就是 `Inst`。
+`PushAnimInstanceProxy` 保存当前真实 `UAnimInstance` 的 UnLua userdata，并通过代理的 `__index`/`__newindex` 把属性访问和函数调用转发到它。`lua_pcall` 指定一个参数，所以该代理成为规则函数的第一个形参，也就是 `Inst`。
 
 因此：
 
@@ -355,28 +355,23 @@ Inst:IsFalling()
 
 会通过 UnLua 对这个真实 UObject 的反射代理读取 UPROPERTY 或调用 UFUNCTION。`Inst` 在 Lua 中是 userdata 代理，不是 `MinimalLocomotion` table，也不是裸 C++ 指针，但它代表同一个 AnimInstance UObject。
 
-完整运行链分为两段：
+完整运行链是：
 
 ```text
-游戏线程 BlueprintUpdateAnimation
-    -> EvaluateAndCacheTransitionRule(
+游戏线程 FAnimNode_StateMachine
+    -> 只检查当前状态的出边
+    -> 进入对应 Transition Rule Graph
+    -> EvaluateLuaTransitionRule(
         当前 AnimInstance,
         主 Lua 模块名,
         完整规则函数名)
     -> require 主模块
     -> 查找规则函数
-    -> PushUObject(AnimInstance)
-    -> Lua function(self)
+    -> PushAnimInstanceProxy(AnimInstance)
+    -> Lua function(Inst)
     -> 要求严格返回 boolean
-    -> 发布线程安全缓存
-
-动画状态机 Transition Graph
-    -> GetCachedTransitionRule(
-        当前 AnimInstance,
-        主 Lua 模块名,
-        完整规则函数名)
-    -> 只读取最近发布的 bool
+    -> 与原生 Gate 求与
     -> 连接 bCanEnterTransition
 ```
 
-Lua 规则只在游戏线程执行。动画工作线程不运行 Lua、不反射 UObject，只读取由 `FRWLock` 保护的最近一次布尔快照。这就是当前系统既允许规则直接读取 AnimInstance，又不让 Lua 进入动画多线程求值路径的原理。
+Lua 来源 AnimBlueprint 关闭多线程动画 Update，因此 Transition Rule 只在游戏线程执行。它不再为所有规则预计算快照，而是保留 UE 原生的当前状态出边检查和优先级短路语义。

@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- AnimGraph IR（中间表示，Intermediate Representation）的稳定命名和 Lua 源码定位工具。
 -- 这里定义的 ID 规则属于编译器前端，业务动画蓝图无需手工拼接路径。
 ---@class IRSchema

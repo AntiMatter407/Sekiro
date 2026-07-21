@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Lua 动画蓝图的编译期基类。
 -- 子类只把 AnimGraph 当作动画蓝图函数编写；Layer、Graph 分配、状态子图构建与 IR 导出由基类完成。
 local CompilerClass = require("Animation.Compiler.CompilerClass")
@@ -241,6 +242,10 @@ function LuaAnimBlueprint:Export()
         end
         return blueprint_ir
     end
+
+    -- 运行时只会 require 主模块，不保证此前在同一 Lua 环境执行过编辑器 Check/Generate。
+    -- 这里预构建一次纯 Lua 声明以发布嵌套状态机的 CanEnter_* 函数；生成资产仍只由编辑器 C++ 工厂完成。
+    exported_module.CompileIR()
 
     return exported_module
 end

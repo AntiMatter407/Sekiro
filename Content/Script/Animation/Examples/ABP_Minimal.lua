@@ -1,3 +1,4 @@
+-- Lua 类型：动画蓝图编译描述/状态机模块；编译对象是纯 Lua 表，运行时规则仅通过显式 Inst 访问 AnimInstance。
 -- Lua AnimGraph Function 模式的最小动画蓝图示例。
 -- 主文件只描述 AnimGraph 节点和连接；状态机拓扑、状态图和规则拆分到独立模块。
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")

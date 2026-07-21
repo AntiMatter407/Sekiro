@@ -1,12 +1,19 @@
 ﻿#include "SekiroAnimBlueprintFactoryLibrary.h"
 
 #include "AnimGraphNode_Inertialization.h"
+#include "AnimGraphNode_LayeredBoneBlend.h"
+#include "AnimGraphNode_ComponentToLocalSpace.h"
+#include "AnimGraphNode_LocalToComponentSpace.h"
 #include "AnimGraphNode_Root.h"
 #include "AnimGraphNode_SaveCachedPose.h"
 #include "AnimGraphNode_SequencePlayer.h"
 #include "AnimGraphNode_StateMachine.h"
+#include "AnimGraphNode_Slot.h"
 #include "AnimGraphNode_TransitionResult.h"
 #include "AnimGraphNode_UseCachedPose.h"
+#include "AnimGraphNode_LegIK.h"
+#include "AnimGraph/AnimGraphNode_FootPlacement.h"
+#include "AnimGraph/AnimGraphNode_OrientationWarping.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
@@ -29,6 +36,7 @@
 #include "HAL/FileManager.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_Event.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -358,6 +366,407 @@ namespace SekiroAnimBlueprintFactoryTests
     }
 
     /**
+     * 在既有本地空间 Pose 输出与 Graph Result 之间插入显式空间转换和 Orientation Warping 链。
+     * 函数只修改调用方独占的 IR，不访问 UObject；BoneName 必须由测试 Skeleton 提供且非 None。
+     *
+     * @param Graph 目标 Pose Graph，必须恰有一条连接 Root Result 的现有 Link。
+     * @param BoneName 同时用于测试 Spine、IK Foot Root 和 IK Foot 的有效 Skeleton 骨骼名。
+     * @param SourceLocation 复制到新增节点与连接的 Lua 源位置。
+     * @return 找到原有 Root 输入并成功改写链时返回 true，否则不创建节点并返回 false。
+     */
+    bool AddOrientationWarpingChain(
+        FSekiroAnimIRGraph& Graph,
+        const FName BoneName,
+        const FSekiroAnimIRSourceLocation& SourceLocation)
+    {
+        FSekiroAnimIRLink* ResultLink = nullptr;
+        for (FSekiroAnimIRLink& Link : Graph.Links)
+        {
+            if (Link.Target.NodeId == Graph.RootNodeId && Link.Target.PinName == TEXT("Result"))
+            {
+                ResultLink = &Link;
+                break;
+            }
+        }
+        if (ResultLink == nullptr || BoneName.IsNone()) return false;
+
+        const FSekiroAnimIRPinEndpoint OriginalSource = ResultLink->Source;
+        const FString LocalToComponentId(TEXT("Node.Move.LocalToComponent"));
+        const FString OrientationId(TEXT("Node.Move.OrientationWarping"));
+        const FString ComponentToLocalId(TEXT("Node.Move.ComponentToLocal"));
+        ResultLink->Source.NodeId = ComponentToLocalId;
+        ResultLink->Source.PinName = TEXT("Pose");
+
+        FSekiroAnimIRNode& LocalToComponent = Graph.Nodes.AddDefaulted_GetRef();
+        LocalToComponent.Id = LocalToComponentId;
+        LocalToComponent.NodeType = SekiroAnimGraphIRNames::LocalToComponentSpaceNode;
+        LocalToComponent.DisplayName = TEXT("Local To Component");
+        LocalToComponent.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& LocalPose = LocalToComponent.Pins.AddDefaulted_GetRef();
+        LocalPose.Name = TEXT("LocalPose");
+        LocalPose.Direction = ESekiroAnimIRPinDirection::Input;
+        LocalPose.DataType = SekiroAnimGraphIRNames::PoseData;
+        FSekiroAnimIRPin& ComponentPose = LocalToComponent.Pins.AddDefaulted_GetRef();
+        ComponentPose.Name = TEXT("ComponentPose");
+        ComponentPose.Direction = ESekiroAnimIRPinDirection::Output;
+        ComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        ComponentPose.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRNode& Orientation = Graph.Nodes.AddDefaulted_GetRef();
+        Orientation.Id = OrientationId;
+        Orientation.NodeType = SekiroAnimGraphIRNames::OrientationWarpingNode;
+        Orientation.DisplayName = TEXT("Orientation Warping");
+        Orientation.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& OrientationComponentPose = Orientation.Pins.AddDefaulted_GetRef();
+        OrientationComponentPose.Name = TEXT("ComponentPose");
+        OrientationComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPin& OrientationAngle = Orientation.Pins.AddDefaulted_GetRef();
+        OrientationAngle.Name = TEXT("OrientationAngle");
+        OrientationAngle.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationAngle.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& OrientationAlpha = Orientation.Pins.AddDefaulted_GetRef();
+        OrientationAlpha.Name = TEXT("Alpha");
+        OrientationAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& OrientationPose = Orientation.Pins.AddDefaulted_GetRef();
+        OrientationPose.Name = TEXT("Pose");
+        OrientationPose.Direction = ESekiroAnimIRPinDirection::Output;
+        OrientationPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        OrientationPose.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRProperty& SpineBones = Orientation.Properties.AddDefaulted_GetRef();
+        SpineBones.Name = TEXT("SpineBones");
+        SpineBones.Value.Type = ESekiroAnimIRValueType::String;
+        SpineBones.Value.StringValue = BoneName.ToString();
+        FSekiroAnimIRProperty& FootRoot = Orientation.Properties.AddDefaulted_GetRef();
+        FootRoot.Name = TEXT("IKFootRootBone");
+        FootRoot.Value.Type = ESekiroAnimIRValueType::Name;
+        FootRoot.Value.NameValue = BoneName;
+        FSekiroAnimIRProperty& FootBones = Orientation.Properties.AddDefaulted_GetRef();
+        FootBones.Name = TEXT("IKFootBones");
+        FootBones.Value.Type = ESekiroAnimIRValueType::String;
+        FootBones.Value.StringValue = BoneName.ToString();
+        FSekiroAnimIRProperty& RotationAxis = Orientation.Properties.AddDefaulted_GetRef();
+        RotationAxis.Name = TEXT("RotationAxis");
+        RotationAxis.Value.Type = ESekiroAnimIRValueType::Name;
+        RotationAxis.Value.NameValue = TEXT("Z");
+        FSekiroAnimIRProperty& Distribution = Orientation.Properties.AddDefaulted_GetRef();
+        Distribution.Name = TEXT("DistributedBoneOrientationAlpha");
+        Distribution.Value.Type = ESekiroAnimIRValueType::Float;
+        Distribution.Value.FloatValue = 1.0;
+        FSekiroAnimIRProperty& InterpSpeed = Orientation.Properties.AddDefaulted_GetRef();
+        InterpSpeed.Name = TEXT("RotationInterpSpeed");
+        InterpSpeed.Value.Type = ESekiroAnimIRValueType::Float;
+        InterpSpeed.Value.FloatValue = 8.0;
+
+        FSekiroAnimIRNode& ComponentToLocal = Graph.Nodes.AddDefaulted_GetRef();
+        ComponentToLocal.Id = ComponentToLocalId;
+        ComponentToLocal.NodeType = SekiroAnimGraphIRNames::ComponentToLocalSpaceNode;
+        ComponentToLocal.DisplayName = TEXT("Component To Local");
+        ComponentToLocal.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& ComponentInput = ComponentToLocal.Pins.AddDefaulted_GetRef();
+        ComponentInput.Name = TEXT("ComponentPose");
+        ComponentInput.Direction = ESekiroAnimIRPinDirection::Input;
+        ComponentInput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPin& LocalOutput = ComponentToLocal.Pins.AddDefaulted_GetRef();
+        LocalOutput.Name = TEXT("Pose");
+        LocalOutput.Direction = ESekiroAnimIRPinDirection::Output;
+        LocalOutput.DataType = SekiroAnimGraphIRNames::PoseData;
+        LocalOutput.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRLink& ToComponentLink = Graph.Links.AddDefaulted_GetRef();
+        ToComponentLink.Id = TEXT("Link.Move.ToLocalToComponent");
+        ToComponentLink.Source = OriginalSource;
+        ToComponentLink.Target.NodeId = LocalToComponentId;
+        ToComponentLink.Target.PinName = TEXT("LocalPose");
+        ToComponentLink.SourceLocation = SourceLocation;
+        FSekiroAnimIRLink& ToOrientationLink = Graph.Links.AddDefaulted_GetRef();
+        ToOrientationLink.Id = TEXT("Link.Move.ToOrientationWarping");
+        ToOrientationLink.Source.NodeId = LocalToComponentId;
+        ToOrientationLink.Source.PinName = TEXT("ComponentPose");
+        ToOrientationLink.Target.NodeId = OrientationId;
+        ToOrientationLink.Target.PinName = TEXT("ComponentPose");
+        ToOrientationLink.SourceLocation = SourceLocation;
+        FSekiroAnimIRLink& ToLocalLink = Graph.Links.AddDefaulted_GetRef();
+        ToLocalLink.Id = TEXT("Link.Move.ToComponentToLocal");
+        ToLocalLink.Source.NodeId = OrientationId;
+        ToLocalLink.Source.PinName = TEXT("Pose");
+        ToLocalLink.Target.NodeId = ComponentToLocalId;
+        ToLocalLink.Target.PinName = TEXT("ComponentPose");
+        ToLocalLink.SourceLocation = SourceLocation;
+
+        return true;
+    }
+
+    /**
+     * 在 OrientationWarping 与 ComponentToLocalSpace 之间插入 FootPlacement 和 LegIK。
+     * 函数仅修改调用方独占的 IR，不访问 UObject；测试骨骼名由目标 Skeleton 提供。
+     *
+     * @param Graph 已包含 OrientationWarping 组件空间链的 StatePose Graph。
+     * @param BoneName 用于构造双节点腿定义的有效测试骨骼名。
+     * @param SourceLocation 复制到新增节点与连接的 Lua 源位置。
+     * @return 找到现有 OrientationWarping 输出连接并成功改写时返回 true，否则返回 false。
+     */
+    bool AddFootIKChain(
+        FSekiroAnimIRGraph& Graph,
+        const FName BoneName,
+        const FSekiroAnimIRSourceLocation& SourceLocation)
+    {
+        FSekiroAnimIRLink* ToLocalLink = nullptr;
+        for (FSekiroAnimIRLink& Link : Graph.Links)
+        {
+            if (Link.Id == TEXT("Link.Move.ToComponentToLocal"))
+            {
+                ToLocalLink = &Link;
+                break;
+            }
+        }
+        if (ToLocalLink == nullptr || BoneName.IsNone()) return false;
+
+        const FSekiroAnimIRPinEndpoint OrientationSource = ToLocalLink->Source;
+        const FString FootPlacementId(TEXT("Node.Move.FootPlacement"));
+        const FString LegIKId(TEXT("Node.Move.LegIK"));
+        ToLocalLink->Source.NodeId = LegIKId;
+        ToLocalLink->Source.PinName = TEXT("Pose");
+
+        FSekiroAnimIRNode& FootPlacement = Graph.Nodes.AddDefaulted_GetRef();
+        FootPlacement.Id = FootPlacementId;
+        FootPlacement.NodeType = SekiroAnimGraphIRNames::FootPlacementNode;
+        FootPlacement.DisplayName = TEXT("Foot Placement");
+        FootPlacement.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& FootPlacementInput = FootPlacement.Pins.AddDefaulted_GetRef();
+        FootPlacementInput.Name = TEXT("ComponentPose");
+        FootPlacementInput.Direction = ESekiroAnimIRPinDirection::Input;
+        FootPlacementInput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPin& FootPlacementAlpha = FootPlacement.Pins.AddDefaulted_GetRef();
+        FootPlacementAlpha.Name = TEXT("Alpha");
+        FootPlacementAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        FootPlacementAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& FootPlacementOutput = FootPlacement.Pins.AddDefaulted_GetRef();
+        FootPlacementOutput.Name = TEXT("Pose");
+        FootPlacementOutput.Direction = ESekiroAnimIRPinDirection::Output;
+        FootPlacementOutput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FootPlacementOutput.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRProperty& FootRoot = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootRoot.Name = TEXT("IKFootRootBone");
+        FootRoot.Value.Type = ESekiroAnimIRValueType::Name;
+        FootRoot.Value.NameValue = BoneName;
+        FSekiroAnimIRProperty& Pelvis = FootPlacement.Properties.AddDefaulted_GetRef();
+        Pelvis.Name = TEXT("PelvisBone");
+        Pelvis.Value.Type = ESekiroAnimIRValueType::Name;
+        Pelvis.Value.NameValue = BoneName;
+        FSekiroAnimIRProperty& FootLegs = FootPlacement.Properties.AddDefaulted_GetRef();
+        FootLegs.Name = TEXT("LegDefinitions");
+        FootLegs.Value.Type = ESekiroAnimIRValueType::String;
+        FootLegs.Value.StringValue = FString::Printf(
+            TEXT(" %s , %s , %s , 1 | %s,%s,%s,1 "),
+            *BoneName.ToString(),
+            *BoneName.ToString(),
+            *BoneName.ToString(),
+            *BoneName.ToString(),
+            *BoneName.ToString(),
+            *BoneName.ToString());
+        FSekiroAnimIRProperty& PlantLockType = FootPlacement.Properties.AddDefaulted_GetRef();
+        PlantLockType.Name = TEXT("PlantLockType");
+        PlantLockType.Value.Type = ESekiroAnimIRValueType::Name;
+        PlantLockType.Value.NameValue = TEXT("PivotAroundAnkle");
+        FSekiroAnimIRProperty& PelvisMaxOffset = FootPlacement.Properties.AddDefaulted_GetRef();
+        PelvisMaxOffset.Name = TEXT("PelvisMaxOffset");
+        PelvisMaxOffset.Value.Type = ESekiroAnimIRValueType::Float;
+        PelvisMaxOffset.Value.FloatValue = 37.0;
+        FSekiroAnimIRProperty& PelvisRebalancing = FootPlacement.Properties.AddDefaulted_GetRef();
+        PelvisRebalancing.Name = TEXT("PelvisHorizontalRebalancingWeight");
+        PelvisRebalancing.Value.Type = ESekiroAnimIRValueType::Float;
+        PelvisRebalancing.Value.FloatValue = 0.4;
+        FSekiroAnimIRProperty& PlantSpeedThreshold = FootPlacement.Properties.AddDefaulted_GetRef();
+        PlantSpeedThreshold.Name = TEXT("PlantSpeedThreshold");
+        PlantSpeedThreshold.Value.Type = ESekiroAnimIRValueType::Float;
+        PlantSpeedThreshold.Value.FloatValue = 45.0;
+        FSekiroAnimIRProperty& PlantDistance = FootPlacement.Properties.AddDefaulted_GetRef();
+        PlantDistance.Name = TEXT("PlantDistanceToGround");
+        PlantDistance.Value.Type = ESekiroAnimIRValueType::Float;
+        PlantDistance.Value.FloatValue = 8.0;
+        FSekiroAnimIRProperty& TraceStart = FootPlacement.Properties.AddDefaulted_GetRef();
+        TraceStart.Name = TEXT("TraceStartOffset");
+        TraceStart.Value.Type = ESekiroAnimIRValueType::Float;
+        TraceStart.Value.FloatValue = -55.0;
+        FSekiroAnimIRProperty& TraceEnd = FootPlacement.Properties.AddDefaulted_GetRef();
+        TraceEnd.Name = TEXT("TraceEndOffset");
+        TraceEnd.Value.Type = ESekiroAnimIRValueType::Float;
+        TraceEnd.Value.FloatValue = 90.0;
+        FSekiroAnimIRProperty& TraceRadius = FootPlacement.Properties.AddDefaulted_GetRef();
+        TraceRadius.Name = TEXT("TraceSweepRadius");
+        TraceRadius.Value.Type = ESekiroAnimIRValueType::Float;
+        TraceRadius.Value.FloatValue = 6.0;
+        FSekiroAnimIRProperty& TracePenetration = FootPlacement.Properties.AddDefaulted_GetRef();
+        TracePenetration.Name = TEXT("TraceMaxGroundPenetration");
+        TracePenetration.Value.Type = ESekiroAnimIRValueType::Float;
+        TracePenetration.Value.FloatValue = 7.0;
+        FSekiroAnimIRProperty& TraceEnabled = FootPlacement.Properties.AddDefaulted_GetRef();
+        TraceEnabled.Name = TEXT("bTraceEnabled");
+        TraceEnabled.Value.Type = ESekiroAnimIRValueType::Bool;
+        TraceEnabled.Value.BoolValue = true;
+
+        FSekiroAnimIRNode& LegIK = Graph.Nodes.AddDefaulted_GetRef();
+        LegIK.Id = LegIKId;
+        LegIK.NodeType = SekiroAnimGraphIRNames::LegIKNode;
+        LegIK.DisplayName = TEXT("Leg IK");
+        LegIK.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& LegIKInput = LegIK.Pins.AddDefaulted_GetRef();
+        LegIKInput.Name = TEXT("ComponentPose");
+        LegIKInput.Direction = ESekiroAnimIRPinDirection::Input;
+        LegIKInput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPin& LegIKAlpha = LegIK.Pins.AddDefaulted_GetRef();
+        LegIKAlpha.Name = TEXT("Alpha");
+        LegIKAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        LegIKAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& LegIKOutput = LegIK.Pins.AddDefaulted_GetRef();
+        LegIKOutput.Name = TEXT("Pose");
+        LegIKOutput.Direction = ESekiroAnimIRPinDirection::Output;
+        LegIKOutput.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        LegIKOutput.bAllowMultipleConnections = true;
+        FSekiroAnimIRProperty& LegIKLegs = LegIK.Properties.AddDefaulted_GetRef();
+        LegIKLegs.Name = TEXT("LegDefinitions");
+        LegIKLegs.Value.Type = ESekiroAnimIRValueType::String;
+        LegIKLegs.Value.StringValue = FString::Printf(
+            TEXT(" %s , %s , 1 | %s,%s,1 "),
+            *BoneName.ToString(),
+            *BoneName.ToString(),
+            *BoneName.ToString(),
+            *BoneName.ToString());
+        FSekiroAnimIRProperty& ReachPrecision = LegIK.Properties.AddDefaulted_GetRef();
+        ReachPrecision.Name = TEXT("ReachPrecision");
+        ReachPrecision.Value.Type = ESekiroAnimIRValueType::Float;
+        ReachPrecision.Value.FloatValue = 0.05;
+        FSekiroAnimIRProperty& MaxIterations = LegIK.Properties.AddDefaulted_GetRef();
+        MaxIterations.Name = TEXT("MaxIterations");
+        MaxIterations.Value.Type = ESekiroAnimIRValueType::Integer;
+        MaxIterations.Value.IntegerValue = 7;
+
+        FSekiroAnimIRLink& ToFootPlacement = Graph.Links.AddDefaulted_GetRef();
+        ToFootPlacement.Id = TEXT("Link.Move.ToFootPlacement");
+        ToFootPlacement.Source = OrientationSource;
+        ToFootPlacement.Target.NodeId = FootPlacementId;
+        ToFootPlacement.Target.PinName = TEXT("ComponentPose");
+        ToFootPlacement.SourceLocation = SourceLocation;
+        FSekiroAnimIRLink& ToLegIK = Graph.Links.AddDefaulted_GetRef();
+        ToLegIK.Id = TEXT("Link.Move.ToLegIK");
+        ToLegIK.Source.NodeId = FootPlacementId;
+        ToLegIK.Source.PinName = TEXT("Pose");
+        ToLegIK.Target.NodeId = LegIKId;
+        ToLegIK.Target.PinName = TEXT("ComponentPose");
+        ToLegIK.SourceLocation = SourceLocation;
+        return true;
+    }
+
+    /**
+     * 在 StatePose 根输出前插入 Slot 与单层 Layered Blend Per Bone，模拟上半身 Montage 合成链。
+     * 函数仅修改调用方独占的值类型 IR；基础姿势同时作为 Slot Source 和 Layered BasePose。
+     *
+     * @param Graph 已有唯一根输出 Link 的 StatePose Graph。
+     * @param BoneName BranchFilters 使用的目标 Skeleton 有效骨骼名。
+     * @param SourceLocation 复制到新增节点、属性和连接的 Lua 源位置。
+     * @return 找到根输出且骨骼名有效时返回 true，否则不修改 Graph 并返回 false。
+     */
+    bool AddUpperBodyBlendChain(
+        FSekiroAnimIRGraph& Graph,
+        const FName BoneName,
+        const FSekiroAnimIRSourceLocation& SourceLocation)
+    {
+        FSekiroAnimIRLink* RootLink = nullptr;
+        for (FSekiroAnimIRLink& Link : Graph.Links)
+        {
+            if (Link.Target.NodeId == Graph.RootNodeId && Link.Target.PinName == TEXT("Result"))
+            {
+                RootLink = &Link;
+                break;
+            }
+        }
+        if (RootLink == nullptr || BoneName.IsNone()) return false;
+
+        const FSekiroAnimIRPinEndpoint OriginalSource = RootLink->Source;
+        const FString SlotId(TEXT("Node.Move.UpperBodySlot"));
+        const FString LayeredId(TEXT("Node.Move.UpperBodyLayeredBlend"));
+        RootLink->Source.NodeId = LayeredId;
+        RootLink->Source.PinName = TEXT("Pose");
+
+        FSekiroAnimIRNode& Slot = Graph.Nodes.AddDefaulted_GetRef();
+        Slot.Id = SlotId;
+        Slot.NodeType = SekiroAnimGraphIRNames::SlotNode;
+        Slot.DisplayName = TEXT("Upper Body Slot");
+        Slot.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& SlotSource = Slot.Pins.AddDefaulted_GetRef();
+        SlotSource.Name = TEXT("Source");
+        SlotSource.Direction = ESekiroAnimIRPinDirection::Input;
+        SlotSource.DataType = SekiroAnimGraphIRNames::PoseData;
+        FSekiroAnimIRPin& SlotPose = Slot.Pins.AddDefaulted_GetRef();
+        SlotPose.Name = TEXT("Pose");
+        SlotPose.Direction = ESekiroAnimIRPinDirection::Output;
+        SlotPose.DataType = SekiroAnimGraphIRNames::PoseData;
+        SlotPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRProperty& SlotName = Slot.Properties.AddDefaulted_GetRef();
+        SlotName.Name = TEXT("SlotName");
+        SlotName.Value.Type = ESekiroAnimIRValueType::Name;
+        SlotName.Value.NameValue = TEXT("DefaultSlot");
+        FSekiroAnimIRProperty& AlwaysUpdate = Slot.Properties.AddDefaulted_GetRef();
+        AlwaysUpdate.Name = TEXT("bAlwaysUpdateSourcePose");
+        AlwaysUpdate.Value.Type = ESekiroAnimIRValueType::Bool;
+        AlwaysUpdate.Value.BoolValue = true;
+
+        FSekiroAnimIRNode& Layered = Graph.Nodes.AddDefaulted_GetRef();
+        Layered.Id = LayeredId;
+        Layered.NodeType = SekiroAnimGraphIRNames::LayeredBlendPerBoneNode;
+        Layered.DisplayName = TEXT("Upper Body Layered Blend");
+        Layered.SourceLocation = SourceLocation;
+        const TCHAR* LayeredPoseInputs[] = { TEXT("BasePose"), TEXT("BlendPose") };
+        for (const TCHAR* PinName : LayeredPoseInputs)
+        {
+            FSekiroAnimIRPin& Pin = Layered.Pins.AddDefaulted_GetRef();
+            Pin.Name = PinName;
+            Pin.Direction = ESekiroAnimIRPinDirection::Input;
+            Pin.DataType = SekiroAnimGraphIRNames::PoseData;
+        }
+        FSekiroAnimIRPin& BlendWeight = Layered.Pins.AddDefaulted_GetRef();
+        BlendWeight.Name = TEXT("BlendWeight");
+        BlendWeight.Direction = ESekiroAnimIRPinDirection::Input;
+        BlendWeight.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& LayeredPose = Layered.Pins.AddDefaulted_GetRef();
+        LayeredPose.Name = TEXT("Pose");
+        LayeredPose.Direction = ESekiroAnimIRPinDirection::Output;
+        LayeredPose.DataType = SekiroAnimGraphIRNames::PoseData;
+        LayeredPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRProperty& BranchFilters = Layered.Properties.AddDefaulted_GetRef();
+        BranchFilters.Name = TEXT("BranchFilters");
+        BranchFilters.Value.Type = ESekiroAnimIRValueType::String;
+        BranchFilters.Value.StringValue = FString::Printf(TEXT(" %s , 3 "), *BoneName.ToString());
+        FSekiroAnimIRProperty& MeshRotation = Layered.Properties.AddDefaulted_GetRef();
+        MeshRotation.Name = TEXT("bMeshSpaceRotationBlend");
+        MeshRotation.Value.Type = ESekiroAnimIRValueType::Bool;
+        MeshRotation.Value.BoolValue = true;
+        FSekiroAnimIRProperty& CurveOption = Layered.Properties.AddDefaulted_GetRef();
+        CurveOption.Name = TEXT("CurveBlendOption");
+        CurveOption.Value.Type = ESekiroAnimIRValueType::Name;
+        CurveOption.Value.NameValue = TEXT("UseBasePose");
+
+        FSekiroAnimIRLink& ToSlot = Graph.Links.AddDefaulted_GetRef();
+        ToSlot.Id = TEXT("Link.Move.ToUpperBodySlot");
+        ToSlot.Source = OriginalSource;
+        ToSlot.Target.NodeId = SlotId;
+        ToSlot.Target.PinName = TEXT("Source");
+        ToSlot.SourceLocation = SourceLocation;
+        FSekiroAnimIRLink& SlotToLayered = Graph.Links.AddDefaulted_GetRef();
+        SlotToLayered.Id = TEXT("Link.Move.UpperBodySlotToLayered");
+        SlotToLayered.Source.NodeId = SlotId;
+        SlotToLayered.Source.PinName = TEXT("Pose");
+        SlotToLayered.Target.NodeId = LayeredId;
+        SlotToLayered.Target.PinName = TEXT("BlendPose");
+        SlotToLayered.SourceLocation = SourceLocation;
+        return true;
+    }
+
+    /**
      * 将主 Pose Graph 的既有输出链改为 Save/Use Cached Pose 对，并让 Save 缓存指定源节点的 Pose。
      * 函数仅修改调用方独占的值类型 IR，不访问 UObject；调用方应保证 Graph 当前只有一条待替换的根输出 Link。
      *
@@ -464,7 +873,7 @@ namespace SekiroAnimBlueprintFactoryTests
     }
 
     /**
-     * 构造包含两个 State、Inertialization 与同源同目标并行 Transition 的完整工厂测试 IR。
+     * 构造包含八个有效 State、一个孤立 State、Inertialization 与并行 Transition 的完整工厂测试 IR。
      * 函数修改值类型 IR，并将调用方提供的 transient Sequence 写为软路径；只能在测试线程独占调用。
      *
      * @param Sequence 工厂应加载并写入 SequencePlayer 的动画序列。
@@ -481,6 +890,15 @@ namespace SekiroAnimBlueprintFactoryTests
                 TEXT("Node.StateMachine"),
                 TEXT("MainPoseCache"),
                 Blueprint.SourceLocation);
+            MainGraph->Layout.Style = ESekiroAnimIRLayoutStyle::LeftToRight;
+            FSekiroAnimIRLayoutGrid& MainGrid = MainGraph->Layout.Grids.AddDefaulted_GetRef();
+            MainGrid.Name = TEXT("MainFlow");
+            FSekiroAnimIRLayoutItem& MachineItem = MainGrid.Items.AddDefaulted_GetRef();
+            MachineItem.ElementId = TEXT("Node.StateMachine");
+            FSekiroAnimIRLayoutItem& RootItem = MainGrid.Items.AddDefaulted_GetRef();
+            RootItem.ElementId = TEXT("Node.Output");
+            RootItem.Column = 2;
+            RootItem.DeclarationOrder = 1;
         }
 
         FSekiroAnimIRGraph* IdleGraph = FindGraph(Blueprint, TEXT("Graph.Idle"));
@@ -497,11 +915,14 @@ namespace SekiroAnimBlueprintFactoryTests
         FSekiroAnimIRGraph* StateMachineGraph = FindGraph(Blueprint, TEXT("Graph.StateMachine"));
         if (StateMachineGraph != nullptr)
         {
+            StateMachineGraph->Layout.Style = ESekiroAnimIRLayoutStyle::HierarchicalBlocks;
+
             FSekiroAnimIRState& MoveState = StateMachineGraph->StateMachine.States.AddDefaulted_GetRef();
             MoveState.Id = TEXT("State.Move");
             MoveState.Name = TEXT("Move");
             MoveState.GraphId = TEXT("Graph.Move");
             MoveState.bAlwaysResetOnEntry = true;
+            MoveState.DeclarationOrder = 1;
             MoveState.SourceLocation = Blueprint.SourceLocation;
 
             FSekiroAnimIRTransition& FirstTransition =
@@ -550,6 +971,45 @@ namespace SekiroAnimBlueprintFactoryTests
             RemainingTimeGate.Type = TEXT("TimeRemainingLessEqual");
             RemainingTimeGate.Threshold = 0.08f;
             ParallelTransition.Gate.RootIndex = 0;
+
+            FString PreviousStateId = MoveState.Id;
+            for (int32 StateIndex = 2; StateIndex <= 7; ++StateIndex)
+            {
+                const FString StateSuffix = FString::FromInt(StateIndex);
+                FSekiroAnimIRState& AdditionalState =
+                    StateMachineGraph->StateMachine.States.AddDefaulted_GetRef();
+                AdditionalState.Id = TEXT("State.Grid") + StateSuffix;
+                AdditionalState.Name = TEXT("Grid") + StateSuffix;
+                AdditionalState.GraphId = TEXT("Graph.Grid") + StateSuffix;
+                AdditionalState.DeclarationOrder = StateIndex;
+                AdditionalState.SourceLocation = Blueprint.SourceLocation;
+
+                FSekiroAnimIRTransition& GridTransition =
+                    StateMachineGraph->StateMachine.Transitions.AddDefaulted_GetRef();
+                GridTransition.Id = TEXT("Transition.Grid") + StateSuffix;
+                GridTransition.Key = TEXT("Grid") + StateSuffix;
+                GridTransition.SourceStateId = PreviousStateId;
+                GridTransition.TargetStateId = AdditionalState.Id;
+                GridTransition.RuleFunctionName = FName(*(TEXT("CanEnter_Grid") + StateSuffix));
+                GridTransition.Settings.BlendDuration = 0.1f;
+                GridTransition.Settings.PriorityOrder = StateIndex;
+                GridTransition.Settings.BlendMode = TEXT("Linear");
+                GridTransition.SourceLocation = Blueprint.SourceLocation;
+                FSekiroAnimIRTransitionGateNode& GridGate =
+                    GridTransition.Gate.Nodes.AddDefaulted_GetRef();
+                GridGate.Type = TEXT("TimeRemainingLessEqual");
+                GridGate.Threshold = 0.1f;
+                GridTransition.Gate.RootIndex = 0;
+                PreviousStateId = AdditionalState.Id;
+            }
+
+            FSekiroAnimIRState& IsolatedState =
+                StateMachineGraph->StateMachine.States.AddDefaulted_GetRef();
+            IsolatedState.Id = TEXT("State.Isolated");
+            IsolatedState.Name = TEXT("Isolated");
+            IsolatedState.GraphId = TEXT("Graph.Isolated");
+            IsolatedState.DeclarationOrder = 8;
+            IsolatedState.SourceLocation = Blueprint.SourceLocation;
         }
 
         FSekiroAnimIRGraph& MoveGraph = AddStatePoseGraph(
@@ -562,6 +1022,32 @@ namespace SekiroAnimBlueprintFactoryTests
             TEXT("Node.Move"),
             FSoftObjectPath(Sequence),
             true,
+            Blueprint.SourceLocation);
+        for (int32 StateIndex = 2; StateIndex <= 7; ++StateIndex)
+        {
+            const FString StateSuffix = FString::FromInt(StateIndex);
+            FSekiroAnimIRGraph& GridGraph = AddStatePoseGraph(
+                Blueprint,
+                TEXT("Graph.Grid") + StateSuffix,
+                TEXT("Grid") + StateSuffix,
+                TEXT("Node.Grid") + StateSuffix + TEXT(".Output"));
+            AddSequencePose(
+                GridGraph,
+                TEXT("Node.Grid") + StateSuffix,
+                FSoftObjectPath(Sequence),
+                false,
+                Blueprint.SourceLocation);
+        }
+        FSekiroAnimIRGraph& IsolatedGraph = AddStatePoseGraph(
+            Blueprint,
+            TEXT("Graph.Isolated"),
+            TEXT("Isolated"),
+            TEXT("Node.Isolated.Output"));
+        AddSequencePose(
+            IsolatedGraph,
+            TEXT("Node.Isolated"),
+            FSoftObjectPath(Sequence),
+            false,
             Blueprint.SourceLocation);
         return Blueprint;
     }
@@ -631,7 +1117,34 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     TestNotNull(TEXT("Transient test Sequence is created"), Sequence);
     if (Sequence == nullptr) return true;
 
-    const FSekiroAnimBlueprintIR BlueprintIR = MakeFactoryIR(Sequence);
+    const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
+    const FName OrientationTestBone = ReferenceSkeleton.GetNum() > 0
+        ? ReferenceSkeleton.GetBoneName(0)
+        : NAME_None;
+    TestFalse(TEXT("Test Skeleton exposes a bone for Orientation Warping"), OrientationTestBone.IsNone());
+    FSekiroAnimBlueprintIR BlueprintIR = MakeFactoryIR(Sequence);
+    FSekiroAnimIRGraph* OrientationGraph = FindGraph(BlueprintIR, TEXT("Graph.Move"));
+    TestTrue(
+        TEXT("Test IR adds an explicit component-space Orientation Warping chain"),
+        OrientationGraph != nullptr
+            && AddOrientationWarpingChain(
+                *OrientationGraph,
+                OrientationTestBone,
+                BlueprintIR.SourceLocation));
+    TestTrue(
+        TEXT("Test IR adds explicit FootPlacement and LegIK nodes"),
+        OrientationGraph != nullptr
+            && AddFootIKChain(
+                *OrientationGraph,
+                OrientationTestBone,
+                BlueprintIR.SourceLocation));
+    TestTrue(
+        TEXT("Test IR adds Slot and Layered Blend Per Bone nodes"),
+        OrientationGraph != nullptr
+            && AddUpperBodyBlendChain(
+                *OrientationGraph,
+                OrientationTestBone,
+                BlueprintIR.SourceLocation));
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
     UAnimBlueprint* FirstBlueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
         BlueprintIR,
@@ -648,7 +1161,15 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     if (FirstBlueprint == nullptr) return true;
 
     TestEqual(TEXT("TargetSkeleton is assigned"), FirstBlueprint->TargetSkeleton.Get(), Skeleton);
+    TestFalse(TEXT("Lua AnimBlueprint disables threaded animation update"),
+        FirstBlueprint->bUseMultiThreadedAnimationUpdate);
     TestNotNull(TEXT("GeneratedClass exists"), FirstBlueprint->GeneratedClass.Get());
+    const UAnimInstance* GeneratedDefaultInstance = FirstBlueprint->GeneratedClass != nullptr
+        ? Cast<UAnimInstance>(FirstBlueprint->GeneratedClass->GetDefaultObject())
+        : nullptr;
+    TestNotNull(TEXT("Generated AnimInstance default object exists"), GeneratedDefaultInstance);
+    TestFalse(TEXT("Generated AnimInstance also disables threaded animation update"),
+        GeneratedDefaultInstance != nullptr && GeneratedDefaultInstance->bUseMultiThreadedAnimationUpdate);
     TestTrue(TEXT("Blueprint compiles without error"), FirstBlueprint->Status != BS_Error);
 
     UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(FirstBlueprint);
@@ -670,13 +1191,21 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     TestNotNull(TEXT("Generated EventGraph exists"), EventGraph);
     TestEqual(TEXT("BlueprintUpdateAnimation is a real override Event"), UpdateEventCount, 1);
     TestEqual(
-        TEXT("EventGraph refreshes every Transition exactly once"),
+        TEXT("EventGraph contains one Lua animation update bridge"),
         CountFunctionCalls(
             EventGraph,
             GET_FUNCTION_NAME_CHECKED(
                 USekiroLuaTransitionRuntimeLibrary,
-                EvaluateAndCacheTransitionRule)),
-        2);
+                EvaluateBlueprintUpdateAnimation)),
+        1);
+    TestEqual(
+        TEXT("EventGraph does not pre-evaluate Transition rules"),
+        CountFunctionCalls(
+            EventGraph,
+            GET_FUNCTION_NAME_CHECKED(
+                USekiroLuaTransitionRuntimeLibrary,
+                EvaluateLuaTransitionRule)),
+        0);
 
     UAnimationGraph* MainGraph = FindMainGraph(FirstBlueprint);
     UAnimGraphNode_Root* RootNode = FindFirstNode<UAnimGraphNode_Root>(MainGraph);
@@ -691,6 +1220,10 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     TestNotNull(TEXT("Native StateMachine node exists"), StateMachineNode);
     TestNotNull(TEXT("Native Save Cached Pose node exists"), SaveCachedPoseNode);
     TestNotNull(TEXT("Native Use Cached Pose node exists"), UseCachedPoseNode);
+    TestEqual(TEXT("Explicit StateMachine Grid column is applied"),
+        StateMachineNode != nullptr ? StateMachineNode->NodePosX : INDEX_NONE, 0);
+    TestEqual(TEXT("Explicit OutputPose Grid column is applied"),
+        RootNode != nullptr ? RootNode->NodePosX : INDEX_NONE, 720);
     TestEqual(
         TEXT("Save Cached Pose receives CacheName"),
         SaveCachedPoseNode != nullptr ? SaveCachedPoseNode->CacheName : FString(),
@@ -732,13 +1265,31 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         : nullptr;
     TestNotNull(TEXT("StateMachine owns native graph"), StateMachineGraph);
     TestNotNull(TEXT("StateMachine default Entry exists"), StateMachineGraph != nullptr ? StateMachineGraph->EntryNode.Get() : nullptr);
-    TestEqual(TEXT("Two states are created"), CountNodes<UAnimStateNode>(StateMachineGraph), 2);
-    TestEqual(TEXT("Parallel transitions are preserved"), CountNodes<UAnimStateTransitionNode>(StateMachineGraph), 2);
+    TestEqual(TEXT("Eight connected states and one isolated state are created"),
+        CountNodes<UAnimStateNode>(StateMachineGraph), 9);
+    TestEqual(TEXT("Parallel and grid transitions are preserved"),
+        CountNodes<UAnimStateTransitionNode>(StateMachineGraph), 8);
 
     UAnimStateNode* IdleState = FindState(StateMachineGraph, TEXT("Idle"));
     UAnimStateNode* MoveState = FindState(StateMachineGraph, TEXT("Move"));
     TestNotNull(TEXT("Idle state exists"), IdleState);
     TestNotNull(TEXT("Move state exists"), MoveState);
+    TestEqual(TEXT("First row starts with entry State"),
+        IdleState != nullptr ? IdleState->NodePosX : INDEX_NONE, 0);
+    TestEqual(TEXT("Eight effective states use three-column square-root grid"),
+        MoveState != nullptr ? MoveState->NodePosX : INDEX_NONE, 300);
+    UAnimStateNode* Grid2State = FindState(StateMachineGraph, TEXT("Grid2"));
+    UAnimStateNode* Grid3State = FindState(StateMachineGraph, TEXT("Grid3"));
+    UAnimStateNode* Grid7State = FindState(StateMachineGraph, TEXT("Grid7"));
+    UAnimStateNode* IsolatedState = FindState(StateMachineGraph, TEXT("Isolated"));
+    TestEqual(TEXT("Third effective State completes first grid row"),
+        Grid2State != nullptr ? Grid2State->NodePosX : INDEX_NONE, 600);
+    TestEqual(TEXT("Fourth effective State starts second grid row"),
+        Grid3State != nullptr ? Grid3State->NodePosY : INDEX_NONE, 170);
+    TestEqual(TEXT("Eighth effective State occupies third grid row"),
+        Grid7State != nullptr ? Grid7State->NodePosY : INDEX_NONE, 340);
+    TestTrue(TEXT("Disconnected State is excluded from effective grid and placed below it"),
+        IsolatedState != nullptr && IsolatedState->NodePosY > 340);
     TestTrue(TEXT("Move AlwaysResetOnEntry is applied"), MoveState != nullptr && MoveState->bAlwaysResetOnEntry);
     TestEqual(
         TEXT("Entry is connected to Idle"),
@@ -756,6 +1307,18 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
 
     UAnimGraphNode_SequencePlayer* IdleSequence = FindFirstNode<UAnimGraphNode_SequencePlayer>(IdleGraph);
     UAnimGraphNode_Inertialization* MoveInertialization = FindFirstNode<UAnimGraphNode_Inertialization>(MoveGraph);
+    UAnimGraphNode_LocalToComponentSpace* LocalToComponent =
+        FindFirstNode<UAnimGraphNode_LocalToComponentSpace>(MoveGraph);
+    UAnimGraphNode_OrientationWarping* OrientationWarping =
+        FindFirstNode<UAnimGraphNode_OrientationWarping>(MoveGraph);
+    UAnimGraphNode_FootPlacement* FootPlacement =
+        FindFirstNode<UAnimGraphNode_FootPlacement>(MoveGraph);
+    UAnimGraphNode_LegIK* LegIK = FindFirstNode<UAnimGraphNode_LegIK>(MoveGraph);
+    UAnimGraphNode_Slot* Slot = FindFirstNode<UAnimGraphNode_Slot>(MoveGraph);
+    UAnimGraphNode_LayeredBoneBlend* LayeredBlend =
+        FindFirstNode<UAnimGraphNode_LayeredBoneBlend>(MoveGraph);
+    UAnimGraphNode_ComponentToLocalSpace* ComponentToLocal =
+        FindFirstNode<UAnimGraphNode_ComponentToLocalSpace>(MoveGraph);
     TestNotNull(TEXT("SequencePlayer is created"), IdleSequence);
     TestEqual(
         TEXT("Sequence property is applied"),
@@ -773,6 +1336,225 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     TestEqual(
         TEXT("Inertialization Source is connected through native Schema"),
         InertialSource != nullptr ? InertialSource->LinkedTo.Num() : 0,
+        1);
+    TestNotNull(TEXT("LocalToComponentSpace node is explicitly created"), LocalToComponent);
+    TestNotNull(TEXT("OrientationWarping node is created"), OrientationWarping);
+    TestNotNull(TEXT("FootPlacement node is created"), FootPlacement);
+    TestNotNull(TEXT("LegIK node is created"), LegIK);
+    TestNotNull(TEXT("Slot node is created"), Slot);
+    TestNotNull(TEXT("Layered Blend Per Bone node is created"), LayeredBlend);
+    TestNotNull(TEXT("ComponentToLocalSpace node is explicitly created"), ComponentToLocal);
+    TestEqual(
+        TEXT("Slot receives SlotName"),
+        Slot != nullptr ? Slot->Node.SlotName : NAME_None,
+        FName(TEXT("DefaultSlot")));
+    TestTrue(
+        TEXT("Slot receives bAlwaysUpdateSourcePose"),
+        Slot != nullptr && Slot->Node.bAlwaysUpdateSourcePose);
+    TestEqual(
+        TEXT("Layered Blend keeps one overlay pose"),
+        LayeredBlend != nullptr ? LayeredBlend->Node.BlendPoses.Num() : 0,
+        1);
+    TestEqual(
+        TEXT("Layered Blend receives one branch filter"),
+        LayeredBlend != nullptr && !LayeredBlend->Node.LayerSetup.IsEmpty()
+            ? LayeredBlend->Node.LayerSetup[0].BranchFilters.Num()
+            : 0,
+        1);
+    TestEqual(
+        TEXT("Layered Blend receives BranchFilter bone"),
+        LayeredBlend != nullptr
+            && !LayeredBlend->Node.LayerSetup.IsEmpty()
+            && !LayeredBlend->Node.LayerSetup[0].BranchFilters.IsEmpty()
+            ? LayeredBlend->Node.LayerSetup[0].BranchFilters[0].BoneName
+            : NAME_None,
+        OrientationTestBone);
+    TestTrue(
+        TEXT("Layered Blend enables mesh-space rotation"),
+        LayeredBlend != nullptr && LayeredBlend->Node.bMeshSpaceRotationBlend);
+    TestEqual(
+        TEXT("Layered Blend receives curve strategy"),
+        LayeredBlend != nullptr
+            ? LayeredBlend->Node.CurveBlendOption.GetValue()
+            : ECurveBlendOption::Override,
+        ECurveBlendOption::UseBasePose);
+    UEdGraphPin* LayeredBasePose = LayeredBlend != nullptr
+        ? LayeredBlend->FindPin(TEXT("BasePose"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* LayeredBlendPose = LayeredBlend != nullptr
+        ? LayeredBlend->FindPin(TEXT("BlendPoses_0"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* LayeredBlendWeight = LayeredBlend != nullptr
+        ? LayeredBlend->FindPin(TEXT("BlendWeights_0"), EGPD_Input)
+        : nullptr;
+    TestNotNull(TEXT("Layered Blend exposes BasePose Pin"), LayeredBasePose);
+    TestEqual(
+        TEXT("Layered Blend BlendPose is connected"),
+        LayeredBlendPose != nullptr ? LayeredBlendPose->LinkedTo.Num() : 0,
+        1);
+    TestNotNull(TEXT("Layered Blend exposes BlendWeight Pin"), LayeredBlendWeight);
+    TestEqual(
+        TEXT("No implicit duplicate LocalToComponentSpace node is generated"),
+        CountNodes<UAnimGraphNode_LocalToComponentSpace>(MoveGraph),
+        1);
+    TestEqual(
+        TEXT("No implicit duplicate ComponentToLocalSpace node is generated"),
+        CountNodes<UAnimGraphNode_ComponentToLocalSpace>(MoveGraph),
+        1);
+    TestEqual(
+        TEXT("OrientationWarping uses Manual mode"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.Mode : EWarpingEvaluationMode::Graph,
+        EWarpingEvaluationMode::Manual);
+    TestEqual(
+        TEXT("OrientationWarping receives SpineBones"),
+        OrientationWarping != nullptr && !OrientationWarping->Node.SpineBones.IsEmpty()
+            ? OrientationWarping->Node.SpineBones[0].BoneName
+            : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("OrientationWarping receives IKFootRootBone"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.IKFootRootBone.BoneName : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("OrientationWarping receives IKFootBones"),
+        OrientationWarping != nullptr && !OrientationWarping->Node.IKFootBones.IsEmpty()
+            ? OrientationWarping->Node.IKFootBones[0].BoneName
+            : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("OrientationWarping receives rotation axis"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.RotationAxis.GetValue() : EAxis::None,
+        EAxis::Z);
+    TestEqual(
+        TEXT("OrientationWarping receives distribution alpha"),
+        OrientationWarping != nullptr
+            ? OrientationWarping->Node.DistributedBoneOrientationAlpha
+            : 0.0f,
+        1.0f);
+    TestEqual(
+        TEXT("OrientationWarping receives interpolation speed"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.RotationInterpSpeed : 0.0f,
+        8.0f);
+    TestEqual(
+        TEXT("FootPlacement defaults PlantSpeedMode to Graph"),
+        FootPlacement != nullptr ? FootPlacement->Node.PlantSpeedMode : EWarpingEvaluationMode::Manual,
+        EWarpingEvaluationMode::Graph);
+    TestEqual(
+        TEXT("FootPlacement applies PlantLockType"),
+        FootPlacement != nullptr
+            ? FootPlacement->Node.PlantSettings.LockType
+            : EFootPlacementLockType::PivotAroundBall,
+        EFootPlacementLockType::PivotAroundAnkle);
+    TestEqual(
+        TEXT("FootPlacement uses Float Alpha"),
+        FootPlacement != nullptr ? FootPlacement->Node.AlphaInputType : EAnimAlphaInputType::Bool,
+        EAnimAlphaInputType::Float);
+    TestEqual(
+        TEXT("FootPlacement receives IKFootRootBone"),
+        FootPlacement != nullptr ? FootPlacement->Node.IKFootRootBone.BoneName : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("FootPlacement receives PelvisBone"),
+        FootPlacement != nullptr ? FootPlacement->Node.PelvisBone.BoneName : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("FootPlacement parses two trimmed legs"),
+        FootPlacement != nullptr ? FootPlacement->Node.LegDefinitions.Num() : 0,
+        2);
+    TestEqual(
+        TEXT("FootPlacement parses NumBonesInLimb"),
+        FootPlacement != nullptr && !FootPlacement->Node.LegDefinitions.IsEmpty()
+            ? FootPlacement->Node.LegDefinitions[0].NumBonesInLimb
+            : 0,
+        1);
+    TestEqual(
+        TEXT("FootPlacement applies pelvis max offset"),
+        FootPlacement != nullptr ? FootPlacement->Node.PelvisSettings.MaxOffset : 0.0f,
+        37.0f);
+    TestEqual(
+        TEXT("FootPlacement applies pelvis horizontal rebalancing"),
+        FootPlacement != nullptr
+            ? FootPlacement->Node.PelvisSettings.HorizontalRebalancingWeight
+            : 0.0f,
+        0.4f);
+    TestEqual(
+        TEXT("FootPlacement applies plant speed threshold"),
+        FootPlacement != nullptr ? FootPlacement->Node.PlantSettings.SpeedThreshold : 0.0f,
+        45.0f);
+    TestEqual(
+        TEXT("FootPlacement applies plant ground distance"),
+        FootPlacement != nullptr ? FootPlacement->Node.PlantSettings.DistanceToGround : 0.0f,
+        8.0f);
+    TestEqual(
+        TEXT("FootPlacement applies trace start"),
+        FootPlacement != nullptr ? FootPlacement->Node.TraceSettings.StartOffset : 0.0f,
+        -55.0f);
+    TestEqual(
+        TEXT("FootPlacement applies trace end"),
+        FootPlacement != nullptr ? FootPlacement->Node.TraceSettings.EndOffset : 0.0f,
+        90.0f);
+    TestEqual(
+        TEXT("FootPlacement applies trace radius"),
+        FootPlacement != nullptr ? FootPlacement->Node.TraceSettings.SweepRadius : 0.0f,
+        6.0f);
+    TestEqual(
+        TEXT("FootPlacement applies trace penetration"),
+        FootPlacement != nullptr ? FootPlacement->Node.TraceSettings.MaxGroundPenetration : 0.0f,
+        7.0f);
+    TestTrue(
+        TEXT("FootPlacement keeps tracing enabled"),
+        FootPlacement != nullptr && FootPlacement->Node.TraceSettings.bEnabled);
+    TestEqual(
+        TEXT("LegIK uses Float Alpha"),
+        LegIK != nullptr ? LegIK->Node.AlphaInputType : EAnimAlphaInputType::Bool,
+        EAnimAlphaInputType::Float);
+    TestEqual(
+        TEXT("LegIK parses two trimmed legs"),
+        LegIK != nullptr ? LegIK->Node.LegsDefinition.Num() : 0,
+        2);
+    TestEqual(
+        TEXT("LegIK applies reach precision"),
+        LegIK != nullptr ? LegIK->Node.ReachPrecision : 0.0f,
+        0.05f);
+    TestEqual(
+        TEXT("LegIK writes byte MaxIterations into int32"),
+        LegIK != nullptr ? LegIK->Node.MaxIterations : 0,
+        7);
+
+    UEdGraphPin* LocalPosePin = LocalToComponent != nullptr
+        ? LocalToComponent->FindPin(TEXT("LocalPose"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* OrientationComponentPin = OrientationWarping != nullptr
+        ? OrientationWarping->FindPin(TEXT("ComponentPose"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* FootPlacementComponentPin = FootPlacement != nullptr
+        ? FootPlacement->FindPin(TEXT("ComponentPose"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* LegIKComponentPin = LegIK != nullptr
+        ? LegIK->FindPin(TEXT("ComponentPose"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* ComponentToLocalInput = ComponentToLocal != nullptr
+        ? ComponentToLocal->FindPin(TEXT("ComponentPose"), EGPD_Input)
+        : nullptr;
+    TestEqual(
+        TEXT("LocalToComponentSpace receives the local Pose source"),
+        LocalPosePin != nullptr ? LocalPosePin->LinkedTo.Num() : 0,
+        1);
+    TestEqual(
+        TEXT("OrientationWarping receives explicit component Pose"),
+        OrientationComponentPin != nullptr ? OrientationComponentPin->LinkedTo.Num() : 0,
+        1);
+    TestEqual(
+        TEXT("FootPlacement receives OrientationWarping component Pose"),
+        FootPlacementComponentPin != nullptr ? FootPlacementComponentPin->LinkedTo.Num() : 0,
+        1);
+    TestEqual(
+        TEXT("LegIK receives FootPlacement component Pose"),
+        LegIKComponentPin != nullptr ? LegIKComponentPin->LinkedTo.Num() : 0,
+        1);
+    TestEqual(
+        TEXT("ComponentToLocalSpace receives warped component Pose"),
+        ComponentToLocalInput != nullptr ? ComponentToLocalInput->LinkedTo.Num() : 0,
         1);
 
     UAnimStateTransitionNode* TransitionNode = FindFirstNode<UAnimStateTransitionNode>(StateMachineGraph);
@@ -803,15 +1585,20 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
                 ? ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input)
                 : nullptr;
             TestEqual(
-                TEXT("Each Transition Graph has one cache Getter"),
+                TEXT("Each Transition Graph directly evaluates its Lua rule"),
                 CountFunctionCalls(
                     RuleGraph,
                     GET_FUNCTION_NAME_CHECKED(
                         USekiroLuaTransitionRuntimeLibrary,
-                        GetCachedTransitionRule)),
+                        EvaluateLuaTransitionRule)),
                 1);
+            TestTrue(
+                TEXT("Each native Gate remains combined with the Lua rule"),
+                CountFunctionCalls(
+                    RuleGraph,
+                    GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, BooleanAND)) >= 1);
             TestEqual(
-                TEXT("Each Transition Result is connected to its Getter"),
+                TEXT("Each Transition Result is connected to its final rule expression"),
                 ResultPin != nullptr ? ResultPin->LinkedTo.Num() : 0,
                 1);
         }
@@ -832,6 +1619,65 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         TEXT("NodeGuid is deterministic"),
         StateMachineNode != nullptr ? StateMachineNode->NodeGuid : FGuid(),
         SecondStateMachine != nullptr ? SecondStateMachine->NodeGuid : FGuid());
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimBlueprintFactoryInvalidFootPlacementLockTypeTest,
+    "Sekiro.AnimGraphIR.Factory.InvalidFootPlacementLockType",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 FootPlacement 的未知 PlantLockType 在创建 UObject 前产生稳定预检诊断。
+ * 测试仅创建 transient 测试资产，不写入磁盘；由 Automation Framework 在游戏线程执行。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimBlueprintFactoryInvalidFootPlacementLockTypeTest::RunTest(const FString& Parameters)
+{
+    using namespace SekiroAnimBlueprintFactoryTests;
+
+    USkeleton* Skeleton = LoadTestSkeleton();
+    UAnimSequence* Sequence = CreateTestSequence(Skeleton);
+    if (Sequence == nullptr || Skeleton == nullptr) return true;
+
+    const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
+    const FName TestBone = ReferenceSkeleton.GetNum() > 0
+        ? ReferenceSkeleton.GetBoneName(0)
+        : NAME_None;
+    FSekiroAnimBlueprintIR BlueprintIR = MakeFactoryIR(Sequence);
+    FSekiroAnimIRGraph* MoveGraph = FindGraph(BlueprintIR, TEXT("Graph.Move"));
+    const bool bChainAdded = MoveGraph != nullptr
+        && AddOrientationWarpingChain(*MoveGraph, TestBone, BlueprintIR.SourceLocation)
+        && AddFootIKChain(*MoveGraph, TestBone, BlueprintIR.SourceLocation);
+    TestTrue(TEXT("Invalid lock test creates the FootPlacement chain"), bChainAdded);
+    if (!bChainAdded) return true;
+
+    bool bFoundLockProperty = false;
+    for (FSekiroAnimIRNode& Node : MoveGraph->Nodes)
+    {
+        if (Node.NodeType != SekiroAnimGraphIRNames::FootPlacementNode) continue;
+        for (FSekiroAnimIRProperty& Property : Node.Properties)
+        {
+            if (Property.Name != TEXT("PlantLockType")) continue;
+            Property.Value.NameValue = TEXT("UnsupportedLock");
+            bFoundLockProperty = true;
+            break;
+        }
+    }
+    TestTrue(TEXT("Invalid lock test finds PlantLockType"), bFoundLockProperty);
+
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    UAnimBlueprint* Blueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+        BlueprintIR,
+        Diagnostics);
+    TestNull(TEXT("Invalid PlantLockType prevents Blueprint creation"), Blueprint);
+    TestTrue(
+        TEXT("Invalid PlantLockType emits stable diagnostic"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(
+            Diagnostics,
+            TEXT("Factory.InvalidFootPlacementPlantLockType")));
     return true;
 }
 
@@ -1064,7 +1910,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 /**
- * 验证内存 Lua 模块可一键导入、生成并保存原生 AnimBlueprint，且生成的 Update Event 会发布 true/false Rule 缓存。
+ * 验证内存 Lua 模块可一键导入、生成并保存原生 AnimBlueprint，且 Rule 可绕过 Update Event 直接求值。
  * 测试使用唯一 /Game 测试包，断言完成后注销资产并删除生成文件，不在 Content 中保留测试资产。
  * 必须由 Automation Framework 在游戏线程执行。
  *
@@ -1113,13 +1959,23 @@ bool FSekiroAnimBlueprintFactoryCompileSaveEndToEndTest::RunTest(const FString& 
     {
         UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(AnimBlueprint);
         TestEqual(
-            TEXT("Saved EventGraph contains two refresh calls"),
+            TEXT("Saved EventGraph contains one Lua update bridge"),
             CountFunctionCalls(
                 EventGraph,
                 GET_FUNCTION_NAME_CHECKED(
                     USekiroLuaTransitionRuntimeLibrary,
-                    EvaluateAndCacheTransitionRule)),
-            2);
+                    EvaluateBlueprintUpdateAnimation)),
+            1);
+        TestEqual(
+            TEXT("Saved EventGraph contains no direct Transition rule calls"),
+            CountFunctionCalls(
+                EventGraph,
+                GET_FUNCTION_NAME_CHECKED(
+                    USekiroLuaTransitionRuntimeLibrary,
+                    EvaluateLuaTransitionRule)),
+            0);
+        TestFalse(TEXT("Saved Lua AnimBlueprint disables threaded animation update"),
+            AnimBlueprint->bUseMultiThreadedAnimationUpdate);
 
         USkeletalMeshComponent* SkeletalMeshComponent =
             NewObject<USkeletalMeshComponent>(GetTransientPackage());
@@ -1170,14 +2026,14 @@ bool FSekiroAnimBlueprintFactoryCompileSaveEndToEndTest::RunTest(const FString& 
                     static_cast<uint8>(2));
             }
             TestTrue(
-                TEXT("BlueprintUpdateAnimation publishes Lua true"),
-                USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
+                TEXT("Transition rule evaluates Lua true directly"),
+                USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
                     AnimInstance,
                     ModuleName,
                     TEXT("CanEnter_IdleSelf")));
             TestFalse(
-                TEXT("BlueprintUpdateAnimation publishes Lua false"),
-                USekiroLuaTransitionRuntimeLibrary::GetCachedTransitionRule(
+                TEXT("Transition rule evaluates Lua false directly"),
+                USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
                     AnimInstance,
                     ModuleName,
                     TEXT("CanEnter_IdleSelfFalse")));
@@ -1252,6 +2108,8 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     TestNotNull(TEXT("Lua Factory creates an AnimBlueprint"), AnimBlueprint);
     if (AnimBlueprint == nullptr) return true;
 
+    TestFalse(TEXT("Lua Factory disables threaded animation update immediately"),
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate);
     TestEqual(
         TEXT("Lua asset remains exact standard UAnimBlueprint class"),
         AnimBlueprint->GetClass(),
@@ -1300,11 +2158,11 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     const int32 FirstMachineCount = CountNodes<UAnimGraphNode_StateMachine>(MainGraph);
     const int32 FirstStateCount = CountNodes<UAnimStateNode>(StateMachineGraph);
     const int32 FirstTransitionCount = CountNodes<UAnimStateTransitionNode>(StateMachineGraph);
-    const int32 FirstRuleCallCount = CountFunctionCalls(
+    const int32 FirstUpdateCallCount = CountFunctionCalls(
         EventGraph,
         GET_FUNCTION_NAME_CHECKED(
             USekiroLuaTransitionRuntimeLibrary,
-            EvaluateAndCacheTransitionRule));
+            EvaluateBlueprintUpdateAnimation));
     TArray<UEdGraph*> FirstAllGraphs;
     AnimBlueprint->GetAllGraphs(FirstAllGraphs);
 
@@ -1370,13 +2228,13 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
         CountNodes<UAnimStateTransitionNode>(StateMachineGraph),
         FirstTransitionCount);
     TestEqual(
-        TEXT("EventGraph rule calls do not duplicate"),
+        TEXT("EventGraph Lua update bridge does not duplicate"),
         CountFunctionCalls(
             EventGraph,
             GET_FUNCTION_NAME_CHECKED(
                 USekiroLuaTransitionRuntimeLibrary,
-                EvaluateAndCacheTransitionRule)),
-        FirstRuleCallCount);
+                EvaluateBlueprintUpdateAnimation)),
+        FirstUpdateCallCount);
     TArray<UEdGraph*> SecondAllGraphs;
     AnimBlueprint->GetAllGraphs(SecondAllGraphs);
     TestEqual(TEXT("Owned Graphs do not duplicate"), SecondAllGraphs.Num(), FirstAllGraphs.Num());

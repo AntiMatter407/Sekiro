@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Lua 动画蓝图编译器使用的轻量类基类。
 -- 本模块只提供继承与实例化，不依赖 UObject、UnLua 运行时上下文或项目业务类型。
 ---@class CompilerClass

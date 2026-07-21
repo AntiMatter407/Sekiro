@@ -1,8 +1,9 @@
-local LuaComponent = require("Gameplay.Base.LuaComponent")
+-- Lua 类型：UnLua UObject 运行时类。self 是真实的 ASKHUD，可直接读写 UPROPERTY 并调用 UFUNCTION。
+local LuaLog = require("Gameplay.Base.LuaLog")
 
-local SKHUD = LuaComponent:Extend("SKHUD", {
-    Debug = false,
-})
+---@class SKHUD: ASKHUD
+local SKHUD = UnLua.Class()
+local Debug = false
 
 local LayerZOrder = {
     Background = 0,
@@ -13,11 +14,11 @@ local LayerZOrder = {
     Debug = 900,
 }
 
----在 Construct 生命周期阶段初始化本模块需要的缓存、绑定或动画层配置。
----@param _context userdata|table|nil UnLua 或动画宿主传入的调用上下文；当前函数保留该参数以匹配 C++ 回调签名。
+---在 UnLua 完成 UObject 绑定后初始化 HUD 脚本状态。
+---@param _initializer table|nil UnLua 可选初始化表；当前模块不读取该参数。
 ---@return nil 该生命周期入口只执行初始化，不返回业务值。
-function SKHUD:Construct(_context)
-    self:LogDebug("Construct", "hud lua host constructed")
+function SKHUD:Initialize(_initializer)
+    LuaLog.Debug(Debug, "SKHUD", "Initialize", "hud lua host initialized")
 end
 
 ---通过受保护调用获取 C++ UI Manager，未配置组件或反射调用失败时返回 nil。
@@ -46,9 +47,8 @@ function SKHUD:ConfigureLayers(ui_manager)
 end
 
 ---在 BeginPlay 生命周期阶段初始化本模块需要的缓存、绑定或动画层配置。
----@param _context userdata|table|nil UnLua 或动画宿主传入的调用上下文；当前函数保留该参数以匹配 C++ 回调签名。
 ---@return boolean handled 始终返回 true，表示 HUD 已完成 Lua UI 框架接入。
-function SKHUD:BeginPlay(_context)
+function SKHUD:BeginPlay()
     self:RefreshCachedHUDOwner()
 
     local ui_manager = self:GetUIManagerSafe()
@@ -62,12 +62,11 @@ function SKHUD:BeginPlay(_context)
 end
 
 ---执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
----@param _context userdata|table|nil UnLua 或动画宿主传入的调用上下文；当前函数保留该参数以匹配 C++ 回调签名。
 ---@param _delta_seconds number|nil C++ Tick 传入的本帧秒数；当前函数无需逐帧时间但保留签名兼容。
 ---@return boolean handled 始终返回 true，表示 HUD 已刷新本帧所有者缓存。
-function SKHUD:Tick(_context, _delta_seconds)
+function SKHUD:Tick(_delta_seconds)
     self:RefreshCachedHUDOwner()
     return true
 end
 
-return SKHUD:Export()
+return SKHUD

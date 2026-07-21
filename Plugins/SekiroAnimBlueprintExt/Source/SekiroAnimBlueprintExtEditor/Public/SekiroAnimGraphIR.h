@@ -337,6 +337,86 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRStateMachine
     TArray<FSekiroAnimIRTransition> Transitions; // 过渡定义
 };
 
+/** Graph 中未显式放置元素的编辑器自动排版风格。 */
+UENUM(BlueprintType)
+enum class ESekiroAnimIRLayoutStyle : uint8
+{
+    Auto,
+    LeftToRight,
+    RightToLeft,
+    TopToBottom,
+    BottomToTop,
+    CompactGrid,
+    Radial,
+    HierarchicalBlocks,
+};
+
+/** 一个节点或状态在布局分区内的逻辑单元格。 */
+USTRUCT(BlueprintType)
+struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRLayoutItem
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FString ElementId;                    // 当前 Graph 内节点或状态 ID
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 Column = 0;                     // 分区内非负列索引
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 Row = 0;                        // 分区内非负行索引
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 ColumnSpan = 1;                 // 横向占用单元格数
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 RowSpan = 1;                    // 纵向占用单元格数
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 DeclarationOrder = 0;           // 分区内声明顺序
+};
+
+/** Graph 画布上的一个独立布局分区。 */
+USTRUCT(BlueprintType)
+struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRLayoutGrid
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FString Name;                         // Graph 内唯一分区名
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 RegionColumn = 0;               // 画布区域列
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 RegionRow = 0;                  // 画布区域行
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 CellWidth = 360;                // 单元格横向像素间距
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 CellHeight = 220;               // 单元格纵向像素间距
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    ESekiroAnimIRLayoutStyle LayoutStyle = ESekiroAnimIRLayoutStyle::Auto; // 分区风格覆盖
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    TArray<FSekiroAnimIRLayoutItem> Items; // 显式放置元素
+};
+
+/** Graph 级编辑器布局元数据。 */
+USTRUCT(BlueprintType)
+struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRGraphLayout
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    ESekiroAnimIRLayoutStyle Style = ESekiroAnimIRLayoutStyle::HierarchicalBlocks; // 未显式放置元素的自动风格
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    TArray<FSekiroAnimIRLayoutGrid> Grids; // 显式布局分区
+};
+
 /** 单个动画 Graph。GraphType 是注册名，不绑定 UAnimGraphNode 类型。 */
 USTRUCT(BlueprintType)
 struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRGraph
@@ -363,6 +443,9 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRGraph
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     FSekiroAnimIRStateMachine StateMachine; // StateMachine Graph 数据
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FSekiroAnimIRGraphLayout Layout;       // 仅供编辑器生成节点坐标
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     int32 DeclarationOrder = 0;           // 源码声明顺序
@@ -457,6 +540,11 @@ namespace SekiroAnimGraphIRNames
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName SequencePlayerNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName StateMachineNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName InertializationNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LocalToComponentSpaceNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName ComponentToLocalSpaceNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName OrientationWarpingNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName FootPlacementNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LegIKNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName SaveCachedPoseNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName UseCachedPoseNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BoolPropertyGetterNode;
@@ -465,7 +553,10 @@ namespace SekiroAnimGraphIRNames
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName EnumPropertyGetterNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BlendListByBoolNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BlendListByEnumNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName SlotNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LayeredBlendPerBoneNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName PoseData;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName ComponentPoseData;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BoolData;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName FloatData;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName ByteData;

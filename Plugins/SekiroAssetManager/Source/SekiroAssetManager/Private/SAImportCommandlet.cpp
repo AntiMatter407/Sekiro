@@ -35,6 +35,7 @@ int32 USAImportCommandlet::Main(const FString& Params)
     FString OutputBasePath   = ParseParam(Params, TEXT("Output"));
     FString AssetNameOverride = ParseParam(Params, TEXT("AssetName"));
     FString SkeletonOverride = ParseParam(Params, TEXT("Skeleton"));
+    const bool bSkipMaterials = FParse::Param(*Params, TEXT("SkipMaterials"));
 
     if (OutputBasePath.IsEmpty())
     {
@@ -50,6 +51,7 @@ int32 USAImportCommandlet::Main(const FString& Params)
     UE_LOG(LogTemp, Display, TEXT("  Anim:     %s"), *AnimJsonPath);
     UE_LOG(LogTemp, Display, TEXT("  Material: %s"), *MaterialJsonPath);
     UE_LOG(LogTemp, Display, TEXT("  Output:   %s"), *OutputBasePath);
+    UE_LOG(LogTemp, Display, TEXT("  Materials:%s"), bSkipMaterials ? TEXT(" skipped") : TEXT(" enabled"));
     UE_LOG(LogTemp, Display, TEXT("========================================"));
 
     // --- Mode 3: Material Import ---
@@ -169,7 +171,8 @@ int32 USAImportCommandlet::Main(const FString& Params)
             {
                 USkeletalMesh* TempMesh = nullptr;
                 TArray<FString> EmptyTexDirs;
-                if (SAModelImporter::Import(ModelJsonPath, OutputBasePath, EmptyTexDirs, TempMesh, Skeleton))
+                if (SAModelImporter::Import(
+                    ModelJsonPath, OutputBasePath, EmptyTexDirs, TempMesh, Skeleton, !bSkipMaterials))
                 {
                     PreviewMesh = TempMesh;
                 }
@@ -253,7 +256,8 @@ int32 USAImportCommandlet::Main(const FString& Params)
     if (IFileManager::Get().DirectoryExists(*SharedTexDir))
         TextureSourceDirs.Add(SharedTexDir);
 
-    if (!SAModelImporter::Import(ModelJsonPath, OutputBasePath, TextureSourceDirs, Mesh, Skeleton))
+    if (!SAModelImporter::Import(
+        ModelJsonPath, OutputBasePath, TextureSourceDirs, Mesh, Skeleton, !bSkipMaterials))
     {
         UE_LOG(LogTemp, Error, TEXT("Model import failed"));
         return 1;

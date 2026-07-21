@@ -1,3 +1,4 @@
+-- Lua 类型：纯 Lua 类/数据/工具；self（如有）仅表示 Lua 表，不是 UObject。
 -- Lua 动画 IR 的 Graph 所有权作用域。
 -- 当前原生 Factory 只支持一个 Main Layer；本类尚不等同于 UE Animation Layer 功能。
 -- Layer 管理 Pose Graph 和节点拥有的内部 Graph；唯一根 Graph 必须是 Pose Graph。

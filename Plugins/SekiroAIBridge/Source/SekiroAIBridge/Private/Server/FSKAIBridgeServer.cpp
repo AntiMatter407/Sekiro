@@ -1,4 +1,4 @@
-#include "Server/FSKAIBridgeServer.h"
+﻿#include "Server/FSKAIBridgeServer.h"
 #include "SekiroAIBridgeLog.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
@@ -90,11 +90,12 @@ uint32 FSKAIBridgeServer::Run()
 				UE_LOG(LogSekiroAIBridge, Log, TEXT("客户端已断开"));
 
 				// 通知GameThread客户端断开（用于重置认证状态等）
-				AsyncTask(ENamedThreads::GameThread, [this]()
+				FOnClientDisconnected DisconnectCallback = OnClientDisconnected;
+				AsyncTask(ENamedThreads::GameThread, [DisconnectCallback]() mutable
 				{
-					if (OnClientDisconnected.IsBound())
+					if (DisconnectCallback.IsBound())
 					{
-						OnClientDisconnected.Execute();
+						DisconnectCallback.Execute();
 					}
 				});
 			}
@@ -238,11 +239,12 @@ void FSKAIBridgeServer::HandleClient(FSocket* ClientSocket)
 			}
 
 			FString LineCopy = Line;
-			AsyncTask(ENamedThreads::GameThread, [this, LineCopy]()
+			FOnMessageReceived MessageCallback = OnMessageReceived;
+			AsyncTask(ENamedThreads::GameThread, [MessageCallback, LineCopy]() mutable
 			{
-				if (OnMessageReceived.IsBound())
+				if (MessageCallback.IsBound())
 				{
-					OnMessageReceived.Execute(LineCopy);
+					MessageCallback.Execute(LineCopy);
 				}
 			});
 		}

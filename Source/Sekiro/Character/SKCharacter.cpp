@@ -48,25 +48,22 @@ ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 400.0f;
 	CameraBoom->bUsePawnControlRotation = true;
+	// 原生默认值保证 Lua 环境尚未创建时镜头仍可过滤 Root Motion 位移抖动；Gameplay Camera Lua 可在运行时覆盖调参。
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->CameraLagSpeed = 25.0f;
+	CameraBoom->CameraLagMaxDistance = 30.0f;
+	CameraBoom->bUseCameraLagSubstepping = true;
+	CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
 
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
 
-	WeaponComponent = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
+	// 沿用旧蓝图序列化的默认子对象名称；类型与业务实现均已迁移到 WeaponManager。
+	WeaponManager = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
 	InputManager = CreateDefaultSubobject<USKInputManager>(TEXT("InputManager"));
 	CameraManager = CreateDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
 	LockOnIndicator = CreateDefaultSubobject<USKLockOnIndicatorComponent>(TEXT("LockOnIndicator"));
-}
-
-void ASKCharacter::BeginPlay()
-{
-	Super::BeginPlay();
-
-	if (WeaponComponent)
-	{
-		WeaponComponent->InitWeapon();
-	}
 }
 
 void ASKCharacter::PossessedBy(AController* NewController)

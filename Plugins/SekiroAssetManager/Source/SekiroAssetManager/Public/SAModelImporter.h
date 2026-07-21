@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "SAImportData.h"
@@ -17,7 +17,7 @@ public:
     /// @param OutSkeleton 输出的骨架
     /// @return 成功返回 true
     static bool Import(const FString& JsonPath, const FString& TargetPackagePath, const TArray<FString>& TextureSourceDirs,
-                       USkeletalMesh*& OutSkeletalMesh, USkeleton*& OutSkeleton);
+                       USkeletalMesh*& OutSkeletalMesh, USkeleton*& OutSkeleton, bool bImportMaterials = true);
 
     /// 解析 JSON 到内存数据结构（公开，供材质/动画模块读取材质和骨骼数据）
     static bool ParseFromFile(const FString& JsonPath, FSAModelData& OutData);
@@ -27,6 +27,10 @@ private:
     /// 解析骨骼数组
     static void ParseBones(const TArray<TSharedPtr<FJsonValue>>& BonesArray,
                            TArray<FSAImportBone>& OutBones);
+
+    /// 解析使用 UE 局部空间声明的可选无蒙皮参考骨骼
+    static bool ParseAuxiliaryBones(const TArray<TSharedPtr<FJsonValue>>& BonesArray,
+                                    TArray<FSAImportBone>& OutBones);
 
     /// 解析材质数组（含 ResolvedMaterials）
     static void ParseMaterials(const TArray<TSharedPtr<FJsonValue>>& MatsArray,
@@ -48,6 +52,7 @@ private:
     /// @param MeshBoneNames 所有网格引用的骨骼名集合
     /// 构建 USkeleton
     static USkeleton* BuildSkeleton(const TArray<FSAImportBone>& Bones,
+                                    const TArray<FSAImportBone>& AuxiliaryBones,
                                     const FString& SkeletonName,
                                     const FString& PackagePath);
 

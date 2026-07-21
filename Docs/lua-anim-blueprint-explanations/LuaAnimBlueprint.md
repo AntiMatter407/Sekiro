@@ -347,7 +347,7 @@ local instance = class:New()
 
 生成后的 AnimBlueprint 使用 UE 原生 AnimNode 和 `FPoseLink` 更新、混合和输出 Pose。
 
-Lua 模块中只有导出的 `CanEnter_*` 规则函数进入运行时桥接。它们不会直接在动画工作线程修改 Graph，而是由 UnLua/运行时桥接在允许的上下文求值并向原生 Transition 路径提供缓存结果。
+Lua 模块中只有导出的 `CanEnter_*` 规则函数进入运行时桥接。Lua 来源 AnimBlueprint 关闭多线程 Update，对应原生 Transition Rule Graph 被当前状态机检查时，在游戏线程按需直接求值该规则。
 
 ## 十四、完整调用链
 

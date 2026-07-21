@@ -1,6 +1,6 @@
 # ABP_Sekiro Lua AnimBlueprint V2 设计
 
-> 状态：设计完成，等待按阶段实现  
+> 状态：阶段 A-F 第一版已实现；2026-07-18 起地面层采用“共享阶段状态机 + 独立姿态 Pose 构建器”
 > 基础设施：Lua AnimBlueprint Compiler Schema v2  
 > 旧实现参考：提交 `f92d6833` 中的 `ABP_Sekiro.lua`、`GroundLocomotion.lua`
 
@@ -19,7 +19,7 @@ ABP_Sekiro.lua
 运行时 Lua 只做两件事：
 
 1. 在游戏线程更新方向、步态和一次性动作选择等 AnimInstance 参数。
-2. 实现 `CanEnter_*` 意图规则，结果发布到线程安全缓存。
+2. 实现只读 `CanEnter_*` 意图规则，由当前 Transition Rule Graph 在游戏线程按需调用。
 
 Lua 不再返回 Pose，不再用动画名字符串驱动播放器，不再维护假的 `FPoseLink`、状态时间或播放时间。
 
@@ -27,12 +27,12 @@ Lua 不再返回 Pose，不再用动画名字符串驱动播放器，不再维�
 
 保留的行为：
 
-- Standing/Crouching 的 Idle、Start、Cycle、Stop 流程。
+- Standing/Crouching 共用 Idle、Start、Cycle、Stop 阶段流程，姿态资产仍由独立 Lua 模块声明。
 - 非锁定时角色朝移动方向，锁定时四向移动并朝向目标。
 - Step 按下立即响应，长按后进入 Sprint。
-- Sprint 使用独立 Start、Loop、Stop，不混入 Walk/Run。
+- Sprint 作为 Standing 的步态 Pose 分支，与 Walk/Run 在同一个 Cycle 状态内原生混合。
 - Jump 分 Start、InAir、Land；InAir 位移由 CharacterMovement 物理负责。
-- `CanEnterStop`、`MovePhase`、`FootPlant` 等动画数据继续用于自然过渡。
+- `CanEnterStop` 继续用于自然停止；`MovePhase`、`FootPlant` 保留资产数据，当前尚无正式运行时消费者。
 
 废弃的旧机制：
 
@@ -49,6 +49,10 @@ Lua 不再返回 Pose，不再用动画名字符串驱动播放器，不再维�
 ```text
 RootLocomotionSM
     -> Inertialization
+    -> LocalToComponentSpace
+    -> FootPlacement
+    -> LegIK
+    -> ComponentToLocalSpace
     -> OutputPose
 ```
 
@@ -60,6 +64,10 @@ RootLocomotionSM
     -> Locomotion Cache Pose
     -> UpperBody Slot / LayeredBoneBlend
     -> FullBody Slot
+    -> LocalToComponentSpace
+    -> FootPlacement
+    -> LegIK
+    -> ComponentToLocalSpace
     -> OutputPose
 ```
 
@@ -75,79 +83,86 @@ Transition：
 
 | From | To | Lua 意图 |
 |------|----|----------|
-| Grounded | InAir | `self.bIsInAir == true` |
-| InAir | Grounded | `self.bIsInAir ~= true` 且 Land 已完成 |
+| Grounded | InAir | `Inst.bIsInAir == true` |
+| InAir | Grounded | 有输入等待较早的 `CanResumeMovement`；无输入等待尾部 `CanExitLand` |
 
 ## 四、Grounded 状态层级
 
+`GroundedModeSM` 只表达具有时间先后关系的运动阶段：
+
 ```text
 GroundedModeSM
-├── Standing   -> StandingLocomotionSM
-├── Crouching  -> CrouchLocomotionSM
-├── Step       -> Step Pose Selector
-└── Sprint     -> SprintSM
+├── EntryRouter
+├── Idle
+├── Start
+├── Cycle
+├── Stop
+└── Step
 ```
 
 优先级固定为：
 
 ```text
-InAir > Step > Sprint > Stance Locomotion
+InAir > Step > Grounded Phase
 ```
 
-这意味着：
+Standing/Crouching 姿态和 Walk/Run/Sprint 步态不是额外状态。它们由每个 StateGraph 内的 `BlendListByBool` 与 `BlendListByEnum` 选择，因此姿态或步态变化不会重进状态机 Entry。
 
-- 蹲姿按 Step 时先切站姿，再播放站立 Step。
-- 蹲姿长按 Step/Sprint 键时先播放 Step，满足长按阈值后进入 Sprint。
-- Jump 可以从 Standing、Crouching、Step 或 Sprint 进入 InAir。
+`EntryRouter` 只处理进入 Grounded 时已经存在的意图：Dodge 优先进入 Step，持续移动直接进入 Cycle，无输入进入 Idle。它不会改变正常起步；角色已在 Idle 后新按方向键仍然执行 `Idle -> Start -> Cycle`。因此落地时持续按方向不会重播 Start，也不会使用跳跃前锁存的旧方向误触发 RunTurn。
 
-### 4.1 StandingLocomotionSM
+### 4.1 共享阶段状态机
 
 ```text
-Entry -> Idle <-> Start -> Cycle -> Stop -> Idle
-                    ^        |       |
-                    +--------+-------+
+Entry -> EntryRouter
+             ├-> Step（Dodge 生效）
+             ├-> Cycle（进入 Grounded 时已有移动输入）
+             └-> Idle（没有移动输入）
+
+Idle -> Start -> Cycle -> Stop -> Idle
+  |       |        |       |
+  +------ Step <----+-------+
+            |
+            +-> Cycle（仍有移动输入）
+            +-> Idle（没有移动输入）
 ```
 
 状态职责：
 
 | State | Pose | 选择锁定时机 |
 |-------|------|----------------|
-| Idle | `Idle`，可扩展 Idle Turn | 每帧可更新 Aim 参数 |
-| Start | Walk/Run × 四方向 Start | 进入状态时锁定 Gait、Direction |
-| Cycle | Walk/Run × 四方向 Loop | Direction/Gait 可更新并做同步混合 |
-| Stop | Walk/Run × 四方向 Stop | 进入状态时锁定最后移动方向和 Gait |
+| EntryRouter | Standing/Crouching Idle | 仅按当前输入恢复地面阶段 |
+| Idle | Standing/Crouching Idle | 姿态可更新 |
+| Start | 姿态 × 步态 × 方向 Start | 进入动作时锁定 Gait、Direction |
+| Cycle | 姿态 × 步态 × 方向 Loop | `PoseGait`、姿态和方向均可原生混合 |
+| Stop | 姿态 × 步态 × 方向 Stop | 输入释放边沿锁定最后方向和步态 |
+| Step | 四方向 Step | Dodge 上升沿锁定方向 |
 
-非锁定模式下 `CycleDirection` 始终为 Forward；大角度起步通过 Left/Right Turn Start 资产过渡，Movement 在动画期间快速把角色朝向移动方向。
+非锁定模式下 `CycleDirection` 始终为 Forward；大角度起步使用 Movement Lua 旋转前锁存的方向角选择 Left/Right Turn Start。后方输入也按角度符号选择最近的左右转身，不使用表示“身体朝前向后退”的 Back 素材；Movement Lua 同时把角色朝向输入世界方向。
 
-锁定模式下 `CycleDirection` 使用 Forward/Back/Left/Right 四向滞回选择。斜向输入保留精确 `MoveDirectionAngle`，四向动画只提供最接近的下半身姿势；后续 Orientation Warping 使用剩余角度补偿，上半身继续朝向目标。
+锁定模式下 `CycleDirection` 使用 Forward/Back/Left/Right 四向滞回选择。斜向输入保留精确 `MoveDirectionAngle`，四向动画只提供最接近的下半身姿势；Cycle 内的原生 Orientation Warping 使用剩余角度旋转下半身，并通过 `Spine/Spine1/Spine2` 反向补偿，使上半身继续朝向目标。Sprint、Start、Stop、Step 和空中状态不启用该节点。
 
-### 4.2 CrouchLocomotionSM
+### 4.2 Standing 与 Crouching Pose 构建器
 
-Crouch 与 Standing 共享同一套状态拓扑和 Transition 构建函数，只替换资产集合：
-
-```text
-Crouch Idle -> Crouch Start -> Crouch Cycle -> Crouch Stop -> Crouch Idle
-```
-
-允许 Walk/Run，不允许 Sprint。站立与蹲姿切换发生时：
-
-- Idle 使用 Stand/Crouch 转换 Sequence。
-- 移动中使用短 Inertialization，不强制先 Stop。
-- Step、Sprint、Jump 由外层状态机接管。
-
-### 4.3 SprintSM
+`Standing.lua` 与 `Crouching.lua` 仍然分文件维护资产和节点声明，但不再分别拥有状态机或 Transition：
 
 ```text
-Entry -> SprintStart -> SprintCycle -> SprintStop
-                ^             |             |
-                +-------------+-------------+
+StateGraph_Cycle
+└── Stance Selector
+    ├── Standing Builder
+    │   └── Walk / Run / Sprint
+    └── Crouching Builder
+        └── Walk / Run
 ```
 
-- SprintStart 根据屏幕输入锁定 Forward/BackTurn/LeftTurn/RightTurn 资产。
-- SprintCycle 只播放 `Sprint_Forward_Loop`。
+姿态改变时阶段保持不变，例如 `Standing Cycle -> Crouching Cycle` 只改变原生 Pose 分支。当前不播放 `Stand_Crouch_Idle` 或 `Crouch_Stand_Idle` 转换 Sequence；如后续需要明确的蹲下/起身动作，应新增 `EnterCrouch`、`ExitCrouch` 一次性阶段，而不是恢复嵌套姿态状态机。
+
+### 4.3 Sprint 步态分支
+
+- Sprint 不再拥有独立 `SprintSM`。
+- Idle 直接起步时，Standing Start 选择 Sprint Forward/LeftTurn/RightTurn 资产。
+- Cycle 使用 `Sprint_Forward_Loop`，与 Walk/Run 循环处于同一个同步组。
+- 方向键仍按住时松开 Shift，阶段保持 Cycle，`PoseGait` 直接从 Sprint 切到 Run；同时按住 Alt 时直接切到 Walk。
 - Sprint 时 Movement 朝移动方向快速转向；锁定目标只影响摄像机，不让角色继续四向平移。
-- 小于大转向阈值时保持 SprintCycle，由 Movement 连续转向。
-- 大角度反向时进入 SprintStop，再选择新的 SprintStart。
 
 ### 4.4 Step
 
@@ -156,7 +171,7 @@ Step 使用独立四向 Sequence Selector：
 - 锁定：按 `DodgeDirection` 和 `DodgeDirectionLateral` 选择 Forward/Back/Left/Right。
 - 非锁定：Movement 朝输入方向转向，动画使用 Forward；无输入时默认 Forward。
 - Direction 在 Step 进入时锁定，播放期间输入转向不切换 Sequence。
-- Step 播放完成且按键仍超过 Sprint 阈值时进入 Sprint，否则回 Standing/Crouching。
+- `CanExitStep` 曲线开启后，有移动输入直接进入 Cycle，没有移动输入返回 Idle；不会再次播放 Start 或 Sprint Start。
 
 ## 五、JumpSM
 
@@ -165,37 +180,63 @@ Entry -> JumpStart -> InAir -> Land -> Grounded
 ```
 
 - 非锁定：角色先朝移动方向，使用 Forward Start/InAir/Land。
-- 锁定：根据进入空中时锁定的八方向选择对应原始 Sequence。
-- JumpStart 与 Land 使用动画 RootMotion。
+- 锁定：根据进入空中时的实际水平运动角选择最近八方向 Sequence，并锁存最多 22.5 度的量化残差。
+- Jump Start、定向 InAir 和 Land 通过共享方向对齐链把下半身对齐物理轨迹，同时反向补偿脊柱使上半身继续朝向锁定目标。
+- Jump Start 在离地期间忽略动画 RootMotion，水平惯性和垂直轨迹完全交给 CharacterMovement；物理接地后恢复 RootMotion，由 Land 资产完成落地位移。
 - InAir Sequence 不提供位移，水平/垂直轨迹由 CharacterMovement 计算。
-- Land 期间新移动输入可在取消窗口进入 Grounded Start，不能等待完整 Idle。
+- Land 使用两个互不冲突的退出窗口：有移动输入时，原地/非锁定共用 Land 在归一化 35%、锁定八方向 Land 在归一化 50% 开放 `CanResumeMovement`，随后 `EntryRouter` 直接恢复 Cycle；无输入时仍等待尾部 `CanExitLand`，完整保持 Land 后回到 Idle。原地与非锁定前向 Land 共用 `Jump_Light_Stand`，不保留重复资产别名。再次离地时 `Land -> Start`，支持连续跳跃或台阶边缘情况。
 
 ## 六、AnimInstance 变量
 
-`USKAnimInstance` 已有字段继续作为事实来源，Lua 直接使用 `self.Speed`、`self.Gait`、`self.bIsLockedOn` 等字段。
+`USKAnimInstance` 已有字段继续作为事实来源。运行时入口和 Transition Rule 统一通过显式 `Inst` 参数读取 `Inst.Gait`、`Inst.bIsLockedOn` 等字段。
+
+运行时数据顺序固定为：
+
+```text
+Input Lua 发布 MoveIntent / MovementTier
+    -> Movement Lua 在 CharacterMovement 原生求值前计算 DesiredMoveYaw
+    -> Movement Lua 发布 MoveDirectionAngleBeforeRotation 并更新 ActorYaw
+    -> UE CharacterMovement 应用 Root Motion、物理、碰撞和网络预测
+    -> USKAnimInstance 采集 Movement 快照
+    -> ABP_Sekiro.BlueprintUpdateAnimation 选择方向与动画
+```
+
+`MoveDirectionAngle` 表示角色更新朝向后的当前局部移动角，锁定四向循环继续使用它；`MoveDirectionAngleBeforeRotation` 表示同帧 Movement Lua 转向前的输入角，只用于自由起步和 Sprint 转身动画锁存。
 
 新编译器需要支持在生成类中声明以下瞬态变量：
 
 | Variable | 类型 | 用途 |
 |----------|------|------|
 | `CycleDirection` | Byte/Enum | 当前循环四方向，允许滞回更新 |
-| `LatchedActionDirection` | Byte/Enum | Start/Stop/Step/Jump 进入时锁定方向 |
-| `LatchedActionGait` | Byte/Enum | 一次性动作进入时锁定 Walk/Run |
-| `DirectionResidualAngle` | Float | 精确方向减去四向素材主方向，用于 Warping |
-| `bWasLockedOn` | Bool | 检测锁定模式切换 |
+| `LatchedActionDirection` | Byte/Enum | Start/Stop/Step/Sprint 进入或退出边沿锁定方向 |
+| `LatchedFreeStartDirection` | Byte/Enum | 非锁定 Start 的前后左右起步方向 |
+| `PoseGait` | Byte/Enum | Cycle 当前 Walk/Run/Sprint Pose 分支；直接追随输入目标步态 |
+| `LatchedActionGait` | Byte/Enum | 一次性动作进入时锁定 Walk/Run/Sprint |
+| `bPoseCrouching` | Bool | StateGraph 内 Standing/Crouching 原生姿态选择 |
+| `DirectionResidualAngle` | Float | 精确方向减去四向素材主方向；连接 Cycle 的方向对齐链 |
+| `LockOnWarpingAlpha` | Float | 锁定地面 Walk/Run 有输入时为 1；Sprint、空中和非锁定模式为 0 |
+| `LatchedActionResidualAngle` / `LatchedActionWarpingAlpha` | Float | Start/Stop 使用的四向量化残差和启用强度；输入边沿锁存，播放期间不翻转 |
+| `JumpDirection` | Byte/Enum | 离地上升沿锁定的八方向；非锁定当前固定 Forward |
+| `JumpDirectionResidualAngle` / `JumpWarpingAlpha` | Float | Jump 八向素材的量化残差和启用强度；与 `JumpDirection` 同时锁存 |
+| `bLatchedActionLockedOn` | Bool | Standing Start 选择锁定/非锁定资产集合 |
+| `bHadMovementInput` / `bWasDodging` / `bWasSprintRequested` / `bWasInAir` | Bool | 检测输入、动作和离地边沿 |
+| `bWasLockedOn` | Bool | 当前保留字段；已写入但尚无消费者 |
 
 运行时统一入口：
 
 ```lua
----@param delta_seconds number
----@return nil
-function ABP_Sekiro:BlueprintUpdateAnimation(delta_seconds)
-    self:UpdateLocomotionDirection(delta_seconds)
-    self:UpdateDirectionResidual()
+---@param Inst userdata 当前生成动画实例的 UnLua 代理。
+---@param _delta_seconds number 本帧时长；当前方向分类不依赖帧率但保留标准事件签名。
+---@return nil result 直接更新生成变量。
+function ABP_Sekiro.BlueprintUpdateAnimation(Inst, _delta_seconds)
+    Inst.CycleDirection = Direction.ResolveCardinalWithHysteresis(
+        Inst.MoveDirectionAngle,
+        Inst.CycleDirection,
+        Tuning.LockedDirectionHysteresisAngle)
 end
 ```
 
-这些变量必须是真实生成类属性。Lua 使用 `self.VariableName = value` 直接写入，不经过 `facts`、字符串键缓存或 `SetLuaXxx()` 包装函数。
+这些变量必须是真实生成类属性。Lua 使用 `Inst.VariableName = value` 直接写入，不经过 `facts`、字符串键缓存或 `SetLuaXxx()` 包装函数。
 
 ## 七、Pose 选择节点
 
@@ -210,9 +251,21 @@ Walk Cycle Pose
        -> BlendListByEnum(CycleDirection)
 ```
 
-Walk/Run 外层再由 `BlendListByEnum(Gait)` 选择。所有 Cycle SequencePlayer 加入同一个 Sync Group，通过原生同步组保持相位；方向或步态切换后接 Inertialization。
+Standing 的 Walk/Run/Sprint 外层由 `BlendListByEnum(PoseGait)` 选择，Crouching 只暴露 Walk/Run；两套姿态再由 `BlendListByBool(bPoseCrouching)` 选择。锁定 Standing 和 Crouching 的 Start/Cycle/Stop 共用“最近四向素材 + 量化残差”方向对齐链：根与下半身对齐精确输入方向，脊柱反向补偿后继续面向锁定目标。所有 Cycle SequencePlayer 加入同一个 Sync Group，通过原生同步组保持相位；方向、步态或姿态切换后接 Inertialization。
 
-Start、Stop、Step 和 Jump 使用 `LatchedActionDirection`，状态期间不更换一次性动画。Lua 资产表只在 `AnimGraph()` 与 `StateGraph_*()` 编译期读取，运行时 Graph 中保存的是实际资产引用。
+Start、Stop 和 Step 使用 `LatchedActionDirection`；Jump 使用独立的八方向 `JumpDirection`。Start/Stop 还锁存四向残差，Jump Start/InAir/Land 锁存八向残差；状态期间不更换一次性动画或基准运动轴。Lua 资产表只在 `AnimGraph()` 与 `StateGraph_*()` 编译期读取，运行时 Graph 中保存的是实际资产引用。
+
+### 7.1 双脚 Foot IK
+
+最终 Locomotion Pose 在主 AnimGraph 末端转换到组件空间，依次经过 UE 原生 `FootPlacement` 与 `LegIK`：
+
+- `FootPlacement` 使用 `Root` 下不蒙皮、单位旋转的 `IK_Foot_Plane` 作为参考骨骼，以其局部 Z 轴提供稳定向上法线；该骨骼不插入 `Master -> RootPos -> Pelvis` 或左右脚目标链，因此不会改变现有蒙皮和动画姿势。
+- 节点直接读取 CharacterMovement 接地状态，以原生球扫检测双脚地面，计算脚底高度、坡面旋转和骨盆垂直补偿；Lua 不执行射线或骨骼求解。
+- `PlantLockType` 由 Lua 配置为 `Unlocked`：保留地面检测、坡面旋转和骨盆求解，但不把脚固定在世界空间，避免 Stop、Land 和斜面姿势被旧脚目标拉扯。
+- `LegIK` 消费调整后的 `L_Foot_Target/R_Foot_Target`，以两段腿链驱动左右 FK 脚骨骼。
+- `FootPlacement` 与 `LegIK` 共用生成变量 `FootIKAlpha`：空中快速淡出为 0，落地后平滑恢复为 1，避免 JumpInAir/Land 仍以满权重拉扯双腿。
+- 骨骼名、检测长度、骨盆最大偏移、权重切换速度、种植阈值和求解精度集中在 `Tuning.FootIK`，调整这些值无需重新编译 C++；当前骨盆最大垂直偏移限制为 20 cm。
+- 骨盆水平重心补偿当前为 0，避免 IK 横向推移身体并放大第三人称摄像机抖动；上下坡高度补偿和脚底坡面旋转仍保持启用。
 
 ## 八、Transition 规则
 
@@ -227,10 +280,9 @@ Lua 只回答业务意图：
 ```lua
 ---@param Inst userdata 当前 Transition 所属 AnimInstance 的 UnLua UObject 代理。
 ---@return boolean can_enter 是否允许从 Idle 进入 Start。
-function ABP_Sekiro.CanEnter_Standing_Idle_Start(Inst)
+function GroundedMode.CanEnter_Idle_Start(Inst)
     return Inst.bHasMovementInput == true
         and Inst.bIsDodging ~= true
-        and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
 end
 ```
 
@@ -239,39 +291,39 @@ end
 | Transition | Lua Intent | Native Gate |
 |------------|------------|-------------|
 | Idle -> Start | 有移动输入 | 无，立即进入 |
-| Start -> Cycle | 仍有移动输入 | Sequence 剩余时间进入 BlendDuration |
-| Start -> Stop | 输入释放 | `CanEnterStop >= 0.5`，异常时剩余时间兜底 |
+| Start -> Cycle | 仍有移动输入 | `CanEnterLoop >= 0.5` |
+| Start -> Stop | 输入释放 | `CanEnterStop >= 0.5` |
 | Cycle -> Stop | 输入释放 | `CanEnterStop >= 0.5` |
-| Stop -> Idle | 无输入 | Sequence 剩余时间进入 BlendDuration |
-| Stop -> Start | 重新输入 | Stop 取消窗口或 `CanEnterStop` |
-| Step -> Grounded/Sprint | 动作意图 | Sequence 剩余时间进入 BlendDuration |
+| Stop -> Idle | 无输入 | `CanEnterIdle >= 0.5` |
+| Stop -> Start | 重新输入 | 无 Gate，立即打断 Stop |
+| Step -> Cycle/Idle | 是否仍有移动输入 | `CanExitStep >= 0.5` |
+| Cycle 内 Sprint -> Run/Walk | `PoseGait` 改变 | 非 Transition；原生 BlendList 混合 |
 
 推荐 DSL：
 
 ```lua
-machine:Transition("Start_Cycle", "Start", "Cycle", {
-    RuleFunctionName = "CanEnter_Standing_Start_Cycle",
-    BlendDuration = 0.12,
-    Gate = Rule.TimeRemainingLessEqual(0.12),
+Machine:Transition("Start_Cycle", "Start", "Cycle", {
+    BlendDuration = Tuning.CycleBlendDuration,
+    Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold),
 })
 
-machine:Transition("Cycle_Stop", "Cycle", "Stop", {
-    RuleFunctionName = "CanEnter_Standing_Cycle_Stop",
-    BlendDuration = 0.08,
-    Gate = Rule.CurveGreaterEqual("CanEnterStop", 0.5),
+Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
+    BlendDuration = Tuning.StopBlendDuration,
+    Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterStop, Tuning.CurveThreshold),
 })
 ```
 
-Gate 由 NodeFactory 生成原生 Transition Rule 节点，不在动画线程执行 Lua。若 Gate 未声明，Transition 只读取 Lua bool 缓存。
+Gate 由 NodeFactory 生成原生 Transition Rule 节点。Lua 来源 AnimBlueprint 关闭多线程 Update；状态机检查当前出边时直接调用 Lua Rule，再将其 boolean 结果与原生 Gate 组合。
 
-## 九、MovePhase 与混合
+## 九、当前混合与相位边界
 
-- Start -> Cycle：源 Start 在淡出期间继续播放到末尾，目标 Cycle 根据 `MovePhase` 找到最接近的起播相位。
-- Cycle 方向/步态变化：优先使用 UE Sync Group；资源缺少同步标记时用 `MovePhase` 生成同步标记或目标起播位置。
-- Cycle -> Stop：只在 `CanEnterStop` 窗口切换，Stop 资产按当前 `FootPlant/MovePhase` 选择匹配起点。
-- 普通 BlendAlpha 只负责 Pose 交叉混合，不代替步态相位同步。
+- Start -> Cycle：等待源 Sequence 的 `CanEnterLoop` 曲线窗口。
+- Cycle 方向/步态/姿态变化：所有循环播放器加入 `SekiroLocomotion` Sync Group，输出后使用 Inertialization。
+- Start/Cycle -> Stop：等待 `CanEnterStop` 曲线窗口。
+- Stop -> Idle：等待 `CanEnterIdle` 曲线窗口。
+- Step -> Cycle/Idle：等待 `CanExitStep` 曲线窗口。
 
-第一阶段先实现 Sync Group + Inertialization；`MovePhase` 反查起播位置作为第二阶段增强，不能因此恢复运行时动态播放器。
+`MovePhase` 与 `FootPlant` 已写入部分动画资产，但当前 Graph 没有正式运行时消费者。精确相位反查仍是后续增强，不能因此恢复运行时动态播放器或 Pose 快照架构。
 
 ## 十、Lua 文件结构
 
@@ -281,23 +333,22 @@ Content/Script/Animation/Sekiro/
 ├── AnimAssets.lua
 ├── Shared/
 │   ├── Direction.lua
-│   ├── LocomotionRules.lua
+│   ├── PoseSelectors.lua
 │   └── Tuning.lua
 ├── Layer/GroundLocomotion/
-│   ├── Graph.lua
+│   ├── Root.lua
+│   ├── GroundedMode.lua
 │   ├── Standing.lua
-│   ├── Crouching.lua
-│   ├── Sprint.lua
-│   └── Step.lua
+│   └── Crouching.lua
 └── Layer/Airborne/
     └── Jump.lua
 ```
 
 `ABP_Sekiro.lua` 只声明蓝图、根图、生成变量和运行时总入口。每个动画层目录提供 Graph 构建函数和对应规则方法；`AnimAssets.lua` 保持纯资源表。
 
-## 十一、编译器前置任务
+## 十一、编译器能力演进记录
 
-当前编译器还不能无损生成上述 Graph，必须依次补齐：
+以下内容是实施前的历史能力清单。阶段 A-F 第一版目前均已完成：
 
 1. **生成变量与 Lua Update Bridge**：IR Variable、Blueprint Member Variable、`BlueprintUpdateAnimation` Lua override。
 2. **非 Pose 数据连接**：AnimInstance Property Getter、Bool/Float/Byte/Enum Pin 和 Link。
@@ -305,9 +356,9 @@ Content/Script/Animation/Sekiro/
 4. **Transition Gate AST**：Lua bool、Curve Compare、Time Remaining、All/Any/Not。
 5. **状态生命周期**：进入状态时锁定 Action Direction/Gait，离开后清理一次性选择。
 6. **调试映射**：稳定 State/Transition ID 映射到生成节点，PIE 显示 Lua Rule、Native Gate、BlendAlpha 和活跃 Sequence。
-7. **后续层节点**：Save/Use Cached Pose、Slot、LayeredBoneBlend、Orientation Warping。
+7. **后续层节点**：Save/Use Cached Pose 与 Orientation Warping 已接入；Slot、LayeredBoneBlend 仍待战斗层实现。
 
-在 1-4 完成前，不生成正式 `ABP_Sekiro.uasset`，因为仅靠当前固定 SequencePlayer 和 bool Rule 会让 Start/Cycle/Stop 立即互切，无法复刻旧逻辑。
+正式 `ABP_Sekiro.uasset` 已由 Lua 重新生成并接管角色原引用；上述清单保留用于说明能力演进，不再表示当前阻塞项。
 
 ## 十二、实施阶段
 
@@ -316,22 +367,22 @@ Content/Script/Animation/Sekiro/
 | A | Variable、Update Bridge、数据 Pin | Lua 可直接写生成属性，动画线程读到同帧快照 |
 | B | BlendList、Sync Group、Transition Gate | 自动测试生成并编译带方向选择和时间/曲线门控的最小 ABP |
 | C | Standing Walk/Run | 非锁定和锁定四向 Idle/Start/Cycle/Stop PIE 通过 |
-| D | Crouching | 复用拓扑，站蹲移动切换无强制 Stop |
-| E | Step/Sprint | 按下 Step、长按 Sprint、锁定方向和大角度 Sprint 转向通过 |
+| D | Crouching | 与 Standing 分文件维护 Pose，共享阶段拓扑；站蹲移动切换无强制 Stop |
+| E | Step/Sprint | Step 曲线退出后直达 Cycle；Sprint 作为 Standing 步态分支直接与 Walk/Run 混合 |
 | F | Jump | Start/InAir/Land 与 RootMotion/CharacterMovement 分工正确 |
-| G | Slot 与上半身补偿 | 战斗 Montage 和锁定上半身朝向接入 |
+| G | Slot 与上半身补偿 | 锁定 Cycle 上下身方向补偿已接入；战斗 Montage 与 Slot 仍待实现 |
 
 每阶段都必须生成全新的测试资产，不覆盖旧 `ABP_Sekiro`；最后通过重建替换旧资产，彻底移除已删除 Host 节点的序列化残留。
 
 ## 十三、当前实现状态
 
-截至 2026-07-15，阶段 A-F 的第一版结构已经生成到：
+截至 2026-07-18，阶段 A-F 的结构已经迁移到共享地面阶段状态机：
 
 `/Game/Characters/Sekiro/Generated/ABP_Sekiro_LuaV2`（历史验证资产，正式迁移后已删除）
 
-当前生成图已经包含 Root、Grounded、Standing、Crouching、Step、Sprint 与 Jump 的嵌套状态机，Lua 更新入口、生成变量、方向/步态选择、Sync Group、Inertialization，以及曲线/剩余时间 Transition Gate 均已接入原生 AnimBlueprint 节点。
+当前生成图包含 Root、统一 Grounded Phase 与 Jump 状态机。Standing/Crouching 是独立 Pose 构建模块，Sprint 是 Standing 的步态分支；Lua 更新入口、生成变量、方向/步态/姿态选择、Sync Group、Inertialization 和曲线 Transition Gate 均接入原生 AnimBlueprint 节点。
 
-该资产已经通过生成、编译和 PIE 运行时冒烟测试，但这只证明结构与数据链闭环，不代表动画观感已经与旧 `ABP_Sekiro` 完全一致。正式替换前仍需逐项验收 Start/Cycle/Stop 步态相位、锁定上半身朝向、Step/Sprint 转向、Jump RootMotion/空中物理分工，以及调试信息映射。旧 `ABP_Sekiro` 当前仍是角色默认 AnimClass。
+历史验证资产已经通过生成、编译和 PIE 运行时冒烟测试；正式 `/Game/Characters/Sekiro/ABP_Sekiro` 随后已由 Lua 源模式接管并保持原角色引用。当前仍需逐项验收 Start/Cycle/Stop 步态相位、锁定上半身朝向、Step/Sprint 转向、Jump RootMotion/空中物理分工，以及调试信息映射。
 
 ## 十四、Lua 源语言模式
 

@@ -256,11 +256,23 @@ void USKUIManagerComponent::SetMouseCursorVisible(bool bVisible)
     PlayerController->bShowMouseCursor = bVisible;
 }
 
+/**
+ * 缓存 UI 所属玩家，并为原生 UnLua 组件补发一次标准 ReceiveBeginPlay 生命周期。
+ * 蓝图生成类和非原生类已经由 UActorComponent::BeginPlay 派发，本函数仅处理纯原生组件，
+ * 从而保证 Lua 的运行期初始化只执行一次且能安全访问 PlayerController。
+ * 本函数只在游戏线程执行，不创建具体业务界面，也不直接调用 Lua Initialize。
+ */
 void USKUIManagerComponent::BeginPlay()
 {
+    const bool bEngineDispatchesReceiveBeginPlay =
+        GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint)
+        || !GetClass()->HasAnyClassFlags(CLASS_Native);
+
     Super::BeginPlay();
 
     RefreshCachedOwner();
+
+    if (!bEngineDispatchesReceiveBeginPlay) ReceiveBeginPlay();
 }
 
 void USKUIManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

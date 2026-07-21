@@ -2,7 +2,7 @@
 
 | 状态 | 创建 | 更新 |
 |------|------|------|
-| 🔵 进行中 | 2026-06-17 | 2026-06-18 |
+| 🔵 进行中 | 2026-06-17 | 2026-07-19 |
 
 ## 需求描述
 
@@ -20,7 +20,11 @@
 **核心原则**：
 1. Kusabimaru 跑通全部流程（导入→挂载→碰撞→受击），不提前做其他武器
 2. 武器碰撞基于 TAE DataAsset 的 AttackHitboxConfigs 帧级数据激活/关闭
-3. 武器 Socket 挂载使用现有的 `R_Weapon` Socket
+3. 刀身使用角色 `R_Weapon` 骨骼，刀鞘使用角色 `Sheath` 骨骼
+4. 刀身与刀鞘在导入阶段拆成独立资产，运行时仍由一个 `ASKWeapon` 管理
+5. 本阶段不修改动画脚本、动画蓝图、动画序列或动画状态机
+
+详细需求和技术方案见 `Docs/design/sekiro-weapon-separation.md`。
 
 ## 任务树
 
@@ -49,6 +53,17 @@
     - 成功设置 BP_SKGameMode `DefaultPawnClass` → `BP_SKCharacter`
   - ✅ 2.5 PIE 验证：Kusabimaru 正确生成（`obj list class=SKWeapon` 显示 BP_Kusabimaru_C 已实例化）
   - ⬜ 2.6 可视化验证：挂载位置/旋转需要目测确认，调 WeaponsMesh 缩放
+
+- 🔵 2A. 楔丸刀身/刀鞘分离（依赖: 1）
+  - ✅ 2A.1 核对源 JSON：刀身为 Mesh 0–2、刀鞘为 Mesh 3
+  - ✅ 2A.2 核对角色挂点：`R_Weapon` 属于右手，`Sheath` 属于 Pelvis
+  - 🔵 2A.3 实现通用模型 JSON 骨骼分组拆分器
+  - ⬜ 2A.4 生成并导入 `Kusabimaru_Blade_Model` 与 `Kusabimaru_Sheath_Model`
+  - ⬜ 2A.5 将 `ASKWeapon` 改为 `BladeMesh + SheathMesh + AttackHitbox`
+  - ⬜ 2A.6 将 `USKWeaponComponent` 的默认挂点改为 `R_Weapon + Sheath`
+  - ⬜ 2A.7 配置 `BP_Kusabimaru` 的刀身/刀鞘资产
+  - ⬜ 2A.8 PIE 验证右手刀身、腰部刀鞘和单 Actor 生命周期
+  - ⬜ 2A.9 验证本阶段未修改任何动画相关文件
 
 - ⬜ 3. 武器碰撞体创建（依赖: 2）
   - ⬜ 3.1 C++ 碰撞体已有 CapsuleComponent，验证 PhysicsAsset 碰撞体覆盖
@@ -81,3 +96,4 @@
 | 2026-06-18 | 配置 BP_SKCharacter/BossSkillGameMode → PIE 验证武器生成成功 |
 | 2026-06-18 | 修复武器模型缩放问题（0.02x），原版武器尺寸比 UE 角色大 50-100 倍 |
 | 2026-06-18 | 从 FBX 导入改为 JSON 管线导入，通过 SekiroToUEScale=100 自动正确缩放 |
+| 2026-07-19 | 增加楔丸刀身/刀鞘分离需求：导入阶段拆分、运行时双 Mesh 独立挂载；明确不修改动画文件 |

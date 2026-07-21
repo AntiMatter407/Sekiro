@@ -369,7 +369,7 @@ C++ `BuildStateMachineGraph()` 按以下顺序处理 IR：
 
 - UE 原生 `FAnimNode_StateMachine` 保存当前 State、状态权重和过渡进度；
 - StatePose Graph 中的原生 AnimNode 计算 Pose；
-- Transition Graph 读取 Lua 规则的线程安全缓存；
+- Transition Graph 在原生状态机检查当前出边时，在游戏线程按需调用 Lua 规则；
 - `States`、`StateNames` 等 Lua table 不参与每帧更新；
 - Lua 不通过本类手动推进当前 State。
 

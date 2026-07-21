@@ -17,6 +17,15 @@ class FSekiroLuaAnimBlueprintEditorBinding final
     : public TSharedFromThis<FSekiroLuaAnimBlueprintEditorBinding>
 {
 public:
+    /** 在创建 UnLua Env 前根据持久化开关设置编辑器调试启动模块。 */
+    static void PrepareEditorLuaDebugBeforeEnvCreation();
+
+    /** 将当前持久化开关应用到已创建的 UnLua Env。 */
+    static bool ApplyEditorLuaDebugSetting();
+
+    /** 返回是否允许在非 PIE 编辑器阶段启动 Lua 调试端口。 */
+    static bool IsEditorLuaDebugEnabled();
+
     static TSharedRef<FSekiroLuaAnimBlueprintEditorBinding> Create(
         const TSharedRef<FUICommandList>& CommandList,
         const TSharedRef<IAnimationBlueprintEditor>& Editor);
@@ -48,6 +57,10 @@ private:
     void ExecuteCheckLua();
     void ExecuteGenerateFromLua();
     bool CanExecuteLuaAction() const;
+    void ExecuteToggleEditorLuaDebug();
+    bool CanToggleEditorLuaDebug() const;
+    bool IsEditorLuaDebugChecked() const;
+    FText GetEditorLuaDebugLabel() const;
     TSharedRef<SWidget> MakeSourceModeMenu();
     FText GetSourceModeLabel() const;
     void SetSourceMode(uint8 SourceModeValue);

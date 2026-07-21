@@ -18,6 +18,8 @@ public class SekiroAnimBlueprintExtEditor : ModuleRules
         {
             "AnimGraph",
             "AnimGraphRuntime",
+            "AnimationWarpingEditor",
+            "AnimationWarpingRuntime",
             "AnimationBlueprintEditor",
             "AssetRegistry",
             "BlueprintGraph",

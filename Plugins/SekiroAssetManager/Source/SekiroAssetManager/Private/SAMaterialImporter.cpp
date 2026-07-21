@@ -1,4 +1,4 @@
-#include "SAMaterialImporter.h"
+﻿#include "SAMaterialImporter.h"
 #include "Misc/PackageName.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -27,6 +27,13 @@
 // 
 // ============================================================================
 
+/**
+ * 将模型文件提供的材质槽名转换为 UE 包和对象名称可复用的稳定片段。
+ * 函数只处理传入字符串副本，不访问 UObject，可在任意线程调用；不会添加材质资产的 M_ 前缀。
+ *
+ * @param RawName 外部材质槽原名，可以包含空格和 UE 对象名称不允许的标点符号。
+ * @return 替换非法字符并清理首尾下划线后的名称；结果为空时返回 Unknown。
+ */
 FString SAMaterialImporter::SanitizeMaterialName(const FString& RawName)
 {
     FString Clean = RawName;

@@ -2,7 +2,7 @@
 
 本文说明如何使用 `SekiroAnimBlueprintExt` 的 Lua AnimGraph Function API 编写动画蓝图。
 
-Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；Lua 只在游戏线程计算 Transition 规则并发布线程安全结果。
+Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；Lua 来源的动画蓝图暂时使用单线程更新，每条 Transition Rule Graph 只在原生状态机真正检查它时直接调用对应 Lua 函数。
 
 ## 一、核心写法
 
@@ -203,7 +203,58 @@ graph.Result:Connect(inertialization.Pose)
 
 业务代码不再手写节点名和 Pin 名字符串来调用 `graph:Link()`。
 
-## 七、Transition Rule
+## 七、Graph 布局
+
+布局是 Graph 级编辑器元数据，不参与 Pose、Transition 或运行时动画求值。每个 Pose/State Pose Graph 使用 `Graph.LayoutStyle`，每个状态机在自己的 `StateMachine(Machine)` 中使用 `Machine.LayoutStyle`：
+
+```lua
+local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+
+function ABP_Sekiro:AnimGraph(Graph)
+    Graph.LayoutStyle = LayoutStyle.HierarchicalBlocks
+    local machine = Graph:StateMachine("Locomotion", Locomotion)
+    local inertialization = Graph:Inertialization("Inertialization")
+    inertialization.Source:Connect(machine.Pose)
+    Graph.Result:Connect(inertialization.Pose)
+
+    local main_flow = Graph:Grid("MainFlow", {
+        RegionColumn = 0,
+        RegionRow = 0,
+    })
+    main_flow:Place(machine, 0, 0)
+    main_flow:Place(Graph.OutputNode, 2, 0)
+end
+```
+
+同一 Graph 可以声明多个 Grid。`RegionColumn/RegionRow` 决定分区位置，`Place(element, column, row)` 决定元素在分区内的单元格；未显式 Place 的节点由插件根据连接关系和 `LayoutStyle` 自动补位。
+
+`HierarchicalBlocks` 是默认风格。在 Pose Graph 中，它从 Result 反向递归：一个节点的直接输入根节点在其左侧同一列纵向对齐，每个输入连同自己的下级输入视为不可重叠的子块，再把整组抽象为上一级输入块。这样方向选择器、步态选择器和各自的 SequencePlayer 会形成清晰的局部组，而不是按拓扑深度铺成一条长线。没有连接到 Result 的节点不参与主树尺寸计算，会在主树下方单独紧凑排列。
+
+状态机的 State 由 `Machine:State()` 返回并直接放入状态机 Grid：
+
+```lua
+function Locomotion.StateMachine(Machine)
+    Machine.LayoutStyle = LayoutStyle.HierarchicalBlocks
+    Machine:Entry("Idle")
+    local idle = Machine:State("Idle")
+    local move = Machine:State("Move")
+
+    local entry_flow = Machine:Grid("EntryFlow", {
+        RegionColumn = 0,
+        RegionRow = 0,
+    })
+    entry_flow:Place(idle, 0, 0)
+    -- Move 未显式放置，将参与状态机的紧凑近方形网格。
+end
+```
+
+在 StateMachine 中，`HierarchicalBlocks` 只统计 Entry 或 Transition 连接到的有效状态，列数取有效自动状态数量平方根的上取整。例如 8 个有效状态采用 3×3 网格。孤立状态不参与主网格的 N 值计算，而是在主网格下方单独成组。
+
+可用风格为 `Auto`、`LeftToRight`、`RightToLeft`、`TopToBottom`、`BottomToTop`、`CompactGrid`、`Radial` 和 `HierarchicalBlocks`。`Auto` 作为兼容入口也解析为 `HierarchicalBlocks`；`Radial` 主要用于循环状态机。
+
+显式 Grid 始终优先于自动排版。同一元素只能 Place 一次，同一单元格不能重复占用，节点/State 也不能放入其他 Graph 的 Grid。
+
+## 八、Transition Rule
 
 ```lua
 ---角色有地面移动输入时，从 Idle 进入 Start。
@@ -226,9 +277,9 @@ function GroundLocomotion.CanEnter_Cycle_Stop(Inst)
 end
 ```
 
-不要在 Transition 中保存 Pose、创建 AnimNode 或修改 Graph。Graph 声明只发生在编辑器编译期，Transition Rule 只在游戏线程计算布尔结果。
+不要在 Transition 中保存 Pose、创建 AnimNode、修改 Graph 或写入游戏状态。Graph 声明只发生在编辑器编译期；Transition Rule 应保持只读，并且必须返回严格的 Lua `boolean`。原生状态机只会按优先级检查当前状态的出边，找到第一条返回 `true` 的规则后开始过渡。
 
-## 八、Cached Pose
+## 九、Cached Pose
 
 Cached Pose 对应 UE 原生的 `Save Cached Pose` 和 `Use Cached Pose`。
 
@@ -255,7 +306,7 @@ local upper_body_base = graph:UseCachedPose("UpperBodyBase", saved)
 
 状态机拆分到另一个 Lua 文件不会形成运行时边界，但 Cached Pose 的引用范围仍按原生 Graph 所有权校验。跨 State Graph、Animation Layer 或 Linked Anim Graph 的姿势复用应使用明确的 Pose 输入输出接口，不能把 Cached Pose 当成全局变量。
 
-## 九、主文件内的小状态机
+## 十、主文件内的小状态机
 
 很小且不需要复用的状态机可以直接写在动画蓝图主文件中：
 
@@ -295,21 +346,28 @@ StateGraph_<MachineName>_<StateName>
 CanEnter_<MachineName>_<TransitionKey>
 ```
 
-## 十、当前节点范围
+## 十一、当前节点范围
 
 | Graph API | 生成的原生节点 | 主要 Pin/属性 |
 |---|---|---|
 | `SequencePlayer` | `UAnimGraphNode_SequencePlayer` | `Pose`；Sequence、Loop、PlayRate、StartPosition |
 | `StateMachine` | `UAnimGraphNode_StateMachine` | `Pose`；Owned StateMachine Graph |
 | `Inertialization` | `UAnimGraphNode_Inertialization` | `Source`、`Pose` |
+| `LocalToComponentSpace` | `UAnimGraphNode_LocalToComponentSpace` | `LocalPose`、`ComponentPose` |
+| `OrientationWarping` | `UAnimGraphNode_OrientationWarping` | `ComponentPose`、`OrientationAngle`、`Alpha`、`Pose`；脊柱与 IK 骨骼配置 |
+| `FootPlacement` | `UAnimGraphNode_FootPlacement` | `ComponentPose`、`Alpha`、`Pose`；骨盆、双脚、脚趾和地面检测配置 |
+| `LegIK` | `UAnimGraphNode_LegIK` | `ComponentPose`、`Alpha`、`Pose`；IK/FK 脚骨骼和腿链配置 |
+| `ComponentToLocalSpace` | `UAnimGraphNode_ComponentToLocalSpace` | `ComponentPose`、`Pose` |
 | `SaveCachedPose` | `UAnimGraphNode_SaveCachedPose` | `Pose` 输入、CacheName |
 | `UseCachedPose` | `UAnimGraphNode_UseCachedPose` | `Pose` 输出、CacheName |
 
 `Output Pose` 和 `State Result` 由 Graph 基类自动创建。
 
+`FootPlacement.PlantLockType` 接受 `Unlocked`、`PivotAroundBall`、`PivotAroundAnkle` 或 `LockRotation`。`Unlocked` 只关闭脚部的世界空间锁定，地面检测、坡面旋转和骨盆高度补偿仍由原生节点执行。`IKFootRootBone` 的局部 Z 轴会被当作输入姿势的地面法线；项目骨架使用不蒙皮的 `IK_Foot_Plane`，避免依赖 `Master` 的横向局部 Z 轴。
+
 Blend、Slot、Layered Blend Per Bone、Aim Offset、Modify Curve 等节点需要先在 C++ NodeFactory 注册契约，Lua 才会开放对应构造函数。业务代码不能通过任意字符串绕过注册表创建未知节点。
 
-## 十一、编译期与运行时
+## 十二、编译期与运行时
 
 ### 编辑器编译期
 
@@ -327,20 +385,31 @@ require 动画蓝图 Lua 模块
 
 ```text
 UAnimInstance 更新
-    -> 游戏线程调用 CanEnter_* Lua 规则
-    -> C++ 发布线程安全布尔快照
-    -> 原生 Transition Graph 读取快照
-    -> UE Worker Thread 更新和求值原生 AnimNode
+    -> 游戏线程更新 Lua 动画参数
+    -> 原生状态机检查当前状态的出边
+    -> 对应 Transition Rule Graph 直接调用 CanEnter_* Lua 规则
+    -> 原生状态机执行 Transition 和 Pose 混合
+    -> UE 原生 AnimNode 更新并求值
     -> 输出最终 Pose
 ```
 
-Lua 不在 Worker Thread 中执行 Pose 求值。
+Lua 来源的动画蓝图会关闭 `bUseMultiThreadedAnimationUpdate`。Lua 不直接求值 `FCompactPose`；Sequence Player、混合、Root Motion、Curve 和 Notify 仍由 UE 原生 AnimNode 完成。
 
-## 十二、调试与常见错误
+角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前用 Lua 决定速度和 ActorYaw，并发布转向前输入角；`ABP_Sekiro.BlueprintUpdateAnimation` 只读取该快照选择动画。自由移动的 Back 输入必须映射到 Left/Right Turn 后让角色转向移动方向，Back Sequence 仅表示角色身体朝前时向后退，适用于锁定移动。锁定地面移动使用最近四向动画，Jump 使用最近八向动画；两者都通过 `Animation.Sekiro.Shared.DirectionalPose` 用 Orientation Warping 补齐输入角与素材主运动轴的残差，并由原生节点反向补偿脊柱以保持上半身朝向目标。
+
+## 十三、调试与常见错误
 
 ### Rider 调试 Transition
 
-在 `CanEnter_*` 函数内设置 Lua 断点。PIE 中由实际 AnimInstance 调用规则时可以命中。`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器编译期函数，生成资产后不会每帧调用。
+在 `CanEnter_*` 函数内设置 Lua 断点。PIE 中只有当前状态的对应出边被原生状态机检查时才会命中，断点中可以直接查看 `Inst`、Lua 局部变量和调用栈。
+
+`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Generate From Lua` 或 Lua 源码编译流程中命中，不会在 PIE 每帧执行。PIE 中节点的播放时间、State Weight、Transition Blend Alpha 和 Pose 结果使用 UE AnimBP Debugger 查看；Lua 调试器负责规则和动画参数逻辑。
+
+动画蓝图编辑器工具栏的 `Editor Debug: Off/On` 是按用户持久化的 Lua 调试端口开关：
+
+- `Off`（默认）：编辑器阶段不监听 9966，`Main.lua` 在 PIE 世界启动后才开启调试，因此只能调试运行时 Lua。
+- `On`：编辑器阶段立即监听 9966，可在点击 `Check Lua`、`Generate From Lua` 或 Compile 时调试 `CompileIR()` 与 Graph 声明函数。
+- 从 `On` 切换为 `Off` 会立即停止编辑器调试器并释放端口；PIE/SIE 运行期间禁止切换。
 
 ### 必填 Sequence 缺失
 
@@ -378,7 +447,7 @@ Connect target 'Node.Pose' must be an Input Pin
 
 调用顺序应为 `输入Pin:Connect(输出Pin)`。
 
-## 十三、完整参考
+## 十四、完整参考
 
 项目内可运行的最小示例：
 
