@@ -169,8 +169,8 @@ function GroundedMode.StateGraph_Start(Graph)
         Graph,
         "GroundedStartAlignment",
         start,
-        "LatchedActionResidualAngle",
-        "LatchedActionWarpingAlpha")
+        "StartDirectionResidualAngle",
+        "StartWarpingAlpha")
     Graph.Result:Connect(aligned.Pose)
 end
 

@@ -71,6 +71,8 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("bPoseCrouching", "Bool", false)
     self:Variable("DirectionResidualAngle", "Float", 0.0)
     self:Variable("LockOnWarpingAlpha", "Float", 0.0)
+    self:Variable("StartDirectionResidualAngle", "Float", 0.0)
+    self:Variable("StartWarpingAlpha", "Float", 0.0)
     self:Variable("LatchedActionResidualAngle", "Float", 0.0)
     self:Variable("LatchedActionWarpingAlpha", "Float", 0.0)
     -- 预留锁定模式切换边沿；当前只记录上一帧状态，尚无 Graph 或规则消费者。
@@ -309,6 +311,20 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
             or 0.0
         Inst.JumpWarpingAlpha = locked_on and directional_jump and 1.0 or 0.0
     end
+
+    -- Start 的基础四向素材必须保持进入时锁存，避免中途切换 Sequence 导致起步重播；
+    -- 但量化残差要持续追随输入，否则 W 起步后追加 D 会在整个 Start 期间保持 0 度，直到 Cycle 才突然转向。
+    local start_direction_alignment_enabled = ground_direction_alignment_enabled
+        and Inst.bLatchedActionLockedOn == true
+    local start_residual_angle = start_direction_alignment_enabled
+        and Direction.GetCardinalResidual(
+            Inst.MoveDirectionAngle,
+            Inst.LatchedActionDirection)
+        or 0.0
+    Inst.StartDirectionResidualAngle = clamp_direction_residual(
+        start_residual_angle,
+        Tuning.LockOnWarpingMaxAngle)
+    Inst.StartWarpingAlpha = start_direction_alignment_enabled and 1.0 or 0.0
 
     -- Sprint 会由 Movement 把角色本体转向移动方向；锁定地面 Walk/Run 则用最近四向素材和残差对齐解耦上下身。
     local residual_angle = ground_direction_alignment_enabled

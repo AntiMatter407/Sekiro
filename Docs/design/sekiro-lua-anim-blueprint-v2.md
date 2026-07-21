@@ -215,7 +215,8 @@ Input Lua 发布 MoveIntent / MovementTier
 | `bPoseCrouching` | Bool | StateGraph 内 Standing/Crouching 原生姿态选择 |
 | `DirectionResidualAngle` | Float | 精确方向减去四向素材主方向；连接 Cycle 的方向对齐链 |
 | `LockOnWarpingAlpha` | Float | 锁定地面 Walk/Run 有输入时为 1；Sprint、空中和非锁定模式为 0 |
-| `LatchedActionResidualAngle` / `LatchedActionWarpingAlpha` | Float | Start/Stop 使用的四向量化残差和启用强度；输入边沿锁存，播放期间不翻转 |
+| `StartDirectionResidualAngle` / `StartWarpingAlpha` | Float | Start 使用的实时四向量化残差和启用强度；基础动画方向锁存，但残差持续追随输入 |
+| `LatchedActionResidualAngle` / `LatchedActionWarpingAlpha` | Float | Stop 使用的四向量化残差和启用强度；输入释放边沿锁存，播放期间不翻转 |
 | `JumpDirection` | Byte/Enum | 离地上升沿锁定的八方向；非锁定当前固定 Forward |
 | `JumpDirectionResidualAngle` / `JumpWarpingAlpha` | Float | Jump 八向素材的量化残差和启用强度；与 `JumpDirection` 同时锁存 |
 | `bLatchedActionLockedOn` | Bool | Standing Start 选择锁定/非锁定资产集合 |
@@ -253,7 +254,7 @@ Walk Cycle Pose
 
 Standing 的 Walk/Run/Sprint 外层由 `BlendListByEnum(PoseGait)` 选择，Crouching 只暴露 Walk/Run；两套姿态再由 `BlendListByBool(bPoseCrouching)` 选择。锁定 Standing 和 Crouching 的 Start/Cycle/Stop 共用“最近四向素材 + 量化残差”方向对齐链：根与下半身对齐精确输入方向，脊柱反向补偿后继续面向锁定目标。所有 Cycle SequencePlayer 加入同一个 Sync Group，通过原生同步组保持相位；方向、步态或姿态切换后接 Inertialization。
 
-Start、Stop 和 Step 使用 `LatchedActionDirection`；Jump 使用独立的八方向 `JumpDirection`。Start/Stop 还锁存四向残差，Jump Start/InAir/Land 锁存八向残差；状态期间不更换一次性动画或基准运动轴。Lua 资产表只在 `AnimGraph()` 与 `StateGraph_*()` 编译期读取，运行时 Graph 中保存的是实际资产引用。
+Start、Stop 和 Step 使用 `LatchedActionDirection`；Jump 使用独立的八方向 `JumpDirection`。Start 只锁存基础四向动画，`StartDirectionResidualAngle` 持续根据最新输入相对该基础方向计算，因此起步中追加斜向输入会立即开始对齐且不会重启 Sequence；Stop 锁存四向残差，Jump Start/InAir/Land 锁存八向残差。Lua 资产表只在 `AnimGraph()` 与 `StateGraph_*()` 编译期读取，运行时 Graph 中保存的是实际资产引用。
 
 ### 7.1 双脚 Foot IK
 

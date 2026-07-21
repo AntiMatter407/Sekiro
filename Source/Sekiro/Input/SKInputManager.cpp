@@ -210,7 +210,7 @@ int32 USKInputManager::GetRestrictedZoneCount() const
 }
 
 /**
- * 清除禁战区域禁止的上半身战斗与新 Dodge/Step 意图，并移除同名缓冲条目。
+ * 清除收拔刀过渡期间禁止的上半身战斗与新 Dodge/Step 意图，并移除同名缓冲条目。
  * 函数会结束攻击、防御、义手和冲刺按住状态，但不会清除 bDodgeActive 或角色 Dodging，
  * 因而已经开始的 Step 可以完成；必须由 Lua 在游戏线程按区域边沿显式调用。
  */
@@ -273,11 +273,6 @@ FName USKInputManager::GetOwnerWeaponPresentationName() const
 
 bool USKInputManager::ConsumeAttackPressed()
 {
-	if (IsRestrictedZoneActive())
-	{
-		bAttackPressed = false;
-		return false;
-	}
 	if (bAttackPressed)
 	{
 		bAttackPressed = false;
@@ -298,11 +293,6 @@ bool USKInputManager::ConsumeJumpPressed()
 
 bool USKInputManager::ConsumeDodgePressed()
 {
-	if (IsRestrictedZoneActive())
-	{
-		bDodgePressed = false;
-		return false;
-	}
 	if (bDodgePressed)
 	{
 		bDodgePressed = false;
@@ -343,11 +333,6 @@ bool USKInputManager::ConsumeHealingGourdPressed()
 
 bool USKInputManager::ConsumeGrapplePressed()
 {
-	if (IsRestrictedZoneActive())
-	{
-		bGrapplePressed = false;
-		return false;
-	}
 	if (bGrapplePressed)
 	{
 		bGrapplePressed = false;
@@ -358,11 +343,6 @@ bool USKInputManager::ConsumeGrapplePressed()
 
 bool USKInputManager::ConsumeProstheticPressed()
 {
-	if (IsRestrictedZoneActive())
-	{
-		bProstheticPressed = false;
-		return false;
-	}
 	if (bProstheticPressed)
 	{
 		bProstheticPressed = false;
@@ -436,15 +416,6 @@ bool USKInputManager::ConsumeMenuPressed()
 
 bool USKInputManager::ConsumeBufferedInput(FName Action)
 {
-	if (IsRestrictedZoneActive()
-		&& (IsSKRestrictedCombatAction(Action) || Action.ToString().Equals(TEXT("Dodge"), ESearchCase::IgnoreCase)))
-	{
-		InputBuffer.RemoveAll([Action](const FSKBufferedInput& Entry)
-		{
-			return Entry.Action == Action;
-		});
-		return false;
-	}
 	// 升序遍历：移除匹配的第一个条目（FIFO 消费，先入先出）
 	for (int32 i = 0; i < InputBuffer.Num(); ++i)
 	{
@@ -482,17 +453,17 @@ FVector2D USKInputManager::GetLookIntent() const
 
 bool USKInputManager::IsAttackHeld() const
 {
-	return !IsRestrictedZoneActive() && bAttackHeld;
+	return bAttackHeld;
 }
 
 bool USKInputManager::IsGuardHeld() const
 {
-	return !IsRestrictedZoneActive() && bGuardHeld;
+	return bGuardHeld;
 }
 
 bool USKInputManager::IsProstheticHeld() const
 {
-	return !IsRestrictedZoneActive() && bProstheticHeld;
+	return bProstheticHeld;
 }
 
 bool USKInputManager::IsDodgeHeld() const
@@ -887,12 +858,6 @@ void USKInputManager::SetMovementTierByName(FName TierName)
 void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
 {
 	const FString NormalizedName = ActionName.ToString().ToLower();
-	if (IsRestrictedZoneActive()
-		&& bPressed
-		&& (IsSKRestrictedCombatAction(ActionName) || NormalizedName == TEXT("dodge")))
-	{
-		return;
-	}
 	if (NormalizedName == TEXT("attack")) bAttackPressed = bPressed;
 	else if (NormalizedName == TEXT("jump")) bJumpPressed = bPressed;
 	else if (NormalizedName == TEXT("dodge")) bDodgePressed = bPressed;
@@ -912,12 +877,6 @@ void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
 void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
 {
 	const FString NormalizedName = ActionName.ToString().ToLower();
-	if (IsRestrictedZoneActive()
-		&& bHeld
-		&& IsSKRestrictedCombatAction(ActionName))
-	{
-		return;
-	}
 	if (NormalizedName == TEXT("attack")) bAttackHeld = bHeld;
 	else if (NormalizedName == TEXT("guard")) bGuardHeld = bHeld;
 	else if (NormalizedName == TEXT("dodge")) bDodgeHeld = bHeld;
@@ -927,12 +886,6 @@ void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
 
 void USKInputManager::AddBufferedInput(FName Action, int32 Priority, float Lifetime)
 {
-	if (IsRestrictedZoneActive()
-		&& (IsSKRestrictedCombatAction(Action) || Action.ToString().Equals(TEXT("Dodge"), ESearchCase::IgnoreCase)))
-	{
-		return;
-	}
-
 	FSKBufferedInput Entry;
 	Entry.Action = Action;
 	Entry.Priority = Priority;

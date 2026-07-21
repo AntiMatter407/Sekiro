@@ -37,23 +37,23 @@
 ---@class SKWeaponConfigModule
 ---@field DefaultWeaponId string 玩家默认武器的稳定配置键。
 ---@field AutoPlaySheathePreview boolean 是否在 WeaponManager 启动后自动播放一次收刀预览。
----@field RestrictedTransitionMode string 禁战区域收拔刀模式；Override 保证对位，Additive 允许 Run/Sprint 叠加实验。
+---@field RestrictedTransitionMode string 收拔刀模式；Override 强制 Walk，LayeredOverride 保留下半身移动，Additive 使用差值实验资源。
 ---@field Weapons table<string, SKWeaponDefinition> 稳定武器键到完整配置的映射。
 
 ---@type SKWeaponConfigModule
 local WeaponConfig = {
     DefaultWeaponId = "Kusabimaru",
     AutoPlaySheathePreview = false,
-    -- 对比入口：Override 使用原动画上半身替换；Additive 使用首帧差分资源并允许 Run/Sprint。
+    -- 使用上半身差值资源，但只在角色落地、站立并收敛到 Walk/Idle 后启动收拔刀。
     RestrictedTransitionMode = "Additive",
     Weapons = {
         Kusabimaru = {
             ActorClassPath = "/Game/Gameplay/BP_Kusabimaru.BP_Kusabimaru_C",
             InitialPresentation = "Drawn",
             Attachments = {
-                HandSocket = "R_Weapon",
+                HandSocket = "R_WeaponSocket",
                 HandBoneFallback = "R_Hand",
-                SheathSocket = "Sheath",
+                SheathSocket = "SheathSocket",
             },
             Animations = {
                 -- 原版 a00.tae 的 Type 715 从第 14 帧开始把主手模型覆盖到 Dummy 147。

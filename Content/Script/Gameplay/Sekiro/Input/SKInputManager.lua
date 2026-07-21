@@ -2,7 +2,6 @@
 -- 管理玩家输入到角色意图的转换。
 -- RootMotion 版只写入 MoveIntent、MovementTier 和 DodgeDirection，角色位移由动画根运动驱动。
 local LuaLog = require("Gameplay.Base.LuaLog")
-local WeaponConfig = require("Gameplay.Sekiro.Weapon.WeaponConfig")
 
 ---@class SKInputManager: USKInputManager
 local SKInputManager = UnLua.Class()
@@ -94,7 +93,7 @@ function SKInputManager:Initialize(_initializer)
     self.SprintInputHoldTime = 0
     self.SprintRequested = false
     self.bRestrictedZoneObserved = false
-    self.bPostExitWeaponLock = false
+    self.bWeaponTransitionInputLock = false
     log_debug("Initialize", "input lua host initialized")
 end
 
@@ -105,20 +104,20 @@ local function is_restricted(input_manager)
     return input_manager:IsRestrictedZoneActive() == true
 end
 
----查询区域限制或退出拔刀锁是否正在禁止战斗、加速和姿态动作。
+---查询收刀或拔刀过渡是否正在临时禁止移动以外的输入。
 ---@param input_manager SKInputManager 输入管理器实例。
 ---@return boolean restricted 任一限制来源生效时返回 true。
 local function is_action_restricted(input_manager)
-    return is_restricted(input_manager) or input_manager.bPostExitWeaponLock == true
+    return input_manager.bWeaponTransitionInputLock == true
 end
 
----查询当前过渡方案是否要求把移动速度限制为 Walk。
----叠加动画能够保留下半身移动，因此只限制战斗、姿态和 Step，不限制 Run/Sprint。
+---查询武器状态是否禁止需要拔刀的战斗输入。
+---过渡期间统一禁止；过渡结束后只要刀仍在鞘中就继续禁止。
 ---@param input_manager SKInputManager 输入管理器实例。
----@return boolean restricted 当前动作锁同时要求限制移动速度时返回 true。
-local function is_speed_restricted(input_manager)
+---@return boolean restricted 战斗输入当前不可提交时返回 true。
+local function is_combat_restricted(input_manager)
     return is_action_restricted(input_manager)
-        and WeaponConfig.RestrictedTransitionMode ~= "Additive"
+        or tostring(input_manager:GetOwnerWeaponPresentationName()) == "Sheathed"
 end
 
 ---在组件 BeginPlay 且 UObject 默认值复制完成后覆盖输入调参项。
@@ -175,39 +174,42 @@ function SKInputManager:Tick(delta_seconds)
 
     if zone_restricted ~= self.bRestrictedZoneObserved then
         self.bRestrictedZoneObserved = zone_restricted
-        if zone_restricted then
-            self.bPostExitWeaponLock = false
-            -- C++ 只维护重叠计数；动作清理和移动收敛时机由 Lua 在首次进入边沿决定。
-            self:ClearRestrictedActionStateForScript()
-            log_debug("Restriction", "entered restricted zone")
-        else
-            -- 离开区域后继续锁定加速和上半身动作，直到 WeaponManager 完成拔刀 Montage。
-            self.bPostExitWeaponLock = true
-            self:ClearRestrictedActionStateForScript()
-            log_debug("Restriction", "left restricted zone; waiting for draw completion")
-        end
-    end
-
-    if self.bPostExitWeaponLock == true
-        and tostring(self:GetOwnerWeaponPresentationName()) == "Drawn"
-        and self:IsOwnerWeaponSlotAnimationPlaying() ~= true then
-        self.bPostExitWeaponLock = false
-        log_debug("Restriction", "draw completed; post-exit input lock released")
-    end
-
-    local restricted = zone_restricted or self.bPostExitWeaponLock == true
-    local speed_restricted = restricted and WeaponConfig.RestrictedTransitionMode ~= "Additive"
-
-    if restricted then
+        self.bWeaponTransitionInputLock = true
+        -- 进出边沿只清理非移动动作；已有 Step 可以自然收尾，跳跃必须落地后才会通过播放门槛。
+        self:ClearRestrictedActionStateForScript()
+        self.SprintInputHoldTime = 0
+        self.SprintRequested = false
         self.DodgePressedThisFrame = false
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
-        if speed_restricted then
-            self.SprintInputHoldTime = 0
-            self.SprintRequested = false
+        self:SetMovementTierByName("Walk")
+        log_debug(
+            "Restriction",
+            zone_restricted and "entered zone; waiting for sheathe completion"
+                or "left zone; waiting for draw completion")
+    end
+
+    local target_presentation = zone_restricted and "Sheathed" or "Drawn"
+    if self.bWeaponTransitionInputLock == true
+        and tostring(self:GetOwnerWeaponPresentationName()) == target_presentation
+        and self:IsOwnerWeaponSlotAnimationPlaying() ~= true then
+        self.bWeaponTransitionInputLock = false
+        log_debug("Restriction", string.format(
+            "%s completed; transition input lock released",
+            zone_restricted and "sheathe" or "draw"))
+    end
+
+    local restricted = self.bWeaponTransitionInputLock == true
+
+    if restricted then
+        self.SprintInputHoldTime = 0
+        self.SprintRequested = false
+        self.DodgePressedThisFrame = false
+        if self:IsOwnerCrouched() then
+            self:UnCrouchOwner()
         end
-        if speed_restricted and not self:IsOwnerFalling() then
+        if not self:IsOwnerFalling() then
             self:SetMovementTierByName("Walk")
         end
     end
@@ -278,7 +280,7 @@ function SKInputManager:Tick(delta_seconds)
             tostring(self.MoveInputActive == true)))
     end
 
-    if not speed_restricted
+    if not restricted
         and self:IsDodgeHeld()
         and self.MoveInputActive == true
         and not self:IsOwnerFalling() then
@@ -291,7 +293,7 @@ function SKInputManager:Tick(delta_seconds)
         self:LogMoveIntentDebug("Tick", false)
     end
 
-    local sprint_qualified = not speed_restricted
+    local sprint_qualified = not restricted
         and self:IsDodgeHeld()
         and self.SprintInputHoldTime >= self.SprintHoldThreshold
         and self.MoveInputActive == true
@@ -308,7 +310,7 @@ function SKInputManager:Tick(delta_seconds)
         if tostring(self:GetMovementTierName()) ~= "Sprint" then
             self:SetMovementTierByName("Sprint")
         end
-    elseif speed_restricted then
+    elseif restricted then
         self.SprintRequested = false
         if not self:IsOwnerFalling() then
             self:SetMovementTierByName("Walk")
@@ -371,7 +373,7 @@ function SKInputManager:OnMove(input_x, input_y)
     self:LogMoveIntentDebug("OnMoveInput", false)
 
     -- Sprint 只由 Tick 的持续输入判定写入；OnMove 仅维护非 Sprint 的基础移动档位。
-    if is_speed_restricted(self) and not self:IsOwnerFalling() then
+    if is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
     elseif tostring(self:GetMovementTierName()) ~= "Sprint"
         and not self:IsOwnerFalling() then
@@ -407,7 +409,7 @@ function SKInputManager:OnMoveCompleted()
     self.SprintRequested = false
     self:ClearMoveIntentForScript()
 
-    if is_speed_restricted(self) and not self:IsOwnerFalling() then
+    if is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
     elseif not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
@@ -480,13 +482,12 @@ end
 ---@return boolean handled 始终返回 true，表示闪避按下已处理。
 function SKInputManager:OnDodgeStarted()
     if is_action_restricted(self) then
-        local additive_transition = WeaponConfig.RestrictedTransitionMode == "Additive"
-        self:SetHeldFlag("Dodge", additive_transition)
+        self:SetHeldFlag("Dodge", false)
         self:SetDodgeHoldTime(0)
         self.SprintInputHoldTime = 0
         self.SprintRequested = false
         self.DodgePressedThisFrame = false
-        self.DodgeStartedTime = additive_transition and self:GetWorldTimeSecondsForScript() or nil
+        self.DodgeStartedTime = nil
         return true
     end
 
@@ -529,7 +530,7 @@ function SKInputManager:OnDodgeCompleted()
         tostring(self:IsOwnerDodging())))
 
     local input_amount = self.CurrentMoveInputAmount or 0
-    if is_speed_restricted(self) then
+    if is_action_restricted(self) then
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
@@ -581,7 +582,7 @@ end
 ---@return boolean handled 始终返回 true，表示 Walk 修饰键释放已处理。
 function SKInputManager:OnWalkModifierCompleted()
     self:SetHeldFlag("Walk", false)
-    if is_speed_restricted(self) and not self:IsOwnerFalling() then
+    if is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
     elseif tostring(self:GetMovementTierName()) == "Walk" and not self:IsOwnerFalling() then
         local input_amount = self:GetMoveInputAmount() or 0
@@ -625,7 +626,7 @@ end
 ---处理攻击键按下，写入攻击意图并尝试消费对应动作缓冲。
 ---@return boolean handled 始终返回 true，表示攻击按下已处理。
 function SKInputManager:OnAttackStarted()
-    if is_action_restricted(self) then
+    if is_combat_restricted(self) then
         self:SetHeldFlag("Attack", false)
         self:SetAttackHoldTime(0)
         return true
@@ -655,7 +656,7 @@ end
 ---处理防御键按下，写入 Guard 意图供战斗系统消费。
 ---@return boolean handled 始终返回 true，表示防御按下已处理。
 function SKInputManager:OnGuardStarted()
-    if is_action_restricted(self) then
+    if is_combat_restricted(self) then
         self:SetHeldFlag("Guard", false)
         return true
     end
@@ -675,6 +676,10 @@ end
 ---处理锁定键按下，切换或搜索锁定目标并让相机组件接管目标视角。
 ---@return boolean handled 始终返回 true，表示锁定输入已处理。
 function SKInputManager:OnLockOnStarted()
+    if is_action_restricted(self) then
+        return true
+    end
+
     self:SetPressedFlag("LockOn", true)
     self:ToggleLockTargetInViewForScript()
     return true
@@ -683,7 +688,7 @@ end
 ---处理义手键按下，写入 Prosthetic 动作意图。
 ---@return boolean handled 始终返回 true，表示义手按下已处理。
 function SKInputManager:OnProstheticStarted()
-    if is_action_restricted(self) then
+    if is_combat_restricted(self) then
         self:SetHeldFlag("Prosthetic", false)
         self:SetProstheticHoldTime(0)
         return true
@@ -707,7 +712,7 @@ end
 ---处理钩绳键按下，提交 Grapple 动作意图。
 ---@return boolean handled 始终返回 true，表示钩绳输入已处理。
 function SKInputManager:OnGrappleStarted()
-    if is_action_restricted(self) then
+    if is_combat_restricted(self) then
         return true
     end
 
@@ -719,6 +724,10 @@ end
 ---处理交互键按下，提交 Interact 动作意图。
 ---@return boolean handled 始终返回 true，表示交互输入已处理。
 function SKInputManager:OnInteractStarted()
+    if is_action_restricted(self) then
+        return true
+    end
+
     self:SetPressedFlag("Interact", true)
     self:AddBufferedInput("Interact", 10, 0.1)
     return true

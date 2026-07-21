@@ -101,19 +101,13 @@ protected:
     FName BladeSheathSocket = TEXT("Sheath01");              // 兼容已有蓝图序列化；原版收刀挂载不再依赖该内部骨骼
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attachment")
-    FTransform BladeHandAttachOffset = FTransform(
-        FQuat(0.707126739f, -0.000017912f, -0.000016838f, 0.707086823f),
-        FVector(-0.056726f, -0.957957f, 0.030017f));       // 原版 Dummy 20 相对 R_Weapon；修正导入后反向的刀身长轴
+    FTransform BladeHandAttachOffset = FTransform::Identity; // 新 R_WeaponSocket 已包含刀身对齐变换
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attachment")
-    FTransform SheathBodyAttachOffset = FTransform(
-        FQuat(0.708770033f, -0.018099103f, -0.705077593f, 0.013529598f),
-        FVector::ZeroVector);                              // 刀鞘根部直接对接角色 Sheath 挂点；旋转修正导入后反向的长轴
+    FTransform SheathBodyAttachOffset = FTransform::Identity; // 新 SheathSocket 已包含刀鞘对齐变换
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Attachment")
-    FTransform BladeSheathAttachOffset = FTransform(
-        FQuat(0.708770033f, -0.018099103f, -0.705077593f, 0.013529598f),
-        FVector::ZeroVector);                              // 收刀时刀身与刀鞘共同对接角色 Sheath 挂点
+    FTransform BladeSheathAttachOffset = FTransform::Identity; // 收刀刀身与刀鞘直接共用 SheathSocket
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
     float HitboxRadius = 12.f;                                // 攻击碰撞体半径
@@ -127,9 +121,9 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<USkeletalMeshComponent> CharacterMesh;         // 武器当前绑定的角色骨架网格
 
-    FName HandSocket = TEXT("R_Weapon");                     // 优先使用的右手武器挂点
+    FName HandSocket = TEXT("R_WeaponSocket");               // 优先使用的右手武器挂点
     FName HandBoneFallback = TEXT("R_Hand");                 // 右手挂点不存在时使用的骨骼
-    FName SheathSocket = TEXT("Sheath");                     // 角色腰部刀鞘挂点
+    FName SheathSocket = TEXT("SheathSocket");               // 角色腰部刀鞘挂点
     ESKWeaponPresentation Presentation = ESKWeaponPresentation::Drawn; // 当前展示状态
     TSet<TWeakObjectPtr<AActor>> AlreadyHitActors;             // 单次攻击已命中的目标集合
 };
