@@ -297,6 +297,49 @@ end
     }
 
     /**
+     * 创建包含 ExpectedBool 正反值的纯原生 BoolProperty Rule 内存模块。
+     * 函数基于合法模块替换单条 Transition，不访问文件系统、Lua VM 或 UObject。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return RuleFunctionName 为空且 Gate 根为 All(true 属性, false 属性) 的 Lua chunk。
+     */
+    FString BuildNativeBoolRuleModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = BuildValidModuleChunk(ModuleName);
+        Chunk.ReplaceInline(
+            TEXT("RuleFunctionName = \"CanEnter_IdleSelf\","),
+            TEXT(R"LUA(RuleFunctionName = "",
+                                        Gate = {
+                                            RootIndex = 2,
+                                            Nodes = {
+                                                {
+                                                    Type = "BoolProperty",
+                                                    Name = "bExpectedTrue",
+                                                    Threshold = 0.0,
+                                                    ExpectedBool = true,
+                                                    Children = {},
+                                                },
+                                                {
+                                                    Type = "BoolProperty",
+                                                    Name = "bExpectedFalse",
+                                                    Threshold = 0.0,
+                                                    ExpectedBool = false,
+                                                    Children = {},
+                                                },
+                                                {
+                                                    Type = "All",
+                                                    Name = "",
+                                                    Threshold = 0.0,
+                                                    ExpectedBool = false,
+                                                    Children = { 0, 1 },
+                                                },
+                                            },
+                                        },)LUA"),
+            ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
      * 创建一个字段类型错误的内存模块，用于验证解析错误早于 Validator 且代码稳定。
      *
      * @param ModuleName 测试使用的唯一 require 模块名。
@@ -396,6 +439,63 @@ bool FSekiroAnimGraphIRLuaValidImportTest::RunTest(const FString& Parameters)
         TEXT("Soft object path remains unresolved value data"),
         Blueprint.Layers[0].Graphs[0].Nodes[0].Properties[0].Value.SoftObjectPathValue.ToString(),
         FString(TEXT("/Game/Test/Fake.Fake")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaNativeBoolRuleImportTest,
+    "Sekiro.AnimGraphIR.Lua.NativeBoolRuleImport",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Importer 读取纯原生 BoolProperty Rule，并保持 ExpectedBool 的 true/false 值且不查找空 Lua 函数。
+ * 测试只修改当前 Lua Env 的内存 module cache，不依赖 Content 文件或项目资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaNativeBoolRuleImportTest::RunTest(const FString& Parameters)
+{
+    const FString ModuleName(TEXT("SekiroAnimGraphIRTests.NativeBoolRuleImport"));
+    UnLua::FLuaEnv* Environment = SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (!Environment) return true;
+
+    TestTrue(TEXT("Native Bool Rule module is injected"), Environment->DoString(
+        SekiroAnimGraphIRLuaImporterTests::BuildNativeBoolRuleModuleChunk(ModuleName),
+        TEXT("SekiroAnimGraphIRTests.NativeBoolRuleImport.Inject")));
+
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestTrue(
+        TEXT("Pure native Bool Rule imports without Lua function lookup"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(ModuleName, Blueprint, Diagnostics));
+    TestEqual(TEXT("Pure native Bool Rule import has no diagnostics"), Diagnostics.Num(), 0);
+
+    const FSekiroAnimIRTransition* ImportedTransition = nullptr;
+    for (const FSekiroAnimIRLayer& Layer : Blueprint.Layers)
+    {
+        for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+        {
+            if (Graph.StateMachine.Transitions.IsEmpty()) continue;
+            ImportedTransition = &Graph.StateMachine.Transitions[0];
+            break;
+        }
+        if (ImportedTransition != nullptr) break;
+    }
+    TestNotNull(TEXT("Imported native Transition exists"), ImportedTransition);
+    if (ImportedTransition != nullptr)
+    {
+        TestTrue(TEXT("Pure native Transition has no Lua RuleFunctionName"),
+            ImportedTransition->RuleFunctionName.IsNone());
+        TestEqual(TEXT("Native Rule imports three AST nodes"), ImportedTransition->Gate.Nodes.Num(), 3);
+        if (ImportedTransition->Gate.Nodes.Num() == 3)
+        {
+            TestTrue(TEXT("ExpectedBool true is preserved"), ImportedTransition->Gate.Nodes[0].bExpectedBool);
+            TestFalse(TEXT("ExpectedBool false is preserved"), ImportedTransition->Gate.Nodes[1].bExpectedBool);
+            TestEqual(TEXT("All remains the imported Gate root"), ImportedTransition->Gate.RootIndex, 2);
+        }
+    }
     return true;
 }
 

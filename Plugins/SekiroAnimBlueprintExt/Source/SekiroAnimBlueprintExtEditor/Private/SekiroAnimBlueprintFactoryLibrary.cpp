@@ -102,6 +102,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
     const FName K2PinNotFound = TEXT("Factory.K2PinNotFound");
     const FName K2ConnectionFailed = TEXT("Factory.K2ConnectionFailed");
     const FName TransitionResultNotFound = TEXT("Factory.TransitionResultNotFound");
+    const FName InvalidTransitionBoolProperty = TEXT("Factory.InvalidTransitionBoolProperty");
     const FName BlueprintCompileFailed = TEXT("Factory.BlueprintCompileFailed");
     const FName SavePackageFailed = TEXT("Factory.SavePackageFailed");
     const FName EnumTypeLoadFailed = TEXT("Factory.EnumTypeLoadFailed");
@@ -528,7 +529,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
     }
 
     /**
-     * 解析并验证工厂阶段所需的父类、Skeleton、注册节点类、动画资源和混合模式。
+     * 解析并验证工厂阶段所需的父类、Skeleton、Transition 属性、注册节点类、动画资源和混合模式。
      * 函数首先调用权威 IR Validator，再规范化私有副本；只有游戏线程可调用，因为软路径解析会加载 UObject。
      *
      * @param Blueprint 调用方提供的只读 IR。
@@ -645,6 +646,67 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 continue;
             }
             OutData.VariableEnums.Add(Variable.Name, EnumType);
+        }
+
+        for (const FSekiroAnimIRLayer& BlueprintLayer : OutData.Blueprint.Layers)
+        {
+            for (const FSekiroAnimIRGraph& Graph : BlueprintLayer.Graphs)
+            {
+                for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
+                {
+                    for (const FSekiroAnimIRTransitionGateNode& GateNode : Transition.Gate.Nodes)
+                    {
+                        if (GateNode.Type != TEXT("BoolProperty")) continue;
+
+                        const FSekiroAnimIRVariable* DeclaredVariable = OutData.Blueprint.Variables.FindByPredicate(
+                            [&GateNode](const FSekiroAnimIRVariable& Variable)
+                            {
+                                return Variable.Name == GateNode.Name;
+                            });
+                        if (DeclaredVariable != nullptr)
+                        {
+                            if (DeclaredVariable->DataType == TEXT("Bool")) continue;
+                            AddError(
+                                OutDiagnostics,
+                                InvalidTransitionBoolProperty,
+                                FString::Printf(
+                                    TEXT("Transition BoolProperty '%s' refers to generated variable type '%s', not Bool."),
+                                    *GateNode.Name.ToString(),
+                                    *DeclaredVariable->DataType.ToString()),
+                                Transition.Id,
+                                Transition.SourceLocation);
+                            continue;
+                        }
+
+                        FProperty* NativeProperty = OutData.ParentClass != nullptr
+                            ? FindFProperty<FProperty>(OutData.ParentClass, GateNode.Name)
+                            : nullptr;
+                        if (NativeProperty == nullptr)
+                        {
+                            AddError(
+                                OutDiagnostics,
+                                InvalidTransitionBoolProperty,
+                                FString::Printf(
+                                    TEXT("Transition BoolProperty '%s' was not found on the AnimInstance class or generated IR variables."),
+                                    *GateNode.Name.ToString()),
+                                Transition.Id,
+                                Transition.SourceLocation);
+                        }
+                        else if (CastField<FBoolProperty>(NativeProperty) == nullptr
+                            || !NativeProperty->HasAnyPropertyFlags(CPF_BlueprintVisible))
+                        {
+                            AddError(
+                                OutDiagnostics,
+                                InvalidTransitionBoolProperty,
+                                FString::Printf(
+                                    TEXT("Transition BoolProperty '%s' must be a Blueprint-visible Bool property."),
+                                    *GateNode.Name.ToString()),
+                                Transition.Id,
+                                Transition.SourceLocation);
+                        }
+                    }
+                }
+            }
         }
 
         const FSekiroAnimIRLayer& Layer = OutData.Blueprint.Layers[0];
@@ -2338,13 +2400,355 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
 
         /**
-         * 在 Transition 自动创建的 UAnimationTransitionGraph 中搭建 Lua Rule 直接调用，并连接默认 Result。
-         * 此图由原生状态机仅在检查当前 State 出边时求值；Lua 规则约定只读 AnimInstance。
-         * 必须在游戏线程调用，TransitionNode 及其 BoundGraph 由当前 Builder 独占。
+         * 为单个 Gate AST 节点生成稳定、可读且不依赖编辑器显示名的采样标签。
+         * 本函数只格式化值类型字符串，可在当前 Builder 所在线程调用，不访问或修改 UObject。
          *
-         * @param Transition 提供模块规则名、稳定 ID 和源码位置的 IR Transition。
+         * @param GateNode 提供节点类型和可选参数名的只读 IR 节点。
+         * @param GateIndex 节点在扁平 Gate 数组中的零基稳定索引，必须非负。
+         * @return 格式为“索引:类型[:名称]”的标签；Name 为空时省略末段。
+         */
+        FString MakeTransitionExpressionLabel(
+            const FSekiroAnimIRTransitionGateNode& GateNode,
+            const int32 GateIndex) const
+        {
+            const FString Prefix = FString::Printf(
+                TEXT("%d:%s"),
+                GateIndex,
+                *GateNode.Type.ToString());
+            return GateNode.Name.IsNone()
+                ? Prefix
+                : Prefix + TEXT(":") + GateNode.Name.ToString();
+        }
+
+        /**
+         * 在现有 Bool 叶节点之后插入单个 BlueprintPure 调试透传节点，并返回其唯一 Result 输出。
+         * ActualValue 和 Result 分别连接既有 Getter 与比较节点，调用方后续只消费透传输出，因此不会重复构建表达式。
+         * 必须在游戏线程构建独占的 Transition Graph 时调用；函数只修改 Graph，不执行采样。
+         *
+         * @param Transition 提供稳定 ID 与诊断位置的只读 Transition。
+         * @param GateIndex 当前 BoolProperty 节点的零基稳定索引。
+         * @param ExpressionLabel 当前 AST 节点稳定标签，不能为空。
+         * @param ParameterName 被读取的 AnimInstance Bool 属性名，不能为空。
+         * @param ExpectedValue 该叶节点比较使用的期望布尔值。
+         * @param Graph 接收调试调用节点的 Transition Graph，由当前 Builder 独占。
+         * @param SelfPin 当前 AnimInstance Self 输出 Pin，所有权仍属于 Graph。
+         * @param ActualValuePin 既有 Property Getter 的 Bool 输出 Pin。
+         * @param ResultValuePin 既有 Bool 比较的结果 Pin。
+         * @return 成功时返回调试透传 Bool 输出；函数或 Pin 缺失、连接失败时返回 nullptr。
+         */
+        UEdGraphPin* BuildBoolTransitionDebugValueNode(
+            const FSekiroAnimIRTransition& Transition,
+            const int32 GateIndex,
+            const FString& ExpressionLabel,
+            const FString& ParameterName,
+            const bool ExpectedValue,
+            UAnimationTransitionGraph& Graph,
+            UEdGraphPin& SelfPin,
+            UEdGraphPin& ActualValuePin,
+            UEdGraphPin& ResultValuePin)
+        {
+            UFunction* RecordFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
+                GET_FUNCTION_NAME_CHECKED(
+                    USekiroLuaTransitionRuntimeLibrary,
+                    RecordBoolTransitionDebugValue));
+            if (RecordFunction == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    K2FunctionNotFound,
+                    TEXT("RecordBoolTransitionDebugValue function was not found."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+
+            UK2Node_CallFunction* RecordNode = CreateCallFunctionNode(
+                Graph,
+                TEXT("Gate.Trace.Bool.") + Transition.Id + TEXT(".") + FString::FromInt(GateIndex),
+                RecordFunction,
+                560,
+                GateIndex * 120);
+            UEdGraphPin* AnimInstancePin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* TransitionIdPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("TransitionId"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ExpressionLabelPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ExpressionLabel"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ParameterNamePin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ParameterName"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ActualValueInput = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ActualValue"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ExpectedValuePin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ExpectedValue"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ResultInput = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("Result"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* IsFinalPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("bIsFinal"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ReturnPin = RecordNode != nullptr ? RecordNode->GetReturnValuePin() : nullptr;
+            if (AnimInstancePin == nullptr
+                || TransitionIdPin == nullptr
+                || ExpressionLabelPin == nullptr
+                || ParameterNamePin == nullptr
+                || ActualValueInput == nullptr
+                || ExpectedValuePin == nullptr
+                || ResultInput == nullptr
+                || IsFinalPin == nullptr
+                || ReturnPin == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    K2PinNotFound,
+                    TEXT("Bool Transition debug pass-through did not expose required Pins."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+
+            const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+            Schema->TrySetDefaultValue(*TransitionIdPin, Transition.Id, false);
+            Schema->TrySetDefaultValue(*ExpressionLabelPin, ExpressionLabel, false);
+            Schema->TrySetDefaultValue(*ParameterNamePin, ParameterName, false);
+            Schema->TrySetDefaultValue(*ExpectedValuePin, ExpectedValue ? TEXT("true") : TEXT("false"), false);
+            Schema->TrySetDefaultValue(*IsFinalPin, TEXT("false"), false);
+            if (!Schema->TryCreateConnection(&SelfPin, AnimInstancePin)
+                || !Schema->TryCreateConnection(&ActualValuePin, ActualValueInput)
+                || !Schema->TryCreateConnection(&ResultValuePin, ResultInput))
+            {
+                AddError(
+                    Diagnostics,
+                    K2ConnectionFailed,
+                    TEXT("Failed to connect Bool Transition debug pass-through."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+            return ReturnPin;
+        }
+
+        /**
+         * 在现有 Float 叶节点之后插入单个 BlueprintPure 调试透传节点，并返回其唯一 Result 输出。
+         * Getter 输出会同时馈入既有比较和采样参数，但表达式子树只构建一次，后续仅消费透传结果。
+         * 必须在游戏线程构建独占的 Transition Graph 时调用；函数只修改 Graph，不执行采样。
+         *
+         * @param Transition 提供稳定 ID 与诊断位置的只读 Transition。
+         * @param GateIndex 当前 Float Gate 节点的零基稳定索引。
+         * @param ExpressionLabel 当前 AST 节点稳定标签，不能为空。
+         * @param ParameterName 曲线名或 RelevantTimeRemaining 等稳定参数名，不能为空。
+         * @param Threshold 既有比较节点使用的有限阈值。
+         * @param Graph 接收调试调用节点的 Transition Graph，由当前 Builder 独占。
+         * @param SelfPin 当前 AnimInstance Self 输出 Pin，所有权仍属于 Graph。
+         * @param ActualValuePin 既有 Curve/Time Getter 的 Float 输出 Pin。
+         * @param ResultValuePin 既有 Float 比较的 Bool 结果 Pin。
+         * @return 成功时返回调试透传 Bool 输出；函数或 Pin 缺失、连接失败时返回 nullptr。
+         */
+        UEdGraphPin* BuildFloatTransitionDebugValueNode(
+            const FSekiroAnimIRTransition& Transition,
+            const int32 GateIndex,
+            const FString& ExpressionLabel,
+            const FString& ParameterName,
+            const float Threshold,
+            UAnimationTransitionGraph& Graph,
+            UEdGraphPin& SelfPin,
+            UEdGraphPin& ActualValuePin,
+            UEdGraphPin& ResultValuePin)
+        {
+            UFunction* RecordFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
+                GET_FUNCTION_NAME_CHECKED(
+                    USekiroLuaTransitionRuntimeLibrary,
+                    RecordFloatTransitionDebugValue));
+            if (RecordFunction == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    K2FunctionNotFound,
+                    TEXT("RecordFloatTransitionDebugValue function was not found."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+
+            UK2Node_CallFunction* RecordNode = CreateCallFunctionNode(
+                Graph,
+                TEXT("Gate.Trace.Float.") + Transition.Id + TEXT(".") + FString::FromInt(GateIndex),
+                RecordFunction,
+                560,
+                GateIndex * 120);
+            UEdGraphPin* AnimInstancePin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* TransitionIdPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("TransitionId"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ExpressionLabelPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ExpressionLabel"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ParameterNamePin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ParameterName"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ActualValueInput = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ActualValue"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ThresholdPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("Threshold"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ResultInput = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("Result"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* IsFinalPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("bIsFinal"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ReturnPin = RecordNode != nullptr ? RecordNode->GetReturnValuePin() : nullptr;
+            if (AnimInstancePin == nullptr
+                || TransitionIdPin == nullptr
+                || ExpressionLabelPin == nullptr
+                || ParameterNamePin == nullptr
+                || ActualValueInput == nullptr
+                || ThresholdPin == nullptr
+                || ResultInput == nullptr
+                || IsFinalPin == nullptr
+                || ReturnPin == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    K2PinNotFound,
+                    TEXT("Float Transition debug pass-through did not expose required Pins."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+
+            const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+            Schema->TrySetDefaultValue(*TransitionIdPin, Transition.Id, false);
+            Schema->TrySetDefaultValue(*ExpressionLabelPin, ExpressionLabel, false);
+            Schema->TrySetDefaultValue(*ParameterNamePin, ParameterName, false);
+            Schema->TrySetDefaultValue(*ThresholdPin, FString::SanitizeFloat(Threshold), false);
+            Schema->TrySetDefaultValue(*IsFinalPin, TEXT("false"), false);
+            if (!Schema->TryCreateConnection(&SelfPin, AnimInstancePin)
+                || !Schema->TryCreateConnection(&ActualValuePin, ActualValueInput)
+                || !Schema->TryCreateConnection(&ResultValuePin, ResultInput))
+            {
+                AddError(
+                    Diagnostics,
+                    K2ConnectionFailed,
+                    TEXT("Failed to connect Float Transition debug pass-through."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+            return ReturnPin;
+        }
+
+        /**
+         * 在组合表达式或最终 RuleResult 后插入 BlueprintPure Bool 透传采样，并返回唯一输出。
+         * 调用方必须用返回 Pin 替代原表达式继续连接，确保已有表达式只构建、求值一次。
+         * 必须在游戏线程构建独占的 Transition Graph 时调用；函数只修改 Graph，不执行采样。
+         *
+         * @param Transition 提供稳定 ID 与诊断位置的只读 Transition。
+         * @param StableSuffix 当前调用节点稳定后缀；Gate 节点使用索引，最终记录使用 Final。
+         * @param ExpressionLabel 当前表达式稳定可读标签，不能为空。
+         * @param bIsFinal 是否代表接入 Transition Result 前的权威最终结果。
+         * @param Graph 接收调试调用节点的 Transition Graph，由当前 Builder 独占。
+         * @param SelfPin 当前 AnimInstance Self 输出 Pin，所有权仍属于 Graph。
+         * @param ResultValuePin 既有组合或最终 Bool 结果 Pin。
+         * @return 成功时返回调试透传 Bool 输出；函数或 Pin 缺失、连接失败时返回 nullptr。
+         */
+        UEdGraphPin* BuildTransitionExpressionDebugValueNode(
+            const FSekiroAnimIRTransition& Transition,
+            const FString& StableSuffix,
+            const FString& ExpressionLabel,
+            const bool bIsFinal,
+            UAnimationTransitionGraph& Graph,
+            UEdGraphPin& SelfPin,
+            UEdGraphPin& ResultValuePin)
+        {
+            UFunction* RecordFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
+                GET_FUNCTION_NAME_CHECKED(
+                    USekiroLuaTransitionRuntimeLibrary,
+                    RecordTransitionExpressionDebugValue));
+            if (RecordFunction == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    K2FunctionNotFound,
+                    TEXT("RecordTransitionExpressionDebugValue function was not found."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+
+            UK2Node_CallFunction* RecordNode = CreateCallFunctionNode(
+                Graph,
+                TEXT("Gate.Trace.Expression.") + Transition.Id + TEXT(".") + StableSuffix,
+                RecordFunction,
+                680,
+                bIsFinal ? 0 : FCString::Atoi(*StableSuffix) * 120);
+            UEdGraphPin* AnimInstancePin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* TransitionIdPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("TransitionId"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ExpressionLabelPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("ExpressionLabel"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ResultInput = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("Result"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* IsFinalPin = RecordNode != nullptr
+                ? RecordNode->FindPin(TEXT("bIsFinal"), EGPD_Input)
+                : nullptr;
+            UEdGraphPin* ReturnPin = RecordNode != nullptr ? RecordNode->GetReturnValuePin() : nullptr;
+            if (AnimInstancePin == nullptr
+                || TransitionIdPin == nullptr
+                || ExpressionLabelPin == nullptr
+                || ResultInput == nullptr
+                || IsFinalPin == nullptr
+                || ReturnPin == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    K2PinNotFound,
+                    TEXT("Transition expression debug pass-through did not expose required Pins."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+
+            const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+            Schema->TrySetDefaultValue(*TransitionIdPin, Transition.Id, false);
+            Schema->TrySetDefaultValue(*ExpressionLabelPin, ExpressionLabel, false);
+            Schema->TrySetDefaultValue(*IsFinalPin, bIsFinal ? TEXT("true") : TEXT("false"), false);
+            if (!Schema->TryCreateConnection(&SelfPin, AnimInstancePin)
+                || !Schema->TryCreateConnection(&ResultValuePin, ResultInput))
+            {
+                AddError(
+                    Diagnostics,
+                    K2ConnectionFailed,
+                    TEXT("Failed to connect Transition expression debug pass-through."),
+                    Transition.Id,
+                    Transition.SourceLocation);
+                return nullptr;
+            }
+            return ReturnPin;
+        }
+
+        /**
+         * 在 Transition 自动创建的 UAnimationTransitionGraph 中物化完整规则并连接默认 Result。
+         * RuleFunctionName 非空时生成兼容的 Lua 调用；Gate 非空时生成原生 AST；两者并存时保持 AND 语义。
+         * 必须在游戏线程调用，TransitionNode 及其 BoundGraph 由当前 Builder 独占；函数不执行运行时规则。
+         *
+         * @param Transition 提供可选 Lua 规则、原生 Gate、稳定 ID 和源码位置的 IR Transition。
          * @param TransitionNode 已经完成 PostPlacedNewNode、拥有默认 Result 的原生 Transition 节点。
-         * @return Lua Rule 调用、Self、默认参数和 Result 连接全部创建成功时返回 true。
+         * @param SourceState Transition 源状态，用于原生剩余时间 Getter 绑定。
+         * @return 完整规则与 Result 成功连接时返回 true；所需节点、Pin 或连接失败时返回 false。
          */
         bool BuildTransitionRuleGraph(
             const FSekiroAnimIRTransition& Transition,
@@ -2366,21 +2770,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
 
-            UFunction* EvaluateFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
-                GET_FUNCTION_NAME_CHECKED(
-                    USekiroLuaTransitionRuntimeLibrary,
-                    EvaluateLuaTransitionRule));
-            if (EvaluateFunction == nullptr)
-            {
-                AddError(
-                    Diagnostics,
-                    K2FunctionNotFound,
-                    TEXT("EvaluateLuaTransitionRule function was not found."),
-                    Transition.Id,
-                    Transition.SourceLocation);
-                return false;
-            }
-
+            const bool bHasLuaRule = !Transition.RuleFunctionName.IsNone();
+            const bool bHasNativeGate = Transition.Gate.RootIndex != INDEX_NONE;
             ResultNode->NodeGuid = MakeStableGuid(TEXT("TransitionResult"), Transition.Id);
             ResultNode->NodePosX = 600;
             ResultNode->NodePosY = 0;
@@ -2389,95 +2780,155 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 TEXT("TransitionRule.Self.") + Transition.Id,
                 0,
                 160);
-            UK2Node_CallFunction* EvaluateNode = CreateCallFunctionNode(
-                *TransitionGraph,
-                TEXT("EvaluateTransitionRule.") + Transition.Id,
-                EvaluateFunction,
-                260,
-                0);
-
             UEdGraphPin* SelfPin = SelfNode != nullptr
                 ? SelfNode->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Output)
                 : nullptr;
-            UEdGraphPin* AnimInstancePin = EvaluateNode != nullptr
-                ? EvaluateNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
-                : nullptr;
-            UEdGraphPin* ModulePin = EvaluateNode != nullptr
-                ? EvaluateNode->FindPin(TEXT("LuaModuleName"), EGPD_Input)
-                : nullptr;
-            UEdGraphPin* RulePin = EvaluateNode != nullptr
-                ? EvaluateNode->FindPin(TEXT("RuleFunctionName"), EGPD_Input)
-                : nullptr;
-            UEdGraphPin* ReturnPin = EvaluateNode != nullptr ? EvaluateNode->GetReturnValuePin() : nullptr;
             UEdGraphPin* ResultPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input);
-            if (SelfPin == nullptr
-                || AnimInstancePin == nullptr
-                || ModulePin == nullptr
-                || RulePin == nullptr
-                || ReturnPin == nullptr
-                || ResultPin == nullptr)
+            if (SelfPin == nullptr || ResultPin == nullptr)
             {
                 AddError(
                     Diagnostics,
                     K2PinNotFound,
-                    TEXT("Lua Transition Rule call or Result did not expose required K2 Pins."),
+                    TEXT("Transition Rule Self or Result did not expose required K2 Pins."),
                     Transition.Id,
                     Transition.SourceLocation);
                 return false;
             }
 
             const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
-            K2Schema->TrySetDefaultValue(*ModulePin, Preflight.Blueprint.SourceModule, false);
-            K2Schema->TrySetDefaultValue(*RulePin, Transition.RuleFunctionName.ToString(), false);
-            if (!K2Schema->TryCreateConnection(SelfPin, AnimInstancePin))
+            UEdGraphPin* LuaReturnPin = nullptr;
+            if (bHasLuaRule)
+            {
+                UFunction* EvaluateFunction = USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(
+                    GET_FUNCTION_NAME_CHECKED(
+                        USekiroLuaTransitionRuntimeLibrary,
+                        EvaluateLuaTransitionRule));
+                if (EvaluateFunction == nullptr)
+                {
+                    AddError(
+                        Diagnostics,
+                        K2FunctionNotFound,
+                        TEXT("EvaluateLuaTransitionRule function was not found."),
+                        Transition.Id,
+                        Transition.SourceLocation);
+                    return false;
+                }
+
+                UK2Node_CallFunction* EvaluateNode = CreateCallFunctionNode(
+                    *TransitionGraph,
+                    TEXT("EvaluateTransitionRule.") + Transition.Id,
+                    EvaluateFunction,
+                    260,
+                    0);
+                UEdGraphPin* AnimInstancePin = EvaluateNode != nullptr
+                    ? EvaluateNode->FindPin(TEXT("AnimInstance"), EGPD_Input)
+                    : nullptr;
+                UEdGraphPin* ModulePin = EvaluateNode != nullptr
+                    ? EvaluateNode->FindPin(TEXT("LuaModuleName"), EGPD_Input)
+                    : nullptr;
+                UEdGraphPin* RulePin = EvaluateNode != nullptr
+                    ? EvaluateNode->FindPin(TEXT("RuleFunctionName"), EGPD_Input)
+                    : nullptr;
+                LuaReturnPin = EvaluateNode != nullptr ? EvaluateNode->GetReturnValuePin() : nullptr;
+                if (AnimInstancePin == nullptr
+                    || ModulePin == nullptr
+                    || RulePin == nullptr
+                    || LuaReturnPin == nullptr)
+                {
+                    AddError(
+                        Diagnostics,
+                        K2PinNotFound,
+                        TEXT("Lua Transition Rule call did not expose required K2 Pins."),
+                        Transition.Id,
+                        Transition.SourceLocation);
+                    return false;
+                }
+
+                K2Schema->TrySetDefaultValue(*ModulePin, Preflight.Blueprint.SourceModule, false);
+                K2Schema->TrySetDefaultValue(*RulePin, Transition.RuleFunctionName.ToString(), false);
+                if (!K2Schema->TryCreateConnection(SelfPin, AnimInstancePin))
+                {
+                    AddError(
+                        Diagnostics,
+                        K2ConnectionFailed,
+                        TEXT("Failed to connect AnimInstance Self to Lua Transition Rule call."),
+                        Transition.Id,
+                        Transition.SourceLocation);
+                    return false;
+                }
+            }
+
+            UEdGraphPin* FinalRulePin = LuaReturnPin;
+            if (bHasNativeGate)
+            {
+                UEdGraphPin* NativeGatePin = BuildTransitionGateNode(
+                    Transition,
+                    Transition.Gate.RootIndex,
+                    *TransitionGraph,
+                    SourceState,
+                    *SelfPin,
+                    LuaReturnPin);
+                if (NativeGatePin == nullptr) return false;
+                if (LuaReturnPin == nullptr)
+                {
+                    FinalRulePin = NativeGatePin;
+                }
+                else
+                {
+                    UFunction* AndFunction = UKismetMathLibrary::StaticClass()->FindFunctionByName(
+                        GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, BooleanAND));
+                    UK2Node_CallFunction* AndNode = CreateCallFunctionNode(
+                        *TransitionGraph, TEXT("Gate.AndLua.") + Transition.Id, AndFunction, 480, 0);
+                    UEdGraphPin* AndA = AndNode != nullptr ? AndNode->FindPin(TEXT("A"), EGPD_Input) : nullptr;
+                    UEdGraphPin* AndB = AndNode != nullptr ? AndNode->FindPin(TEXT("B"), EGPD_Input) : nullptr;
+                    UEdGraphPin* AndResult = AndNode != nullptr ? AndNode->GetReturnValuePin() : nullptr;
+                    if (AndA == nullptr || AndB == nullptr || AndResult == nullptr)
+                    {
+                        AddError(
+                            Diagnostics,
+                            K2ConnectionFailed,
+                            TEXT("Failed to create Lua/Gate AND Pins."),
+                            Transition.Id,
+                            Transition.SourceLocation);
+                        return false;
+                    }
+                    const bool bLuaBoolConnected = K2Schema->TryCreateConnection(LuaReturnPin, AndA);
+                    const bool bNativeGateConnected = K2Schema->TryCreateConnection(NativeGatePin, AndB);
+                    if (!bLuaBoolConnected || !bNativeGateConnected)
+                    {
+                        AddError(Diagnostics, K2ConnectionFailed,
+                            FString::Printf(
+                                TEXT("Failed to combine Lua bool with native Transition Gate (Lua=%s, Gate=%s)."),
+                                bLuaBoolConnected ? TEXT("connected") : TEXT("rejected"),
+                                bNativeGateConnected ? TEXT("connected") : TEXT("rejected")),
+                            Transition.Id, Transition.SourceLocation);
+                        return false;
+                    }
+                    FinalRulePin = AndResult;
+                }
+            }
+
+            if (bHasNativeGate && FinalRulePin != nullptr)
+            {
+                FinalRulePin = BuildTransitionExpressionDebugValueNode(
+                    Transition,
+                    TEXT("Final"),
+                    TEXT("RuleResult"),
+                    true,
+                    *TransitionGraph,
+                    *SelfPin,
+                    *FinalRulePin);
+            }
+            if (FinalRulePin == nullptr || !K2Schema->TryCreateConnection(FinalRulePin, ResultPin))
             {
                 AddError(
                     Diagnostics,
                     K2ConnectionFailed,
-                    TEXT("Failed to connect AnimInstance Self to Lua Transition Rule call."),
+                    TEXT("Failed to connect the final Transition Rule to Result."),
                     Transition.Id,
                     Transition.SourceLocation);
                 return false;
             }
-            UEdGraphPin* FinalRulePin = ReturnPin;
-            if (Transition.Gate.RootIndex != INDEX_NONE)
-            {
-                UEdGraphPin* NativeGatePin = BuildTransitionGateNode(
-                    Transition, Transition.Gate.RootIndex, *TransitionGraph, SourceState, *SelfPin, *ReturnPin);
-                UFunction* AndFunction = UKismetMathLibrary::StaticClass()->FindFunctionByName(
-                    GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, BooleanAND));
-                UK2Node_CallFunction* AndNode = CreateCallFunctionNode(
-                    *TransitionGraph, TEXT("Gate.AndLua.") + Transition.Id, AndFunction, 480, 0);
-                UEdGraphPin* AndA = AndNode != nullptr ? AndNode->FindPin(TEXT("A"), EGPD_Input) : nullptr;
-                UEdGraphPin* AndB = AndNode != nullptr ? AndNode->FindPin(TEXT("B"), EGPD_Input) : nullptr;
-                UEdGraphPin* AndResult = AndNode != nullptr ? AndNode->GetReturnValuePin() : nullptr;
-                if (NativeGatePin == nullptr || AndA == nullptr || AndB == nullptr || AndResult == nullptr)
-                {
-                    AddError(Diagnostics, K2ConnectionFailed,
-                        FString::Printf(
-                            TEXT("Failed to create Lua/Gate AND Pins (Gate=%s, A=%s, B=%s, Result=%s)."),
-                            NativeGatePin != nullptr ? TEXT("valid") : TEXT("missing"),
-                            AndA != nullptr ? TEXT("valid") : TEXT("missing"),
-                            AndB != nullptr ? TEXT("valid") : TEXT("missing"),
-                            AndResult != nullptr ? TEXT("valid") : TEXT("missing")),
-                        Transition.Id, Transition.SourceLocation);
-                    return false;
-                }
-                const bool bLuaBoolConnected = K2Schema->TryCreateConnection(ReturnPin, AndA);
-                const bool bNativeGateConnected = K2Schema->TryCreateConnection(NativeGatePin, AndB);
-                if (!bLuaBoolConnected || !bNativeGateConnected)
-                {
-                    AddError(Diagnostics, K2ConnectionFailed,
-                        FString::Printf(
-                            TEXT("Failed to combine Lua bool with native Transition Gate (Lua=%s, Gate=%s)."),
-                            bLuaBoolConnected ? TEXT("connected") : TEXT("rejected"),
-                            bNativeGateConnected ? TEXT("connected") : TEXT("rejected")),
-                        Transition.Id, Transition.SourceLocation);
-                    return false;
-                }
-                FinalRulePin = AndResult;
-            }
-            if (!K2Schema->TryCreateConnection(FinalRulePin, ResultPin)) return false;
             return true;
         }
 
@@ -2491,7 +2942,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
          * @param Graph 目标原生 Transition Rule Graph。
          * @param SourceState Transition 源 State，用于绑定最相关 SequencePlayer 时间 Getter。
          * @param SelfPin 当前 AnimInstance 的 Self 输出。
-         * @param LuaBoolPin 当前 Transition Graph 内 Lua Rule 的直接 Bool 输出。
+         * @param LuaBoolPin 当前 Transition Graph 内 Lua Rule 的直接 Bool 输出；纯原生规则可为空。
          * @return 成功时返回子树 Bool 输出 Pin；节点或连接创建失败时返回 nullptr。
          */
         UEdGraphPin* BuildTransitionGateNode(
@@ -2500,11 +2951,73 @@ namespace SekiroAnimBlueprintFactoryPrivate
             UAnimationTransitionGraph& Graph,
             UAnimStateNode& SourceState,
             UEdGraphPin& SelfPin,
-            UEdGraphPin& LuaBoolPin)
+            UEdGraphPin* LuaBoolPin)
         {
             const FSekiroAnimIRTransitionGateNode& GateNode = Transition.Gate.Nodes[GateIndex];
-            if (GateNode.Type == TEXT("LuaBool")) return &LuaBoolPin;
+            if (GateNode.Type == TEXT("LuaBool")) return LuaBoolPin;
             const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
+            if (GateNode.Type == TEXT("BoolProperty"))
+            {
+                FGraphNodeCreator<UK2Node_VariableGet> GetterCreator(Graph);
+                UK2Node_VariableGet* Getter = GetterCreator.CreateNode(false);
+                if (Getter == nullptr) return nullptr;
+                Getter->VariableReference.SetSelfMember(GateNode.Name);
+                GetterCreator.Finalize();
+                Getter->NodeGuid = MakeStableGuid(
+                    TEXT("GateBoolProperty"),
+                    Transition.Id + FString::FromInt(GateIndex));
+                Getter->NodePosX = 120;
+                Getter->NodePosY = GateIndex * 120;
+
+                UFunction* CompareFunction = UKismetMathLibrary::StaticClass()->FindFunctionByName(
+                    GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, EqualEqual_BoolBool));
+                UK2Node_CallFunction* Compare = CreateCallFunctionNode(
+                    Graph,
+                    TEXT("Gate.BoolCompare.") + Transition.Id + FString::FromInt(GateIndex),
+                    CompareFunction,
+                    360,
+                    GateIndex * 120);
+                UEdGraphPin* PropertyValue = Getter->GetValuePin();
+                UEdGraphPin* A = Compare != nullptr ? Compare->FindPin(TEXT("A"), EGPD_Input) : nullptr;
+                UEdGraphPin* B = Compare != nullptr ? Compare->FindPin(TEXT("B"), EGPD_Input) : nullptr;
+                UEdGraphPin* CompareResult = Compare != nullptr ? Compare->GetReturnValuePin() : nullptr;
+                if (PropertyValue == nullptr || A == nullptr || B == nullptr || CompareResult == nullptr)
+                {
+                    AddError(
+                        Diagnostics,
+                        K2PinNotFound,
+                        TEXT("BoolProperty Gate Getter or comparison did not expose required Pins."),
+                        Transition.Id,
+                        Transition.SourceLocation);
+                    return nullptr;
+                }
+                if (!Schema->TryCreateConnection(PropertyValue, A))
+                {
+                    AddError(
+                        Diagnostics,
+                        K2ConnectionFailed,
+                        FString::Printf(
+                            TEXT("BoolProperty Gate '%s' rejected Getter-to-comparison connection."),
+                            *GateNode.Name.ToString()),
+                        Transition.Id,
+                        Transition.SourceLocation);
+                    return nullptr;
+                }
+                Schema->TrySetDefaultValue(
+                    *B,
+                    GateNode.bExpectedBool ? TEXT("true") : TEXT("false"),
+                    false);
+                return BuildBoolTransitionDebugValueNode(
+                    Transition,
+                    GateIndex,
+                    MakeTransitionExpressionLabel(GateNode, GateIndex),
+                    GateNode.Name.ToString(),
+                    GateNode.bExpectedBool,
+                    Graph,
+                    SelfPin,
+                    *PropertyValue,
+                    *CompareResult);
+            }
             if (GateNode.Type == TEXT("TimeRemainingLessEqual"))
             {
                 UFunction* RelevantTimeFunction = UAnimInstance::StaticClass()->FindFunctionByName(
@@ -2565,8 +3078,18 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     AddError(Diagnostics, K2PinNotFound,
                         TEXT("TimeRemaining Gate comparison has no return Pin."),
                         Transition.Id, Transition.SourceLocation);
+                    return nullptr;
                 }
-                return CompareResult;
+                return BuildFloatTransitionDebugValueNode(
+                    Transition,
+                    GateIndex,
+                    MakeTransitionExpressionLabel(GateNode, GateIndex),
+                    TEXT("RelevantTimeRemaining"),
+                    GateNode.Threshold,
+                    Graph,
+                    SelfPin,
+                    *GetterOutput,
+                    *CompareResult);
             }
             if (GateNode.Type == TEXT("CurveGreaterEqual"))
             {
@@ -2584,9 +3107,27 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     Graph, TEXT("Gate.CurveCompare.") + Transition.Id + FString::FromInt(GateIndex), CompareFunction, 360, GateIndex * 120);
                 UEdGraphPin* A = Compare != nullptr ? Compare->FindPin(TEXT("A"), EGPD_Input) : nullptr;
                 UEdGraphPin* B = Compare != nullptr ? Compare->FindPin(TEXT("B"), EGPD_Input) : nullptr;
-                if (A == nullptr || B == nullptr || !Schema->TryCreateConnection(Curve->GetReturnValuePin(), A)) return nullptr;
+                UEdGraphPin* CurveValue = Curve != nullptr ? Curve->GetReturnValuePin() : nullptr;
+                UEdGraphPin* CompareResult = Compare != nullptr ? Compare->GetReturnValuePin() : nullptr;
+                if (A == nullptr
+                    || B == nullptr
+                    || CurveValue == nullptr
+                    || CompareResult == nullptr
+                    || !Schema->TryCreateConnection(CurveValue, A))
+                {
+                    return nullptr;
+                }
                 Schema->TrySetDefaultValue(*B, FString::SanitizeFloat(GateNode.Threshold), false);
-                return Compare->GetReturnValuePin();
+                return BuildFloatTransitionDebugValueNode(
+                    Transition,
+                    GateIndex,
+                    MakeTransitionExpressionLabel(GateNode, GateIndex),
+                    GateNode.Name.ToString(),
+                    GateNode.Threshold,
+                    Graph,
+                    SelfPin,
+                    *CurveValue,
+                    *CompareResult);
             }
 
             UEdGraphPin* Accumulator = BuildTransitionGateNode(
@@ -2600,7 +3141,16 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     Graph, TEXT("Gate.Not.") + Transition.Id + FString::FromInt(GateIndex), NotFunction, 360, GateIndex * 120);
                 UEdGraphPin* Input = NotNode != nullptr ? NotNode->FindPin(TEXT("A"), EGPD_Input) : nullptr;
                 if (Input == nullptr || !Schema->TryCreateConnection(Accumulator, Input)) return nullptr;
-                return NotNode->GetReturnValuePin();
+                UEdGraphPin* NotResult = NotNode->GetReturnValuePin();
+                if (NotResult == nullptr) return nullptr;
+                return BuildTransitionExpressionDebugValueNode(
+                    Transition,
+                    FString::FromInt(GateIndex),
+                    MakeTransitionExpressionLabel(GateNode, GateIndex),
+                    false,
+                    Graph,
+                    SelfPin,
+                    *NotResult);
             }
 
             UFunction* CombineFunction = UKismetMathLibrary::StaticClass()->FindFunctionByName(
@@ -2621,7 +3171,16 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     || !Schema->TryCreateConnection(Child, B)) return nullptr;
                 Accumulator = Combine->GetReturnValuePin();
             }
-            return Accumulator;
+            return Accumulator != nullptr
+                ? BuildTransitionExpressionDebugValueNode(
+                    Transition,
+                    FString::FromInt(GateIndex),
+                    MakeTransitionExpressionLabel(GateNode, GateIndex),
+                    false,
+                    Graph,
+                    SelfPin,
+                    *Accumulator)
+                : nullptr;
         }
 
         /**

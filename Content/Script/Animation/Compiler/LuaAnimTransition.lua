@@ -8,7 +8,7 @@ local CompilerClass = require("Animation.Compiler.CompilerClass")
 ---@field Key string 状态机内唯一语义键。
 ---@field SourceStateId string 起始状态稳定 ID。
 ---@field TargetStateId string 目标状态稳定 ID。
----@field RuleFunctionName string 导出给运行时桥接的完整 Lua 函数名。
+---@field RuleFunctionName string|nil 导出给运行时桥接的完整 Lua 函数名；纯原生 Rule 为空。
 ---@field Settings LuaAnimTransitionSettings|nil 初始过渡设置。
 ---@field DeclarationOrder number 源码声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Lua 源码位置。
@@ -18,10 +18,11 @@ local CompilerClass = require("Animation.Compiler.CompilerClass")
 ---@field Key string 状态机内唯一语义键。
 ---@field SourceStateId string 起始状态稳定 ID。
 ---@field TargetStateId string 目标状态稳定 ID。
----@field RuleFunctionName string 导出给运行时桥接的完整 Lua 函数名。
+---@field RuleFunctionName string 导出给运行时桥接的完整 Lua 函数名；空字符串表示只使用原生 Rule AST。
 ---@field BlendDuration number 原生 Transition 混合时长，单位秒。
 ---@field PriorityOrder number 同源 Transition 的优先级整数。
 ---@field BlendMode string 原生 AlphaBlend 模式注册名。
+---@field Gate LuaTransitionGateExpression|nil 完整原生 Rule AST，或与旧式 Lua Rule 组合的附加 Gate。
 ---@field DeclarationOrder number 源码声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Lua 源码位置。
 local LuaAnimTransition = CompilerClass:Extend("LuaAnimTransition")
@@ -35,11 +36,12 @@ function LuaAnimTransition:Initialize(config)
     self.Key = assert(config.Key, "LuaAnimTransition requires Key")
     self.SourceStateId = assert(config.SourceStateId, "LuaAnimTransition requires SourceStateId")
     self.TargetStateId = assert(config.TargetStateId, "LuaAnimTransition requires TargetStateId")
-    self.RuleFunctionName = assert(config.RuleFunctionName, "LuaAnimTransition requires RuleFunctionName")
+    self.RuleFunctionName = config.RuleFunctionName or ""
     self.BlendDuration = settings.BlendDuration or 0.2
     self.PriorityOrder = settings.PriorityOrder or config.DeclarationOrder
     self.BlendMode = settings.BlendMode or "Linear"
-    self.Gate = settings.Gate
+    assert(settings.Rule == nil or settings.Gate == nil, "Transition cannot declare both Rule and legacy Gate")
+    self.Gate = settings.Rule or settings.Gate
     self.DeclarationOrder = config.DeclarationOrder or 0
     self.SourceLocation = assert(config.SourceLocation, "LuaAnimTransition requires SourceLocation")
 end
@@ -64,6 +66,7 @@ function LuaAnimTransition:ToIR()
             Type = gate.Type,
             Name = gate.Name or "",
             Threshold = gate.Threshold or 0.0,
+            ExpectedBool = gate.ExpectedBool == true,
             Children = child_indices,
         })
         return index

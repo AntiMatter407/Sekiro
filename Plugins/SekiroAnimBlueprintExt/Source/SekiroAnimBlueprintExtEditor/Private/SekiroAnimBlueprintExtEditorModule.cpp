@@ -4,17 +4,29 @@
 #include "Async/Async.h"
 #include "DirectoryWatcherModule.h"
 #include "Editor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Docking/TabManager.h"
 #include "IAnimationBlueprintEditorModule.h"
 #include "HAL/FileManager.h"
 #include "IDirectoryWatcher.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "SekiroLuaAnimSnapshotViewer.h"
 #include "SekiroLuaAnimBlueprintEditorBinding.h"
 #include "SekiroLuaAnimBlueprintAutoCompileScheduler.h"
+#include "ToolMenus.h"
 #include "UnLuaFunctionLibrary.h"
 #include "UnLuaModule.h"
+#include "Widgets/Docking/SDockTab.h"
+#include "WorkspaceMenuStructure.h"
+#include "WorkspaceMenuStructureModule.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSekiroAnimBlueprintExtEditor, Log, All);
+
+namespace SekiroAnimBlueprintExtEditorPrivate
+{
+const FName LuaAnimSnapshotViewerTabName(TEXT("LuaAnimSnapshotViewer"));
+}
 
 /** 管理 Lua 动画源码监听、PIE 前同步编译以及官方动画蓝图编辑器工具栏扩展。 */
 class FSekiroAnimBlueprintExtEditorModule final : public IModuleInterface
@@ -31,6 +43,8 @@ private:
     TSharedRef<FExtender> ExtendAnimationBlueprintToolbar(
         const TSharedRef<FUICommandList> CommandList,
         TSharedRef<IAnimationBlueprintEditor> Editor);
+    TSharedRef<SDockTab> SpawnLuaAnimSnapshotViewerTab(const FSpawnTabArgs& SpawnTabArgs);
+    void RegisterLuaAnimSnapshotViewerMenus();
 
     static void MarkPendingSourceChanges(
         TWeakPtr<FSekiroLuaAnimBlueprintAutoCompileScheduler, ESPMode::ThreadSafe> WeakScheduler);
@@ -51,6 +65,19 @@ private:
 void FSekiroAnimBlueprintExtEditorModule::StartupModule()
 {
     bShuttingDown = false;
+
+    FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+        SekiroAnimBlueprintExtEditorPrivate::LuaAnimSnapshotViewerTabName,
+        FOnSpawnTab::CreateRaw(
+            this,
+            &FSekiroAnimBlueprintExtEditorModule::SpawnLuaAnimSnapshotViewerTab))
+        .SetDisplayName(FText::FromString(TEXT("Lua Anim Snapshot Viewer")))
+        .SetTooltipText(FText::FromString(TEXT("查看 Lua 动画蓝图运行快照")))
+        .SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory());
+    UToolMenus::RegisterStartupCallback(
+        FSimpleMulticastDelegate::FDelegate::CreateRaw(
+            this,
+            &FSekiroAnimBlueprintExtEditorModule::RegisterLuaAnimSnapshotViewerMenus));
 
     FSekiroLuaAnimBlueprintEditorBinding::PrepareEditorLuaDebugBeforeEnvCreation();
     IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
@@ -99,6 +126,13 @@ void FSekiroAnimBlueprintExtEditorModule::StartupModule()
 void FSekiroAnimBlueprintExtEditorModule::ShutdownModule()
 {
     bShuttingDown = true;
+    UToolMenus::UnRegisterStartupCallback(this);
+    UToolMenus::UnregisterOwner(this);
+    if (FSlateApplication::IsInitialized())
+    {
+        FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(
+            SekiroAnimBlueprintExtEditorPrivate::LuaAnimSnapshotViewerTabName);
+    }
     UnregisterScriptWatcher();
     if (PreBeginPIEHandle.IsValid())
     {
@@ -165,6 +199,44 @@ TSharedRef<FExtender> FSekiroAnimBlueprintExtEditorModule::ExtendAnimationBluepr
     }
 
     return Binding->GetToolbarExtender();
+}
+
+/**
+ * 为 Nomad Tab 创建独立 Lua 动画快照查看器。
+ * 只能由全局 TabManager 在游戏线程调用；SpawnTabArgs 仅描述本次生成请求且不被保留。
+ * 返回由 TabManager 管理生命周期的有效 DockTab。
+ */
+TSharedRef<SDockTab> FSekiroAnimBlueprintExtEditorModule::SpawnLuaAnimSnapshotViewerTab(
+    const FSpawnTabArgs& SpawnTabArgs)
+{
+    return SNew(SDockTab)
+        .TabRole(ETabRole::NomadTab)
+        [
+            SNew(SSekiroLuaAnimSnapshotViewer)
+        ];
+}
+
+/**
+ * 在 Level Editor 的 Window 菜单注册快照查看器入口，动作只负责唤起已注册 Nomad Tab。
+ * 由 ToolMenus 启动回调在游戏线程调用；菜单项归本模块所有并在 ShutdownModule 完整注销。
+ */
+void FSekiroAnimBlueprintExtEditorModule::RegisterLuaAnimSnapshotViewerMenus()
+{
+    FToolMenuOwnerScoped OwnerScoped(this);
+    UToolMenu* WindowMenu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Window"));
+    if (WindowMenu == nullptr) return;
+
+    FToolMenuSection& Section = WindowMenu->FindOrAddSection(TEXT("WindowLayout"));
+    Section.AddMenuEntry(
+        TEXT("LuaAnimSnapshotViewer"),
+        FText::FromString(TEXT("Lua Anim Snapshot Viewer")),
+        FText::FromString(TEXT("打开 Lua 动画蓝图运行快照查看器")),
+        FSlateIcon(),
+        FUIAction(FExecuteAction::CreateLambda([]()
+        {
+            FGlobalTabmanager::Get()->TryInvokeTab(
+                SekiroAnimBlueprintExtEditorPrivate::LuaAnimSnapshotViewerTabName);
+        })));
 }
 
 /**

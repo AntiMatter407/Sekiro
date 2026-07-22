@@ -1,6 +1,7 @@
 ﻿#include "SekiroLuaTransitionRuntimeLibrary.h"
 
 #include "Animation/AnimInstance.h"
+#include "SekiroLuaAnimDebugRuntime.h"
 #include "Containers/StringConv.h"
 #include "LuaEnv.h"
 #include "Misc/ScopeExit.h"
@@ -230,6 +231,21 @@ namespace SekiroLuaTransitionRuntimePrivate
         lua_pop(State, 1);
         return lua_getfield(State, ModuleTableIndex, FunctionUtf8.Get()) == LUA_TFUNCTION;
     }
+
+    /**
+     * 将旧式 Lua Transition 的失败尝试写入统一快照接口。
+     * 调试未启用时底层立即返回；ErrorText 保持原始错误文本，供 UI/JSONL 精确显示。
+     */
+    void RecordFailedTransition(
+        UAnimInstance* AnimInstance,
+        const FString& RuleFunctionName,
+        const FString& Phase,
+        const FString& ErrorText)
+    {
+        FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
+            AnimInstance, RuleFunctionName, TEXT("LuaTransitionRule"), Phase, TEXT("Error"), ErrorText,
+            FString(), FString(), false, false, true);
+    }
 }
 
 /**
@@ -255,6 +271,7 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateBlueprintUpdateAnimation(
     {
         return false;
     }
+    FSekiroLuaAnimDebugRuntime::RecordAnimInstanceModule(AnimInstance, LuaModuleName);
     IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
     if (UnLuaModule == nullptr) return false;
     if (!UnLuaModule->IsActive()) UnLuaModule->SetActive(true);
@@ -311,10 +328,12 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     {
         return false;
     }
+    FSekiroLuaAnimDebugRuntime::RecordAnimInstanceModule(AnimInstance, LuaModuleName);
 
     IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
     if (UnLuaModule == nullptr)
     {
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("Module"), TEXT("UnLua module is unavailable."));
         UE_LOG(LogSekiroLuaTransitionRuntime, Error, TEXT("UnLua module is unavailable."));
         return false;
     }
@@ -326,6 +345,7 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     UnLua::FLuaEnv* Environment = UnLuaModule->GetEnv(AnimInstance);
     if (Environment == nullptr)
     {
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("Environment"), TEXT("UnLua environment is unavailable."));
         UE_LOG(LogSekiroLuaTransitionRuntime, Error,
             TEXT("UnLua environment is unavailable for AnimInstance '%s'."),
             *AnimInstance->GetPathName());
@@ -342,12 +362,14 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     if (lua_pcall(State, 1, 1, 0) != LUA_OK)
     {
         const FString Error = UTF8_TO_TCHAR(lua_tostring(State, -1));
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("Require"), Error);
         UE_LOG(LogSekiroLuaTransitionRuntime, Error,
             TEXT("require('%s') failed: %s"), *LuaModuleName, *Error);
         return false;
     }
     if (!lua_istable(State, -1))
     {
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("RequireType"), TEXT("Lua module did not return a table."));
         UE_LOG(LogSekiroLuaTransitionRuntime, Error,
             TEXT("Lua module '%s' did not return a table."), *LuaModuleName);
         return false;
@@ -356,6 +378,10 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     const int32 ModuleTableIndex = lua_absindex(State, -1);
     if (!PushRuntimeFunction(State, ModuleTableIndex, RuleFunctionName))
     {
+        const FString Error = lua_isstring(State, -1)
+            ? UTF8_TO_TCHAR(lua_tostring(State, -1))
+            : FString::Printf(TEXT("Function '%s' is not exported."), *RuleFunctionName);
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("Function"), Error);
         UE_LOG(LogSekiroLuaTransitionRuntime, Error,
             TEXT("Lua module '%s' does not export function '%s'."),
             *LuaModuleName,
@@ -367,6 +393,7 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     if (lua_pcall(State, 1, 1, 0) != LUA_OK)
     {
         const FString Error = UTF8_TO_TCHAR(lua_tostring(State, -1));
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("PCall"), Error);
         UE_LOG(LogSekiroLuaTransitionRuntime, Error,
             TEXT("Lua transition rule '%s.%s' failed: %s"),
             *LuaModuleName,
@@ -376,6 +403,7 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
     }
     if (!lua_isboolean(State, -1))
     {
+        RecordFailedTransition(AnimInstance, RuleFunctionName, TEXT("ReturnType"), TEXT("Lua Transition must return strict boolean."));
         UE_LOG(LogSekiroLuaTransitionRuntime, Error,
             TEXT("Lua transition rule '%s.%s' must return boolean."),
             *LuaModuleName,
@@ -383,5 +411,86 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
         return false;
     }
 
-    return lua_toboolean(State, -1) != 0;
+    const bool bResult = lua_toboolean(State, -1) != 0;
+    FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
+        AnimInstance,
+        RuleFunctionName,
+        TEXT("LuaTransitionRule"),
+        TEXT("ReturnValue"),
+        TEXT("Bool"),
+        bResult ? TEXT("true") : TEXT("false"),
+        FString(),
+        FString(),
+        bResult,
+        bResult,
+        true);
+    return bResult;
+}
+
+/**
+ * 记录 Bool 叶或最终表达式并原样透传 Result，供生成的 Transition Graph 插桩。
+ * 仅游戏线程且调试/快照开启时记录；禁用时无日志且不改变图语义。
+ */
+bool USekiroLuaTransitionRuntimeLibrary::RecordBoolTransitionDebugValue(
+    UAnimInstance* AnimInstance,
+    const FString& TransitionId,
+    const FString& ExpressionLabel,
+    const FString& ParameterName,
+    const bool ActualValue,
+    const bool ExpectedValue,
+    const bool Result,
+    const bool bIsFinal)
+{
+    if (FSekiroLuaAnimDebugRuntime::IsSamplingEnabled())
+    {
+        FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
+            AnimInstance, TransitionId, ExpressionLabel, ParameterName, TEXT("Bool"),
+            ActualValue ? TEXT("true") : TEXT("false"), ExpectedValue ? TEXT("true") : TEXT("false"), FString(),
+            Result, bIsFinal ? Result : false, bIsFinal);
+    }
+    return Result;
+}
+
+/**
+ * 记录 Float 叶的实际值、阈值与结果并原样透传 Result，供生成图插桩。
+ * 所有文本使用稳定数值格式；禁用采样时不分配调试快照。
+ */
+bool USekiroLuaTransitionRuntimeLibrary::RecordFloatTransitionDebugValue(
+    UAnimInstance* AnimInstance,
+    const FString& TransitionId,
+    const FString& ExpressionLabel,
+    const FString& ParameterName,
+    const float ActualValue,
+    const float Threshold,
+    const bool Result,
+    const bool bIsFinal)
+{
+    if (FSekiroLuaAnimDebugRuntime::IsSamplingEnabled())
+    {
+        FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
+            AnimInstance, TransitionId, ExpressionLabel, ParameterName, TEXT("Float"),
+            FString::SanitizeFloat(ActualValue), FString(), FString::SanitizeFloat(Threshold),
+            Result, bIsFinal ? Result : false, bIsFinal);
+    }
+    return Result;
+}
+
+/**
+ * 记录无标量参数的逻辑/最终表达式并原样透传 Result。
+ * bIsFinal 为 true 时 RuleResult 才具有权威含义；函数不触发 Lua 或日志。
+ */
+bool USekiroLuaTransitionRuntimeLibrary::RecordTransitionExpressionDebugValue(
+    UAnimInstance* AnimInstance,
+    const FString& TransitionId,
+    const FString& ExpressionLabel,
+    const bool Result,
+    const bool bIsFinal)
+{
+    if (FSekiroLuaAnimDebugRuntime::IsSamplingEnabled())
+    {
+        FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
+            AnimInstance, TransitionId, ExpressionLabel, FString(), TEXT("Expression"),
+            Result ? TEXT("true") : TEXT("false"), FString(), FString(), Result, bIsFinal ? Result : false, bIsFinal);
+    }
+    return Result;
 }

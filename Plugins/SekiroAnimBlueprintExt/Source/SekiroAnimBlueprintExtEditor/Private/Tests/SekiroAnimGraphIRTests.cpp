@@ -1872,4 +1872,72 @@ bool FSekiroAnimGraphIRUnexpectedOwnedGraphTest::RunTest(const FString& Paramete
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRNativeBoolTransitionRuleTest,
+    "Sekiro.AnimGraphIR.NativeBoolTransitionRule",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 BoolProperty 可独立构成无 Lua 函数的完整 Transition Rule，并拒绝无规则、空属性名与无来源 LuaBool。
+ * 测试仅修改内存 IR，不加载父类、生成蓝图或访问 Lua VM。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRNativeBoolTransitionRuleTest::RunTest(const FString& Parameters)
+{
+    FSekiroAnimBlueprintIR Blueprint = SekiroAnimGraphIRTests::MakeMinimalIR();
+    FSekiroAnimIRTransition& Transition =
+        Blueprint.Layers[0].Graphs[1].StateMachine.Transitions.AddDefaulted_GetRef();
+    Transition.Id = TEXT("Transition.NativeBool");
+    Transition.Key = TEXT("NativeBool");
+    Transition.SourceStateId = TEXT("State.Idle");
+    Transition.TargetStateId = TEXT("State.Idle");
+    Transition.SourceLocation = Blueprint.SourceLocation;
+    FSekiroAnimIRTransitionGateNode& BoolProperty = Transition.Gate.Nodes.AddDefaulted_GetRef();
+    BoolProperty.Type = TEXT("BoolProperty");
+    BoolProperty.Name = TEXT("bCanEnter");
+    BoolProperty.bExpectedBool = false;
+    Transition.Gate.RootIndex = 0;
+
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestTrue(
+        TEXT("Pure native BoolProperty Transition is valid"),
+        USekiroAnimGraphIRLibrary::Validate(Blueprint, Diagnostics));
+    TestEqual(TEXT("Pure native BoolProperty has no diagnostics"), Diagnostics.Num(), 0);
+
+    FSekiroAnimBlueprintIR MissingRuleBlueprint = Blueprint;
+    MissingRuleBlueprint.Layers[0].Graphs[1].StateMachine.Transitions[0].Gate.Nodes.Reset();
+    MissingRuleBlueprint.Layers[0].Graphs[1].StateMachine.Transitions[0].Gate.RootIndex = INDEX_NONE;
+    Diagnostics.Reset();
+    TestFalse(
+        TEXT("Transition without Lua or native Rule is invalid"),
+        USekiroAnimGraphIRLibrary::Validate(MissingRuleBlueprint, Diagnostics));
+    TestTrue(
+        TEXT("Missing complete Transition Rule emits stable code"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(Diagnostics, TEXT("IR.EmptyTransitionRule")));
+
+    FSekiroAnimBlueprintIR EmptyPropertyBlueprint = Blueprint;
+    EmptyPropertyBlueprint.Layers[0].Graphs[1].StateMachine.Transitions[0].Gate.Nodes[0].Name = NAME_None;
+    Diagnostics.Reset();
+    TestFalse(
+        TEXT("BoolProperty without property name is invalid"),
+        USekiroAnimGraphIRLibrary::Validate(EmptyPropertyBlueprint, Diagnostics));
+    TestTrue(
+        TEXT("Empty BoolProperty name emits Gate code"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(Diagnostics, TEXT("IR.InvalidTransitionGate")));
+
+    FSekiroAnimBlueprintIR NativeLuaBoolBlueprint = Blueprint;
+    NativeLuaBoolBlueprint.Layers[0].Graphs[1].StateMachine.Transitions[0].Gate.Nodes[0].Type = TEXT("LuaBool");
+    NativeLuaBoolBlueprint.Layers[0].Graphs[1].StateMachine.Transitions[0].Gate.Nodes[0].Name = NAME_None;
+    Diagnostics.Reset();
+    TestFalse(
+        TEXT("Pure native Rule cannot contain LuaBool"),
+        USekiroAnimGraphIRLibrary::Validate(NativeLuaBoolBlueprint, Diagnostics));
+    TestTrue(
+        TEXT("LuaBool without RuleFunctionName emits Gate code"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(Diagnostics, TEXT("IR.InvalidTransitionGate")));
+    return true;
+}
+
 #endif

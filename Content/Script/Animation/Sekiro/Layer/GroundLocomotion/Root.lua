@@ -1,4 +1,4 @@
--- Lua 类型：动画蓝图编译描述/状态机模块；编译对象是纯 Lua 表，运行时规则仅通过显式 Inst 访问 AnimInstance。
+-- Lua 类型：动画蓝图编译描述模块。编译期对象是纯 Lua；Transition 规则生成 UE 原生属性与 Gate 节点。
 -- Sekiro RootLocomotion 状态机。
 -- Grounded 内嵌统一运动阶段状态机；InAir 内嵌 Jump Start/InAir/Land 子状态机。
 
@@ -21,14 +21,29 @@ function RootLocomotion.StateMachine(Machine)
     Machine:Entry("Grounded")
     Machine:State("Grounded")
     Machine:State("InAir")
-    Machine:Transition("Grounded_InAir", "Grounded", "InAir", { BlendDuration = 0.08, PriorityOrder = 0 })
-    Machine:Transition("InAir_GroundedMoving", "InAir", "Grounded", {
-        BlendDuration = 0.10, PriorityOrder = 0,
-        Gate = Rule.CurveGreaterEqual(CurveNames.CanResumeMovement, Tuning.CurveThreshold),
+    -- CharacterMovement 报告离地时立刻进入 InAir，优先于所有地面动作。
+    Machine:Transition("Grounded_InAir", "Grounded", "InAir", {
+        BlendDuration = 0.08,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsInAir", true),
     })
+    -- 接地且仍有移动输入时，等待 Land 的安全打断曲线后提前返回 Grounded。
+    Machine:Transition("InAir_GroundedMoving", "InAir", "Grounded", {
+        BlendDuration = 0.10,
+        PriorityOrder = 0,
+        Rule = Rule.All(
+            Rule.BoolProperty("bIsInAir", false),
+            Rule.BoolProperty("bHasMovementInput", true),
+            Rule.CurveGreaterEqual(CurveNames.CanResumeMovement, Tuning.CurveThreshold)),
+    })
+    -- 接地且没有移动输入时，等待 Land 尾部曲线完整返回 Grounded。
     Machine:Transition("InAir_Grounded", "InAir", "Grounded", {
-        BlendDuration = 0.10, PriorityOrder = 1,
-        Gate = Rule.CurveGreaterEqual(CurveNames.CanExitLand, Tuning.CurveThreshold),
+        BlendDuration = 0.10,
+        PriorityOrder = 1,
+        Rule = Rule.All(
+            Rule.BoolProperty("bIsInAir", false),
+            Rule.BoolProperty("bHasMovementInput", false),
+            Rule.CurveGreaterEqual(CurveNames.CanExitLand, Tuning.CurveThreshold)),
     })
 
 end
@@ -48,29 +63,6 @@ end
 function RootLocomotion.StateGraph_InAir(Graph)
     local jump = Graph:StateMachine("JumpLocomotion", JumpLocomotion)
     Graph.Result:Connect(jump.Pose)
-end
-
----CharacterMovement 报告离地时立刻进入 InAir，优先于所有地面动作。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否进入 InAir。
-function RootLocomotion.CanEnter_Grounded_InAir(Inst)
-    return Inst.bIsInAir == true
-end
-
----CharacterMovement 已接地、仍有移动输入且 Land 到达安全打断窗口时提前返回 Grounded。
----CanResumeMovement 对锁定八方向使用更晚的窗口，避免差异较大的落地姿势首帧直接硬切到 Cycle。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否提前返回 Grounded。
-function RootLocomotion.CanEnter_InAir_GroundedMoving(Inst)
-    return Inst.bIsInAir ~= true and Inst.bHasMovementInput == true
-end
-
----CharacterMovement 已接地且没有移动输入时，在 Jump Land 尾部完整返回 Grounded。
----有移动输入由更高优先级的 GroundedMoving 分支处理，不让普通落地提前结束。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否返回 Grounded。
-function RootLocomotion.CanEnter_InAir_Grounded(Inst)
-    return Inst.bIsInAir ~= true and Inst.bHasMovementInput ~= true
 end
 
 return RootLocomotion

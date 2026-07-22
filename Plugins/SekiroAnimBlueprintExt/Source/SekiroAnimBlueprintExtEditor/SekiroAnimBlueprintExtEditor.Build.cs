@@ -24,13 +24,18 @@ public class SekiroAnimBlueprintExtEditor : ModuleRules
             "AssetRegistry",
             "BlueprintGraph",
             "DirectoryWatcher",
+            "DesktopPlatform",
+            "InputCore",
+            "Json",
             "Kismet",
             "KismetCompiler",
             "Lua",
             "Slate",
             "SlateCore",
+            "ToolMenus",
             "UnLua",
             "UnrealEd",
+            "WorkspaceMenuStructure",
         });
     }
 }

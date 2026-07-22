@@ -19,6 +19,7 @@ class USKWeaponManagerComponent;
 class USKInputManager;
 class USKCameraManagerComponent;
 class USKLockOnIndicatorComponent;
+class USKCombatComponent;
 
 UCLASS(config=Game)
 class SEKIRO_API ASKCharacter : public ACharacter
@@ -35,6 +36,8 @@ public:
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	FORCEINLINE USKInputManager* GetInputManager() const { return InputManager; }
+	/** 返回角色持有的战斗动作宿主；不转移所有权，角色构造完成后应始终非空。 */
+	FORCEINLINE USKCombatComponent* GetCombatComponent() const { return CombatComponent; }
 	FORCEINLINE USKCameraManagerComponent* GetCameraManager() const { return CameraManager; }
 	FORCEINLINE USKLockOnIndicatorComponent* GetLockOnIndicator() const { return LockOnIndicator; }
 	/** 返回角色持有的原生武器管理组件；不转移所有权，角色构造完成后应始终非空。 */
@@ -64,6 +67,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Input", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USKInputManager> InputManager;             // 输入处理组件
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USKCombatComponent> CombatComponent;       // 战斗动画动作宿主
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USKCameraManagerComponent> CameraManager;  // 摄像机与朝向管理组件

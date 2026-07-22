@@ -163,3 +163,15 @@
 - 旧的 `HandlePreloadObjectsForCompilation` 隐式重建路径已删除，普通原生编译不再暗中修改 Graph。
 
 Animation Lua 文件新增、修改或删除后只更新已加载 Lua AnimBlueprint 的 `SourceRevision` 和 Dirty 状态。启动 PIE 时仅同步编译 Source Mode 为 Lua 的已加载 Dirty 资产；PIE 中不执行结构重建。UI、输入和摄像机等 Animation 目录外 Gameplay Lua 不参与该流程。
+
+## 强类型 Transition Rule AST
+
+| 编号 | 任务 | 状态 |
+|------|------|------|
+| 14.1 | 新增 `BoolProperty(PropertyName, ExpectedBool)` 强类型叶节点 | 已完成 |
+| 14.2 | 允许纯原生 Rule 不声明 `RuleFunctionName` | 已完成 |
+| 14.3 | Factory 生成 Property Getter 与 Bool 比较，并保留旧 Lua Rule/Gate 兼容路径 | 已完成 |
+| 14.4 | 将 Root、Jump、GroundedMode 的 29 条 `CanEnter_*` 迁移为原生 Rule AST | 已完成 |
+| 14.5 | UE5.2 完整链接与新增 Automation 回归 | 源码编译 0 错误；当前被编辑器 Live Coding 锁定 DLL 阻塞，待关闭编辑器后执行 |
+
+本阶段只迁移现有布尔属性、曲线和组合条件；`BlueprintUpdateAnimation`、运行时 Lua 更新与多线程策略均保持不变。当前业务规则不需要 Enum 或数值属性比较，因此不扩展对应 AST 节点。

@@ -82,6 +82,10 @@ local Tuning = {
         -- Spine 是 Pelvis 之上的第一段躯干骨；深度 0 覆盖其后代，同时保留下半身移动姿势。
         BranchFilters = "Spine,0",
     },
+    Combat = {
+        FullBodySlotName = "CombatFullBodySlot",
+        GuardPoseBlendDuration = 0.08,
+    },
     LockOnOrientationWarping = {
         SpineBones = "Spine|Spine1|Spine2",
         -- Sekiro 骨架没有标准 UE ik_foot_root；占比为 1 时脚部不参与旋转，这些引用只满足原生节点有效性检查。

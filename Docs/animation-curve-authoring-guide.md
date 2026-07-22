@@ -46,6 +46,11 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `CanEnterInAir` | 使用中 | `int bool` | 锁定八方向 Jump Start 已进入可衔接方向 InAir 过渡段的窗口 | 锁定八方向 Jump Start Sequence | Jump Start 到 DirectionalInAir |
 | `CanResumeMovement` | 使用中 | `int bool` | Jump Land 已恢复到可被移动输入安全打断的姿势窗口 | 原地/非锁定共用及锁定八方向 Jump Land Sequence | 有输入时外层 InAir 提前返回 Grounded |
 | `CanExitLand` | 使用中 | `int bool` | Jump Land 已进入可完整结束落地的尾部窗口 | 原地/非锁定共用及锁定八方向 Jump Land Sequence | 无输入时外层 InAir 返回 Grounded |
+| `AttackSide` | 使用中 | `int enum` | 当前攻击动作提交下一攻击侧，`-1=Left`、`0=Keep`、`1=Right` | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
+| `CanAcceptLightAttack` | 使用中 | `int bool` | 当前攻击动作允许缓存下一段短按攻击 | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
+| `CanAcceptHeavyAttack` | 使用中 | `int bool` | 当前攻击动作允许缓存蓄力攻击 | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
+| `CanCancelToGuard` | 使用中 | `int bool` | 当前全身动作允许防御输入取消 | 支持防御取消的战斗 Sequence | Lua 战斗动作状态机 |
+| `CanCancelToDodge` | 已登记 | `int bool` | 当前全身动作允许闪避输入取消 | 支持闪避取消的战斗 Sequence | 后续闪避动作接入时启用 |
 | `FootPlant` | 已生成 | `int enum` | 当前稳定触地脚 | 需要脚步分析的 Locomotion Sequence | 自动标注、调试和相位校验；GroundLocomotion 暂未直接消费 |
 | `MovePhase` | 已生成 | `float` | 一个步态周期中的循环相位 | Start 与周期 Loop | 自动标注、调试和后续精确相位匹配；当前 GroundLocomotion 未直接消费 |
 | `FrameFlags` | 保留 | `int flags` | TAE 帧级行为标志 | 有对应 TAE 事件的动作动画 | 当前无正式运行时消费者 |
@@ -276,3 +281,16 @@ TAE 曲线入口：
 - 曲线 Gate 生成实现：`Plugins/SekiroAnimBlueprintExt/Source/SekiroAnimBlueprintExtEditor/Private/SekiroAnimBlueprintFactoryLibrary.cpp`
 - Lua 动画蓝图写法：[Lua 动画蓝图编写手册](lua-anim-blueprint-authoring-guide.md)
 - Lua 编码规范：[Lua 代码规范](lua-code-style.md)
+## 十、战斗动画曲线
+
+首版攻击/防御动作原型从活动 `UAnimSequence` 直接采样以下曲线，不读取最终混合 Pose 的曲线值。这样可避免全身 Slot 淡入淡出时把枚举值混合成中间浮点数。
+
+| 曲线 | 值域 | 作者规则 | 缺失行为 |
+|---|---:|---|---|
+| `AttackSide` | `-1 / 0 / 1` | 命中动作结束后、输入窗口开始前提交一次下一攻击侧；`-1=Left`、`0=Keep`、`1=Right`，动作末尾回零 | 保持当前侧别 |
+| `CanAcceptLightAttack` | `0 / 1` | 可接受下一次短按攻击的时间范围 | 不接受轻攻击续段 |
+| `CanAcceptHeavyAttack` | `0 / 1` | 可接受并等待本次按键释放判定长按的时间范围 | 不接受重攻击续段 |
+| `CanCancelToGuard` | `0 / 1` | 当前动作允许防御键取消的时间范围 | 不允许防御取消 |
+| `CanCancelToDodge` | `0 / 1` | 当前动作允许闪避取消的时间范围 | 不允许闪避取消 |
+
+这些曲线只控制动作衔接。当前阶段不读取 `AttackHitbox`，也不启用碰撞、伤害、生命或躯干值逻辑。

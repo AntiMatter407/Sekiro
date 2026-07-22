@@ -59,7 +59,7 @@ Layer/GroundLocomotion/Graph/MainAnimGraph/Node/Locomotion/Graph/StateMachine/Tr
 - StateMachine Node：位于 Pose 或 StatePose Graph，输出 Pose，并通过 OwnedGraphId 独占一个 StateMachine Graph。
 - StateMachine Graph：EntryStateId、States、Transitions，不能直接作为 Layer 根输出。
 - State：独占 StatePose Graph、`bAlwaysResetOnEntry`；Graph ID 由 State ID 派生。
-- Transition：状态机内唯一 Key、From/To、状态机作用域 `CanEnter_*` 函数名、显式 Priority、Blend 设置。
+- Transition：状态机内唯一 Key、From/To、强类型原生 Rule AST、可选兼容 `CanEnter_*` 函数名、显式 Priority、Blend 设置。
 - SourceLocation/Diagnostic：Lua 模块、行号、错误代码、严重级别和消息。
 
 属性值使用明确类型容器，第一阶段支持 Bool、Integer、Float、Name、String、SoftObjectPath 和 SoftClassPath。禁止把属性表拼成 JSON 字符串后再由后端猜类型。
@@ -96,8 +96,9 @@ Layer/GroundLocomotion/Graph/MainAnimGraph/Node/Locomotion/Graph/StateMachine/Tr
 后续方案允许在 PIE 中调试 Lua 的 Transition 与动画更新逻辑，但编译期和运行期职责必须分开：
 
 - `BuildAnimGraph`、Node/Link 声明和资产生成属于编辑器编译期，只在重新生成动画蓝图时执行和调试。
-- `NativeUpdateAnimation`、`CanEnter_*`、`UpdateAnimation_*` 属于 PIE 运行期，可通过 UnLua 与 Rider Lua 调试器断点调试。
-- Lua 来源 AnimBlueprint 暂时关闭多线程动画更新；原生状态机在游戏线程只检查当前状态的出边，对应 Transition Rule Graph 按需直接调用 Lua `CanEnter_*`。
+- `NativeUpdateAnimation`、`BlueprintUpdateAnimation` 与兼容旧模块的 `CanEnter_*` 属于 PIE 运行期，可通过 UnLua 与 Rider Lua 调试器断点调试。
+- 新 Transition 使用 BoolProperty、Curve、TimeRemaining、All/Any/Not 强类型 AST，由 Factory 生成完全原生的 Rule Graph；仅旧模块按需调用 Lua `CanEnter_*`。
+- Lua 来源 AnimBlueprint 仍因 `BlueprintUpdateAnimation` 暂时关闭多线程动画更新；本阶段不改变线程模型。
 - Pose、Root Motion、Notify、SequencePlayer 和混合仍由 UE 原生节点执行；Lua 不直接操作 `FCompactPose` 或在工作线程进入 UnLua VM。
 
 因此，Lua 可以像蓝图逻辑一样参与 PIE 调试，但不在动画工作线程直接执行 Lua VM，也不替代原生 Pose 求值。
@@ -127,7 +128,7 @@ CompilerClass
 - `LuaStateMachineNode` 是 Pose 节点，并拥有 `LuaAnimStateMachineGraph`；`State` 创建 `LuaAnimState` 及其独占 `LuaAnimStateGraph`。
 - `LuaAnimStateGraph` 使用 `StatePose` GraphType 和 `StateResult` 根节点，与主图的 `Pose + OutputPose` 保持原生语义区分。
 - `Export().CompileIR` 每次创建全新实例，避免 UnLua 热重载后残留上一次 Graph 数组。
-- 模块导出表沿继承链暴露子类方法，为后续 PIE 调用 `CanEnter_*` 和 `UpdateAnimation_*` 保持同一模块形态。
+- 模块导出表沿继承链暴露子类方法，为 PIE 调用 `BlueprintUpdateAnimation` 与兼容旧模块的 `CanEnter_*` 保持同一模块形态；纯原生 Rule 不注册运行时函数。
 
 ### Lua 与 C++ 边界
 
@@ -202,7 +203,7 @@ NodeFactory 只消费已经通过 Validator 的规范 IR，并把声明还原为
 
 `OutputPose` 与 `StateResult` 映射到 Schema 已创建的唯一默认 Result 节点，不重复创建。StateMachine Node 拥有 `UAnimationStateMachineGraph`，State 拥有 `UAnimationStateGraph`，Transition 拥有 `UAnimationTransitionGraph`；这些 Graph 同时保持正确的 UObject Outer 和父 Graph `SubGraphs` 关系。IR 的 Graph、Node、State 与 Transition 稳定 ID 映射为确定性 `GraphGuid`/`NodeGuid`，为后续增量重建和调试映射提供身份基础。
 
-Transition 后端会在每条原生 Transition Rule Graph 中生成 `EvaluateLuaTransitionRule` 调用，再将 Lua 结果与 IR 声明的原生 Gate 合并后连接 Result。`BlueprintUpdateAnimation` Event 只负责 Lua 动画参数更新，不再全量预计算 Transition。Lua 来源资产关闭多线程动画更新，保证原生状态机按优先级检查当前出边时，直接在游戏线程进入 UnLua。
+Transition 后端对强类型 Rule AST 直接生成 Bool 属性 Getter、Curve、TimeRemaining 与布尔组合节点，不创建 `EvaluateLuaTransitionRule`。兼容旧模块仍可生成 Lua 调用，并将返回值与附加 Gate 做 AND。`BlueprintUpdateAnimation` Event 继续负责 Lua 动画参数更新；Lua 来源资产仍关闭多线程动画更新，本阶段不调整其他 Runtime Lua 行为。
 
 一键入口 `CompileLuaModuleToAnimBlueprintAsset` 串联 `LuaModule -> CompileIR -> NodeFactory -> Blueprint Compile -> SavePackage`。它只创建新资产并拒绝覆盖，失败通过结构化 Diagnostic 返回；成功后生成物是标准 `UAnimBlueprint` 与 `GeneratedClass`，运行时不依赖编辑器模块。
 

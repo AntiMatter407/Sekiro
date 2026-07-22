@@ -100,13 +100,27 @@
 ---@field PriorityOrder number 同一源状态下的过渡优先级整数。
 ---@field BlendMode string UE 过渡混合模式注册名。
 
+---@alias SekiroAnimIRTransitionGateType '"LuaBool"'|'"BoolProperty"'|'"TimeRemainingLessEqual"'|'"CurveGreaterEqual"'|'"All"'|'"Any"'|'"Not"'
+
+---@class SekiroAnimIRTransitionGateNode
+---@field Type SekiroAnimIRTransitionGateType 强类型 Gate 节点类型。
+---@field Name string BoolProperty 的属性名或 CurveGreaterEqual 的曲线名。
+---@field Threshold number 时间或曲线比较阈值。
+---@field ExpectedBool boolean BoolProperty 叶节点期望的属性值。
+---@field Children number[] 子 Gate 节点的零基索引。
+
+---@class SekiroAnimIRTransitionGate
+---@field RootIndex number 根节点的零基索引；-1 表示没有 Gate。
+---@field Nodes SekiroAnimIRTransitionGateNode[] 后序扁平化的 Gate 节点。
+
 ---@class SekiroAnimIRTransition
 ---@field Id string Transition 稳定 ID。
 ---@field Key string 所属状态机内唯一且可读的 Transition Key。
 ---@field SourceStateId string 起始 State 稳定 ID。
 ---@field TargetStateId string 目标 State 稳定 ID。
----@field RuleFunctionName string Lua 规则函数名。
+---@field RuleFunctionName string Lua 规则函数名；空字符串表示 Transition 完全由原生 Gate AST 决定。
 ---@field Settings SekiroAnimIRTransitionSettings 过渡混合设置。
+---@field Gate SekiroAnimIRTransitionGate 强类型原生 Transition Rule AST。
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Transition 源码位置。
 

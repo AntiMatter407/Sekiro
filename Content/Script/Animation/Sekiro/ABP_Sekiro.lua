@@ -4,7 +4,9 @@
 
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local AnimAssets = require("Animation.Sekiro.AnimAssets")
 local RootLocomotion = require("Animation.Sekiro.Layer.GroundLocomotion.Root")
+local GuardPose = require("Animation.Sekiro.Layer.Combat.GuardPose")
 local Direction = require("Animation.Sekiro.Shared.Direction")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
@@ -21,6 +23,14 @@ local ABP_Sekiro = LuaAnimBlueprint:Extend("ABP_Sekiro", {
     ParentAnimInstanceClass = "/Script/Sekiro.SKAnimInstance",
     TargetSkeleton = "/Game/Characters/Sekiro/Sekiro_Skeleton.Sekiro_Skeleton",
 })
+
+---把 UE Sequence Player 报告的原生动画短名解析为 Lua 资源表中的语义名称。
+---快照调试器只在采样时调用该纯查询接口；未知资产返回 nil 并保留原生名称。
+---@param native_asset_name string 当前实际播放的动画 UObject 短名。
+---@return string|nil lua_asset_name 对应的 AnimAssets 分组路径；未登记时返回 nil。
+function ABP_Sekiro.ResolveDebugAnimationName(native_asset_name)
+    return AnimAssets.GetLuaAssetName(native_asset_name)
+end
 
 ---把输入目标步态转换为当前姿态实际具备的 Pose 分支。
 ---Standing 保留 Sprint，Crouching 只允许 Walk/Run；Idle 在有移动输入的异常帧回退为 Run，避免空枚举分支。
@@ -91,6 +101,8 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("bJumpStartedCrouchedPose", "Bool", false)
     self:Variable("bWasInAir", "Bool", false)
     self:Variable("FootIKAlpha", "Float", 0.0)
+    self:Variable("bCombatGuardPose", "Bool", false)
+    self:Variable("bCombatHasMovementInput", "Bool", false)
 end
 
 ---声明根动画图：Locomotion 经惯性化后与上半身 Slot 按 Spine 分层，再进入 Foot Placement 与双腿 Leg IK。
@@ -127,8 +139,23 @@ function ABP_Sekiro:AnimGraph(Graph)
     upper_body_blend.BasePose:Connect(locomotion_for_base.Pose)
     upper_body_blend.BlendPose:Connect(upper_body_slot.Pose)
 
+    -- Raise/Lower 由全身 Slot 播放；进入稳定 Guard 后切换为可持续的 Idle/Move 防御基础姿态。
+    local guard_pose = GuardPose.Build(Graph)
+    local use_guard_pose = Graph:Property("UseCombatGuardPose", "bCombatGuardPose")
+    local combat_base = Graph:BlendListByBool("CombatGuardBaseSelector")
+    combat_base.BlendTime = Tuning.Combat.GuardPoseBlendDuration
+    combat_base.FalsePose:Connect(upper_body_blend.Pose)
+    combat_base.TruePose:Connect(guard_pose.Pose)
+    combat_base.ActiveValue:Connect(use_guard_pose.Value)
+
+    -- 攻击、Raise/Lower 与 Deflect 都是全身动作，Slot 放在所有基础姿态分层之后。
+    local combat_full_body_slot = Graph:Slot("CombatFullBodySlot")
+    combat_full_body_slot.SlotName = Tuning.Combat.FullBodySlotName
+    combat_full_body_slot.bAlwaysUpdateSourcePose = true
+    combat_full_body_slot.Source:Connect(combat_base.Pose)
+
     local to_component = Graph:LocalToComponentSpace("FootIKLocalToComponent")
-    to_component.LocalPose:Connect(upper_body_blend.Pose)
+    to_component.LocalPose:Connect(combat_full_body_slot.Pose)
 
     local foot_placement = Graph:FootPlacement("FootPlacement")
     foot_placement.IKFootRootBone = foot_ik.IKFootRootBone
@@ -173,12 +200,16 @@ function ABP_Sekiro:AnimGraph(Graph)
     main_flow:Place(locomotion_for_slot, 3, 1)
     main_flow:Place(upper_body_slot, 4, 1)
     main_flow:Place(upper_body_blend, 5, 0)
-    main_flow:Place(to_component, 6, 0)
-    main_flow:Place(foot_placement, 7, 0)
-    main_flow:Place(foot_ik_alpha, 7, 1)
-    main_flow:Place(leg_ik, 8, 0)
-    main_flow:Place(to_local, 9, 0)
-    main_flow:Place(Graph.OutputNode, 10, 0)
+    main_flow:Place(guard_pose, 6, 1)
+    main_flow:Place(use_guard_pose, 6, 2)
+    main_flow:Place(combat_base, 7, 0)
+    main_flow:Place(combat_full_body_slot, 8, 0)
+    main_flow:Place(to_component, 9, 0)
+    main_flow:Place(foot_placement, 10, 0)
+    main_flow:Place(foot_ik_alpha, 10, 1)
+    main_flow:Place(leg_ik, 11, 0)
+    main_flow:Place(to_local, 12, 0)
+    main_flow:Place(Graph.OutputNode, 13, 0)
 end
 
 ---每帧在游戏线程更新原生 Graph 消费的方向、步态和一次性动作锁存变量。
@@ -193,7 +224,10 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     local pose_gait = normalize_pose_gait(Inst.DesiredGait, crouching)
     -- Foot Placement 在 UE 5.2 中不会因 CharacterMovement 进入 Falling 而自动停用，必须由 Lua 显式控制权重。
     -- 空中快速淡出可保留跳跃原姿势；落地较慢淡入可避免斜面命中变化导致骨盆和双腿瞬间弹跳。
-    local foot_ik_target = Inst.bIsInAir == true and 0.0 or 1.0
+    Inst.bCombatGuardPose = Inst.bIsCombatGuardPoseActive == true
+    Inst.bCombatHasMovementInput = has_input
+    local suppress_foot_ik = Inst.bIsInAir == true or Inst.bIsCombatFullBodyActionActive == true
+    local foot_ik_target = suppress_foot_ik and 0.0 or 1.0
     local current_foot_ik_alpha = Inst.FootIKAlpha or foot_ik_target
     local foot_ik_speed = foot_ik_target > current_foot_ik_alpha
         and Tuning.FootIK.GroundBlendInSpeed

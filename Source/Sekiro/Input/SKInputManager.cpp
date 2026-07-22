@@ -4,6 +4,7 @@
 #include "Animation/AnimInstance.h"
 #include "Camera/SKCameraManagerComponent.h"
 #include "Character/SKCharacter.h"
+#include "Combat/SKCombatComponent.h"
 #include "Movement/SKMovementComponent.h"
 #include "Weapon/SKWeapon.h"
 #include "Weapon/SKWeaponManagerComponent.h"
@@ -1295,6 +1296,18 @@ void USKInputManager::OnCrouchStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnAttackStarted(const FInputActionValue& Value)
 {
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	++NextCombatInputSerial;
+	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
+	ActiveAttackInputSerial = NextCombatInputSerial;
+	AttackPressedTimeSeconds = EventTimeSeconds;
+	PublishCombatInputEvent(
+		ESKCombatInputAction::Attack,
+		ESKCombatInputPhase::Started,
+		ActiveAttackInputSerial,
+		EventTimeSeconds,
+		0.f);
+
 	if (TryCallLuaInputEvent(TEXT("OnAttackStarted"))) return;
 
 	bAttackPressed = true;
@@ -1324,6 +1337,18 @@ void USKInputManager::OnAttackStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnAttackCompleted(const FInputActionValue& Value)
 {
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	const float CompletedHoldDuration = ActiveAttackInputSerial > 0
+		? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - AttackPressedTimeSeconds))
+		: 0.f;
+	PublishCombatInputEvent(
+		ESKCombatInputAction::Attack,
+		ESKCombatInputPhase::Completed,
+		ActiveAttackInputSerial,
+		EventTimeSeconds,
+		CompletedHoldDuration);
+	ActiveAttackInputSerial = 0;
+
 	if (TryCallLuaInputEvent(TEXT("OnAttackCompleted"))) return;
 
 	bAttackHeld = false;
@@ -1332,6 +1357,18 @@ void USKInputManager::OnAttackCompleted(const FInputActionValue& Value)
 
 void USKInputManager::OnGuardStarted(const FInputActionValue& Value)
 {
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	++NextCombatInputSerial;
+	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
+	ActiveGuardInputSerial = NextCombatInputSerial;
+	GuardPressedTimeSeconds = EventTimeSeconds;
+	PublishCombatInputEvent(
+		ESKCombatInputAction::Guard,
+		ESKCombatInputPhase::Started,
+		ActiveGuardInputSerial,
+		EventTimeSeconds,
+		0.f);
+
 	if (TryCallLuaInputEvent(TEXT("OnGuardStarted"))) return;
 
 	bGuardHeld = true;
@@ -1347,6 +1384,18 @@ void USKInputManager::OnGuardStarted(const FInputActionValue& Value)
 
 void USKInputManager::OnGuardCompleted(const FInputActionValue& Value)
 {
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	const float CompletedHoldDuration = ActiveGuardInputSerial > 0
+		? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - GuardPressedTimeSeconds))
+		: 0.f;
+	PublishCombatInputEvent(
+		ESKCombatInputAction::Guard,
+		ESKCombatInputPhase::Completed,
+		ActiveGuardInputSerial,
+		EventTimeSeconds,
+		CompletedHoldDuration);
+	ActiveGuardInputSerial = 0;
+
 	if (TryCallLuaInputEvent(TEXT("OnGuardCompleted"))) return;
 
 	bGuardHeld = false;
@@ -1571,6 +1620,37 @@ FString USKInputManager::ResolveLuaInputModuleName() const
 	}
 
 	return LuaInputModuleName;
+}
+
+/**
+ * 将 Enhanced Input 战斗边沿转发给 Owner 的战斗组件。
+ * 本函数只负责构造不可变事件并同步提交，不调用 Lua、不改变输入组件原有标记；
+ * Owner 没有战斗组件时安全忽略，且仅允许在游戏线程输入回调中调用。
+ *
+ * @param Action Attack 或 Guard 抽象动作类型。
+ * @param Phase Started 或 Completed 物理输入边沿。
+ * @param InputSerial 同一次按下与释放共享的正整数序列号。
+ * @param EventTimeSeconds 输入发生的游戏世界绝对秒数。
+ * @param HoldDuration Completed 边沿的按住秒数，Started 应为零。
+ */
+void USKInputManager::PublishCombatInputEvent(
+	ESKCombatInputAction Action,
+	ESKCombatInputPhase Phase,
+	int32 InputSerial,
+	double EventTimeSeconds,
+	float HoldDuration)
+{
+	AActor* Owner = GetOwner();
+	USKCombatComponent* CombatComponent = Owner ? Owner->FindComponentByClass<USKCombatComponent>() : nullptr;
+	if (!CombatComponent) return;
+
+	FSKCombatInputEvent InputEvent;
+	InputEvent.Action = Action;
+	InputEvent.Phase = Phase;
+	InputEvent.InputSerial = InputSerial;
+	InputEvent.EventTimeSeconds = EventTimeSeconds;
+	InputEvent.HoldDuration = FMath::Max(0.f, HoldDuration);
+	CombatComponent->SubmitCombatInputEvent(InputEvent);
 }
 
 ESKMovementTier USKInputManager::ResolveMovementTierFromInput(float InputMagnitude) const

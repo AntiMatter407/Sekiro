@@ -35,7 +35,9 @@
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "HAL/FileManager.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_AnimGetter.h"
 #include "K2Node_Event.h"
+#include "K2Node_VariableGet.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
@@ -1619,6 +1621,417 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         TEXT("NodeGuid is deterministic"),
         StateMachineNode != nullptr ? StateMachineNode->NodeGuid : FGuid(),
         SecondStateMachine != nullptr ? SecondStateMachine->NodeGuid : FGuid());
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimBlueprintFactoryNativeBoolTransitionRuleTest,
+    "Sekiro.AnimGraphIR.Factory.NativeBoolTransitionRule",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证纯 BoolProperty AST 直接生成原生 Property Getter 与 Bool 比较，不创建 EvaluateLuaTransitionRule 调用。
+ * 测试创建并编译 transient AnimBlueprint，不写磁盘；由 Automation Framework 在游戏线程执行。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimBlueprintFactoryNativeBoolTransitionRuleTest::RunTest(const FString& Parameters)
+{
+    using namespace SekiroAnimBlueprintFactoryTests;
+
+    UAnimSequence* Sequence = CreateTestSequence(LoadTestSkeleton());
+    TestNotNull(TEXT("Transient test Sequence is created"), Sequence);
+    if (Sequence == nullptr) return true;
+
+    FSekiroAnimBlueprintIR BlueprintIR = MakeFactoryIR(Sequence);
+    FSekiroAnimIRVariable& NativeRuleVariable = BlueprintIR.Variables.AddDefaulted_GetRef();
+    NativeRuleVariable.Name = TEXT("bNativeCanEnter");
+    NativeRuleVariable.DataType = TEXT("Bool");
+    NativeRuleVariable.DefaultValue.Type = ESekiroAnimIRValueType::Bool;
+    NativeRuleVariable.DefaultValue.BoolValue = false;
+    NativeRuleVariable.bTransient = true;
+    NativeRuleVariable.SourceLocation = BlueprintIR.SourceLocation;
+
+    FSekiroAnimIRGraph* StateMachineIR = FindGraph(BlueprintIR, TEXT("Graph.StateMachine"));
+    TestNotNull(TEXT("Factory IR StateMachine exists"), StateMachineIR);
+    if (StateMachineIR == nullptr || StateMachineIR->StateMachine.Transitions.IsEmpty()) return true;
+    FSekiroAnimIRTransition& NativeTransition = StateMachineIR->StateMachine.Transitions[0];
+    NativeTransition.RuleFunctionName = NAME_None;
+    NativeTransition.Gate.Nodes.Reset();
+    FSekiroAnimIRTransitionGateNode& BoolProperty = NativeTransition.Gate.Nodes.AddDefaulted_GetRef();
+    BoolProperty.Type = TEXT("BoolProperty");
+    BoolProperty.Name = NativeRuleVariable.Name;
+    BoolProperty.bExpectedBool = false;
+    NativeTransition.Gate.RootIndex = 0;
+
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    UAnimBlueprint* AnimBlueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+        BlueprintIR,
+        Diagnostics);
+    for (const FSekiroAnimIRDiagnostic& Diagnostic : Diagnostics)
+    {
+        AddInfo(FString::Printf(
+            TEXT("Factory diagnostic %s: %s"),
+            *Diagnostic.Code.ToString(),
+            *Diagnostic.Message));
+    }
+    TestNotNull(TEXT("Factory creates native Bool Rule AnimBlueprint"), AnimBlueprint);
+    TestEqual(TEXT("Native Bool Rule build has no diagnostics"), Diagnostics.Num(), 0);
+    if (AnimBlueprint == nullptr) return true;
+    TestTrue(TEXT("Native Bool Rule Blueprint compiles without error"), AnimBlueprint->Status != BS_Error);
+
+    UAnimGraphNode_StateMachine* StateMachineNode =
+        FindFirstNode<UAnimGraphNode_StateMachine>(FindMainGraph(AnimBlueprint));
+    UAnimationStateMachineGraph* StateMachineGraph = StateMachineNode != nullptr
+        ? StateMachineNode->EditorStateMachineGraph
+        : nullptr;
+    UAnimationTransitionGraph* NativeRuleGraph = nullptr;
+    if (StateMachineGraph != nullptr)
+    {
+        for (UEdGraphNode* Node : StateMachineGraph->Nodes)
+        {
+            UAnimStateTransitionNode* TransitionNode = Cast<UAnimStateTransitionNode>(Node);
+            if (TransitionNode == nullptr || TransitionNode->BoundGraph == nullptr) continue;
+            if (TransitionNode->BoundGraph->GetName() != NativeTransition.Key) continue;
+            NativeRuleGraph = Cast<UAnimationTransitionGraph>(TransitionNode->BoundGraph);
+            break;
+        }
+    }
+    TestNotNull(TEXT("Pure native Transition owns a Rule Graph"), NativeRuleGraph);
+    TestEqual(
+        TEXT("Pure native Rule has no Lua runtime call"),
+        CountFunctionCalls(
+            NativeRuleGraph,
+            GET_FUNCTION_NAME_CHECKED(
+                USekiroLuaTransitionRuntimeLibrary,
+                EvaluateLuaTransitionRule)),
+        0);
+    TestEqual(
+        TEXT("Pure native Rule contains one Bool property Getter"),
+        CountNodes<UK2Node_VariableGet>(NativeRuleGraph),
+        1);
+    TestEqual(
+        TEXT("Pure native Rule contains one explicit Bool comparison"),
+        CountFunctionCalls(
+            NativeRuleGraph,
+            GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, EqualEqual_BoolBool)),
+        1);
+    const FName RecordBoolFunctionName = GET_FUNCTION_NAME_CHECKED(
+        USekiroLuaTransitionRuntimeLibrary,
+        RecordBoolTransitionDebugValue);
+    const FName RecordExpressionFunctionName = GET_FUNCTION_NAME_CHECKED(
+        USekiroLuaTransitionRuntimeLibrary,
+        RecordTransitionExpressionDebugValue);
+    TestEqual(
+        TEXT("Pure native Rule contains one Bool leaf trace"),
+        CountFunctionCalls(NativeRuleGraph, RecordBoolFunctionName),
+        1);
+    TestEqual(
+        TEXT("Pure native Rule contains one final trace"),
+        CountFunctionCalls(NativeRuleGraph, RecordExpressionFunctionName),
+        1);
+
+    UAnimGraphNode_TransitionResult* ResultNode = NativeRuleGraph != nullptr
+        ? NativeRuleGraph->GetResultNode()
+        : nullptr;
+    UEdGraphPin* ResultPin = ResultNode != nullptr
+        ? ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input)
+        : nullptr;
+    TestEqual(
+        TEXT("Pure native Rule connects through final trace to Transition Result"),
+        ResultPin != nullptr ? ResultPin->LinkedTo.Num() : 0,
+        1);
+
+    bool bExpectedFalseFound = false;
+    UK2Node_CallFunction* BoolTraceNode = nullptr;
+    UK2Node_CallFunction* FinalTraceNode = nullptr;
+    if (NativeRuleGraph != nullptr)
+    {
+        for (UEdGraphNode* Node : NativeRuleGraph->Nodes)
+        {
+            UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(Node);
+            UFunction* Function = CallNode != nullptr ? CallNode->GetTargetFunction() : nullptr;
+            if (Function != nullptr && Function->GetFName() == RecordBoolFunctionName)
+            {
+                BoolTraceNode = CallNode;
+            }
+            if (Function != nullptr && Function->GetFName() == RecordExpressionFunctionName)
+            {
+                UEdGraphPin* IsFinalPin = CallNode->FindPin(TEXT("bIsFinal"), EGPD_Input);
+                if (IsFinalPin != nullptr && IsFinalPin->DefaultValue == TEXT("true"))
+                {
+                    FinalTraceNode = CallNode;
+                }
+            }
+            if (Function == nullptr
+                || Function->GetFName()
+                    != GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, EqualEqual_BoolBool))
+            {
+                continue;
+            }
+            UEdGraphPin* ExpectedPin = CallNode->FindPin(TEXT("B"), EGPD_Input);
+            bExpectedFalseFound = ExpectedPin != nullptr && ExpectedPin->DefaultValue == TEXT("false");
+        }
+    }
+    TestTrue(TEXT("Bool comparison preserves ExpectedBool=false"), bExpectedFalseFound);
+    TestNotNull(TEXT("Bool leaf trace node exists"), BoolTraceNode);
+    TestNotNull(TEXT("Final trace node exists"), FinalTraceNode);
+    UEdGraphPin* LeafActualPin = BoolTraceNode != nullptr
+        ? BoolTraceNode->FindPin(TEXT("ActualValue"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* LeafExpectedPin = BoolTraceNode != nullptr
+        ? BoolTraceNode->FindPin(TEXT("ExpectedValue"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* LeafResultPin = BoolTraceNode != nullptr
+        ? BoolTraceNode->FindPin(TEXT("Result"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* FinalInputPin = FinalTraceNode != nullptr
+        ? FinalTraceNode->FindPin(TEXT("Result"), EGPD_Input)
+        : nullptr;
+    TestEqual(TEXT("Bool leaf trace ActualValue is connected once"),
+        LeafActualPin != nullptr ? LeafActualPin->LinkedTo.Num() : 0, 1);
+    TestEqual(TEXT("Bool leaf trace comparison Result is connected once"),
+        LeafResultPin != nullptr ? LeafResultPin->LinkedTo.Num() : 0, 1);
+    TestEqual(TEXT("Bool leaf trace preserves ExpectedValue=false"),
+        LeafExpectedPin != nullptr ? LeafExpectedPin->DefaultValue : FString(), FString(TEXT("false")));
+    TestEqual(TEXT("Final trace consumes the leaf pass-through once"),
+        FinalInputPin != nullptr ? FinalInputPin->LinkedTo.Num() : 0, 1);
+    TestEqual(
+        TEXT("Final trace input comes from the Bool leaf trace"),
+        FinalInputPin != nullptr && !FinalInputPin->LinkedTo.IsEmpty()
+            ? FinalInputPin->LinkedTo[0]->GetOwningNode()
+            : nullptr,
+        static_cast<UEdGraphNode*>(BoolTraceNode));
+    TestTrue(
+        TEXT("Bool leaf ActualValue comes from the existing variable Getter"),
+        LeafActualPin != nullptr
+            && !LeafActualPin->LinkedTo.IsEmpty()
+            && Cast<UK2Node_VariableGet>(LeafActualPin->LinkedTo[0]->GetOwningNode()) != nullptr);
+    UK2Node_CallFunction* LeafCompareNode = LeafResultPin != nullptr
+        && !LeafResultPin->LinkedTo.IsEmpty()
+        ? Cast<UK2Node_CallFunction>(LeafResultPin->LinkedTo[0]->GetOwningNode())
+        : nullptr;
+    TestEqual(
+        TEXT("Bool leaf Result comes from EqualEqual_BoolBool"),
+        LeafCompareNode != nullptr && LeafCompareNode->GetTargetFunction() != nullptr
+            ? LeafCompareNode->GetTargetFunction()->GetFName()
+            : NAME_None,
+        GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, EqualEqual_BoolBool));
+    TestEqual(
+        TEXT("Transition Result consumes the final trace output"),
+        ResultPin != nullptr && !ResultPin->LinkedTo.IsEmpty()
+            ? ResultPin->LinkedTo[0]->GetOwningNode()
+            : nullptr,
+        static_cast<UEdGraphNode*>(FinalTraceNode));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimBlueprintFactoryTransitionRuleDebugSamplingTest,
+    "Sekiro.AnimGraphIR.Factory.TransitionRuleDebugSampling",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Curve/Time/Any Gate 采样连接真实参数与组合结果，并确认 Lua-only Rule 不生成原生 AST 采样节点。
+ * 测试创建并编译 transient AnimBlueprint，不写磁盘；由 Automation Framework 在游戏线程执行。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimBlueprintFactoryTransitionRuleDebugSamplingTest::RunTest(const FString& Parameters)
+{
+    using namespace SekiroAnimBlueprintFactoryTests;
+
+    UAnimSequence* Sequence = CreateTestSequence(LoadTestSkeleton());
+    TestNotNull(TEXT("Transient debug sampling Sequence is created"), Sequence);
+    if (Sequence == nullptr) return true;
+
+    FSekiroAnimBlueprintIR BlueprintIR = MakeFactoryIR(Sequence);
+    FSekiroAnimIRGraph* StateMachineIR = FindGraph(BlueprintIR, TEXT("Graph.StateMachine"));
+    TestNotNull(TEXT("Debug sampling StateMachine IR exists"), StateMachineIR);
+    if (StateMachineIR == nullptr || StateMachineIR->StateMachine.Transitions.Num() < 2) return true;
+
+    const FString SampledRuleKey = StateMachineIR->StateMachine.Transitions[0].Key;
+    FSekiroAnimIRTransition& LuaOnlyTransition = StateMachineIR->StateMachine.Transitions[1];
+    const FString LuaOnlyRuleKey = LuaOnlyTransition.Key;
+    LuaOnlyTransition.Gate.RootIndex = INDEX_NONE;
+    LuaOnlyTransition.Gate.Nodes.Reset();
+
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    UAnimBlueprint* AnimBlueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+        BlueprintIR,
+        Diagnostics);
+    for (const FSekiroAnimIRDiagnostic& Diagnostic : Diagnostics)
+    {
+        AddInfo(FString::Printf(
+            TEXT("Factory diagnostic %s: %s"),
+            *Diagnostic.Code.ToString(),
+            *Diagnostic.Message));
+    }
+    TestNotNull(TEXT("Factory creates sampled Transition AnimBlueprint"), AnimBlueprint);
+    TestEqual(TEXT("Sampled Transition build has no diagnostics"), Diagnostics.Num(), 0);
+    if (AnimBlueprint == nullptr) return true;
+
+    UAnimGraphNode_StateMachine* StateMachineNode =
+        FindFirstNode<UAnimGraphNode_StateMachine>(FindMainGraph(AnimBlueprint));
+    UAnimationStateMachineGraph* StateMachineGraph = StateMachineNode != nullptr
+        ? StateMachineNode->EditorStateMachineGraph
+        : nullptr;
+    UAnimationTransitionGraph* SampledRuleGraph = nullptr;
+    UAnimationTransitionGraph* LuaOnlyRuleGraph = nullptr;
+    if (StateMachineGraph != nullptr)
+    {
+        for (UEdGraphNode* Node : StateMachineGraph->Nodes)
+        {
+            UAnimStateTransitionNode* TransitionNode = Cast<UAnimStateTransitionNode>(Node);
+            UAnimationTransitionGraph* RuleGraph = TransitionNode != nullptr
+                ? Cast<UAnimationTransitionGraph>(TransitionNode->BoundGraph)
+                : nullptr;
+            if (RuleGraph == nullptr) continue;
+            if (RuleGraph->GetName() == SampledRuleKey) SampledRuleGraph = RuleGraph;
+            if (RuleGraph->GetName() == LuaOnlyRuleKey) LuaOnlyRuleGraph = RuleGraph;
+        }
+    }
+    TestNotNull(TEXT("Curve/Time sampled Rule Graph exists"), SampledRuleGraph);
+    TestNotNull(TEXT("Lua-only Rule Graph exists"), LuaOnlyRuleGraph);
+
+    const FName RecordBoolFunctionName = GET_FUNCTION_NAME_CHECKED(
+        USekiroLuaTransitionRuntimeLibrary,
+        RecordBoolTransitionDebugValue);
+    const FName RecordFloatFunctionName = GET_FUNCTION_NAME_CHECKED(
+        USekiroLuaTransitionRuntimeLibrary,
+        RecordFloatTransitionDebugValue);
+    const FName RecordExpressionFunctionName = GET_FUNCTION_NAME_CHECKED(
+        USekiroLuaTransitionRuntimeLibrary,
+        RecordTransitionExpressionDebugValue);
+    TestEqual(TEXT("Curve and Time each create one Float trace"),
+        CountFunctionCalls(SampledRuleGraph, RecordFloatFunctionName), 2);
+    TestEqual(TEXT("Any and final result each create one expression trace"),
+        CountFunctionCalls(SampledRuleGraph, RecordExpressionFunctionName), 2);
+    TestEqual(TEXT("Curve/Time Rule has no Bool property trace"),
+        CountFunctionCalls(SampledRuleGraph, RecordBoolFunctionName), 0);
+
+    bool bCurveParametersConnected = false;
+    bool bTimeParametersConnected = false;
+    bool bAnyExpressionConnected = false;
+    bool bFinalExpressionConnected = false;
+    UK2Node_CallFunction* FinalTraceNode = nullptr;
+    if (SampledRuleGraph != nullptr)
+    {
+        for (UEdGraphNode* Node : SampledRuleGraph->Nodes)
+        {
+            UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(Node);
+            UFunction* Function = CallNode != nullptr ? CallNode->GetTargetFunction() : nullptr;
+            if (Function == nullptr) continue;
+            if (Function->GetFName() == RecordFloatFunctionName)
+            {
+                UEdGraphPin* ParameterNamePin = CallNode->FindPin(TEXT("ParameterName"), EGPD_Input);
+                UEdGraphPin* ActualValuePin = CallNode->FindPin(TEXT("ActualValue"), EGPD_Input);
+                UEdGraphPin* ThresholdPin = CallNode->FindPin(TEXT("Threshold"), EGPD_Input);
+                UEdGraphPin* SampleResultPin = CallNode->FindPin(TEXT("Result"), EGPD_Input);
+                const bool bValueAndResultConnected = ActualValuePin != nullptr
+                    && ActualValuePin->LinkedTo.Num() == 1
+                    && SampleResultPin != nullptr
+                    && SampleResultPin->LinkedTo.Num() == 1;
+                UEdGraphNode* ActualValueNode = bValueAndResultConnected
+                    ? ActualValuePin->LinkedTo[0]->GetOwningNode()
+                    : nullptr;
+                UK2Node_CallFunction* ComparisonNode = bValueAndResultConnected
+                    ? Cast<UK2Node_CallFunction>(SampleResultPin->LinkedTo[0]->GetOwningNode())
+                    : nullptr;
+                const FName ComparisonFunctionName = ComparisonNode != nullptr
+                    && ComparisonNode->GetTargetFunction() != nullptr
+                    ? ComparisonNode->GetTargetFunction()->GetFName()
+                    : NAME_None;
+                if (ParameterNamePin != nullptr && ParameterNamePin->DefaultValue == TEXT("CanEnterStop"))
+                {
+                    UK2Node_CallFunction* CurveGetterNode = Cast<UK2Node_CallFunction>(ActualValueNode);
+                    bCurveParametersConnected = bValueAndResultConnected
+                        && ThresholdPin != nullptr
+                        && ThresholdPin->DefaultValue == FString::SanitizeFloat(0.5f)
+                        && CurveGetterNode != nullptr
+                        && CurveGetterNode->GetTargetFunction() != nullptr
+                        && CurveGetterNode->GetTargetFunction()->GetFName()
+                            == FName(TEXT("GetCurveValue"))
+                        && ComparisonFunctionName
+                            == GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, GreaterEqual_DoubleDouble);
+                }
+                if (ParameterNamePin != nullptr
+                    && ParameterNamePin->DefaultValue == TEXT("RelevantTimeRemaining"))
+                {
+                    bTimeParametersConnected = bValueAndResultConnected
+                        && ThresholdPin != nullptr
+                        && ThresholdPin->DefaultValue == FString::SanitizeFloat(0.12f)
+                        && Cast<UK2Node_AnimGetter>(ActualValueNode) != nullptr
+                        && ComparisonFunctionName
+                            == GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, LessEqual_DoubleDouble);
+                }
+            }
+            if (Function->GetFName() == RecordExpressionFunctionName)
+            {
+                UEdGraphPin* LabelPin = CallNode->FindPin(TEXT("ExpressionLabel"), EGPD_Input);
+                UEdGraphPin* IsFinalPin = CallNode->FindPin(TEXT("bIsFinal"), EGPD_Input);
+                UEdGraphPin* SampleResultPin = CallNode->FindPin(TEXT("Result"), EGPD_Input);
+                const bool bResultConnected = SampleResultPin != nullptr
+                    && SampleResultPin->LinkedTo.Num() == 1;
+                UK2Node_CallFunction* SourceExpressionNode = bResultConnected
+                    ? Cast<UK2Node_CallFunction>(SampleResultPin->LinkedTo[0]->GetOwningNode())
+                    : nullptr;
+                const FName SourceExpressionFunctionName = SourceExpressionNode != nullptr
+                    && SourceExpressionNode->GetTargetFunction() != nullptr
+                    ? SourceExpressionNode->GetTargetFunction()->GetFName()
+                    : NAME_None;
+                if (LabelPin != nullptr && LabelPin->DefaultValue == TEXT("2:Any"))
+                {
+                    bAnyExpressionConnected = bResultConnected
+                        && IsFinalPin != nullptr
+                        && IsFinalPin->DefaultValue == TEXT("false")
+                        && SourceExpressionFunctionName
+                            == GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, BooleanOR);
+                }
+                if (LabelPin != nullptr && LabelPin->DefaultValue == TEXT("RuleResult"))
+                {
+                    FinalTraceNode = CallNode;
+                    bFinalExpressionConnected = bResultConnected
+                        && IsFinalPin != nullptr
+                        && IsFinalPin->DefaultValue == TEXT("true")
+                        && SourceExpressionFunctionName
+                            == GET_FUNCTION_NAME_CHECKED(UKismetMathLibrary, BooleanAND);
+                }
+            }
+        }
+    }
+    TestTrue(TEXT("Curve trace connects actual value, threshold and comparison"), bCurveParametersConnected);
+    TestTrue(TEXT("Time trace connects actual value, threshold and comparison"), bTimeParametersConnected);
+    TestTrue(TEXT("Any trace connects the combined expression result"), bAnyExpressionConnected);
+    TestTrue(TEXT("Final trace connects the authoritative RuleResult"), bFinalExpressionConnected);
+    UAnimGraphNode_TransitionResult* SampledResultNode = SampledRuleGraph != nullptr
+        ? SampledRuleGraph->GetResultNode()
+        : nullptr;
+    UEdGraphPin* SampledResultPin = SampledResultNode != nullptr
+        ? SampledResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input)
+        : nullptr;
+    TestEqual(
+        TEXT("Sampled Transition Result consumes the final trace output"),
+        SampledResultPin != nullptr && !SampledResultPin->LinkedTo.IsEmpty()
+            ? SampledResultPin->LinkedTo[0]->GetOwningNode()
+            : nullptr,
+        static_cast<UEdGraphNode*>(FinalTraceNode));
+
+    TestEqual(TEXT("Lua-only Rule still has one Lua evaluation"),
+        CountFunctionCalls(
+            LuaOnlyRuleGraph,
+            GET_FUNCTION_NAME_CHECKED(
+                USekiroLuaTransitionRuntimeLibrary,
+                EvaluateLuaTransitionRule)),
+        1);
+    TestEqual(TEXT("Lua-only Rule adds no Bool leaf trace"),
+        CountFunctionCalls(LuaOnlyRuleGraph, RecordBoolFunctionName), 0);
+    TestEqual(TEXT("Lua-only Rule adds no Float leaf trace"),
+        CountFunctionCalls(LuaOnlyRuleGraph, RecordFloatFunctionName), 0);
+    TestEqual(TEXT("Lua-only Rule adds no native expression trace"),
+        CountFunctionCalls(LuaOnlyRuleGraph, RecordExpressionFunctionName), 0);
     return true;
 }
 

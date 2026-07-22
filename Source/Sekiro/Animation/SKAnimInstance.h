@@ -5,11 +5,13 @@
 #include "Movement/SKMovementComponent.h"
 #include "Animation/SKAnimDataTypes.h"
 #include "Camera/SKCameraManagerComponent.h"
+#include "Combat/SKCombatTypes.h"
 #include "SKAnimInstance.generated.h"
 
 class ASKCharacter;
 class USKCameraManagerComponent;
 class USKInputManager;
+class USKCombatComponent;
 
 // ============================================================================
 // USKAnimInstance — 项目角色动画数据适配层
@@ -182,6 +184,20 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Input")
     FName InputIntent;                           // 预留的离散输入意图名称，当前未在本类中赋值
 
+    // ── Combat（Blueprint 读取） ──────────────────────────────
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    ESKCombatActionState CombatActionState = ESKCombatActionState::Neutral; // 当前战斗动作状态
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    bool bIsGuardHeld = false;                   // 防御键是否仍按住
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    bool bIsCombatGuardPoseActive = false;       // 是否应输出 Raise/Guarding 防御基础姿态
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    bool bIsCombatFullBodyActionActive = false;  // 战斗全身 Slot 是否正在播放或混合
+
 protected:
     /** 缓存当前动画 Pawn 及数据采集所需的项目组件。 */
     void CacheOwnerReferences();
@@ -203,6 +219,9 @@ protected:
 
     UPROPERTY()
     TObjectPtr<USKInputManager> OwnerInputManager; // 所属角色的项目输入组件
+
+    UPROPERTY()
+    TObjectPtr<USKCombatComponent> OwnerCombatComponent; // 所属角色的战斗动作宿主
 
     float RotationModeTurnTimeRemaining = 0.f;    // 锁定/非锁定切换转向过渡剩余时间
 };

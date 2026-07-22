@@ -1,4 +1,4 @@
--- Lua 类型：动画蓝图编译描述/状态机模块；编译对象是纯 Lua 表，运行时规则仅通过显式 Inst 访问 AnimInstance。
+-- Lua 类型：动画蓝图编译描述模块。编译期对象是纯 Lua；Transition 规则生成 UE 原生属性与 Gate 节点。
 -- Sekiro Jump 子状态机。
 -- 非锁定有向跳固定使用前向资产；锁定有向跳经过八方向 Start/InAir 过渡段，长时间滞空才进入通用 Loop。
 
@@ -74,26 +74,59 @@ function JumpLocomotion.StateMachine(Machine)
     Machine:State("DirectionalInAir")
     Machine:State("Loop")
     Machine:State("Land")
-    Machine:Transition("Start_Land", "Start", "Land", { BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0 })
+    -- Start 期间已经接地时直接进入 Land，处理极短腾空或碰撞提前接地。
+    Machine:Transition("Start_Land", "Start", "Land", {
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsInAir", false),
+    })
+    -- 锁定有向跳仍在空中时，于 Start 曲线尾部进入八方向 InAir 过渡段。
     Machine:Transition("Start_DirectionalInAir", "Start", "DirectionalInAir", {
-        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 1,
-        Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterInAir, Tuning.CurveThreshold),
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 1,
+        Rule = Rule.All(
+            Rule.BoolProperty("bIsInAir", true),
+            Rule.BoolProperty("bDirectionalJump", true),
+            Rule.BoolProperty("bJumpStartedLockedOn", true),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterInAir, Tuning.CurveThreshold)),
     })
+    -- 原地或非锁定有向跳在 Start 曲线尾部直接进入通用 Loop。
     Machine:Transition("Start_Loop", "Start", "Loop", {
-        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 2,
-        Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold),
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 2,
+        Rule = Rule.All(
+            Rule.BoolProperty("bIsInAir", true),
+            Rule.Any(
+                Rule.BoolProperty("bDirectionalJump", false),
+                Rule.BoolProperty("bJumpStartedLockedOn", false)),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold)),
     })
+    -- 锁定方向 InAir 过渡动画播放期间提前接地时立即打断到 Land。
     Machine:Transition("DirectionalInAir_Land", "DirectionalInAir", "Land", {
-        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0,
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsInAir", false),
     })
+    -- 锁定方向 InAir 过渡段播放完成且仍在空中时进入通用循环姿势。
     Machine:Transition("DirectionalInAir_Loop", "DirectionalInAir", "Loop", {
-        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 1,
-        Gate = Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold),
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 1,
+        Rule = Rule.All(
+            Rule.BoolProperty("bIsInAir", true),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold)),
     })
+    -- 通用 Loop 期间由 CharacterMovement 报告接地时进入 Land。
     Machine:Transition("Loop_Land", "Loop", "Land", {
-        BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0,
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsInAir", false),
     })
-    Machine:Transition("Land_Start", "Land", "Start", { BlendDuration = Tuning.JumpBlendDuration, PriorityOrder = 0 })
+    -- Land 过程中再次离地时重新进入 Start，支持连续跳跃和台阶边缘情况。
+    Machine:Transition("Land_Start", "Land", "Start", {
+        BlendDuration = Tuning.JumpBlendDuration,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsInAir", true),
+    })
 end
 
 ---构建带 RootMotion 的八方向 Jump Start。
@@ -170,58 +203,6 @@ function JumpLocomotion.StateGraph_Land(Graph)
         "JumpDirectionResidualAngle",
         "JumpWarpingAlpha")
     Graph.Result:Connect(aligned.Pose)
-end
-
----Start 期间已经落地时直接进入 Land，处理极短腾空或碰撞提前接地。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否进入 Land。
-function JumpLocomotion.CanEnter_Start_Land(Inst)
-    return Inst.bIsInAir ~= true
-end
-
----锁定有向跳仍在空中时于 Start 尾部进入八方向 InAir 过渡段。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否进入锁定方向 InAir 过渡段。
-function JumpLocomotion.CanEnter_Start_DirectionalInAir(Inst)
-    return Inst.bIsInAir == true
-        and Inst.bDirectionalJump == true
-        and Inst.bJumpStartedLockedOn == true
-end
-
----原地或非锁定有向跳在 Start 曲线尾部直接进入通用 Loop。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否从 Start 进入通用 Loop。
-function JumpLocomotion.CanEnter_Start_Loop(Inst)
-    return Inst.bIsInAir == true
-        and (Inst.bDirectionalJump ~= true or Inst.bJumpStartedLockedOn ~= true)
-end
-
----锁定方向 InAir 过渡动画播放期间提前接地时立即打断到 Land。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否提前进入 Land。
-function JumpLocomotion.CanEnter_DirectionalInAir_Land(Inst)
-    return Inst.bIsInAir ~= true
-end
-
----锁定方向 InAir 过渡段播放完成且仍在空中时进入通用循环姿势。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否进入通用 Jump Loop。
-function JumpLocomotion.CanEnter_DirectionalInAir_Loop(Inst)
-    return Inst.bIsInAir == true
-end
-
----通用 Loop 期间由 CharacterMovement 报告接地时进入 Land。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否从 Loop 进入 Land。
-function JumpLocomotion.CanEnter_Loop_Land(Inst)
-    return Inst.bIsInAir ~= true
-end
-
----Land 过程中再次离地时重新进入 Start，支持连续跳跃和台阶边缘情况。
----@param Inst userdata 当前生成动画实例的 UnLua 代理。
----@return boolean can_enter 是否重新进入 Start。
-function JumpLocomotion.CanEnter_Land_Start(Inst)
-    return Inst.bIsInAir == true
 end
 
 return JumpLocomotion

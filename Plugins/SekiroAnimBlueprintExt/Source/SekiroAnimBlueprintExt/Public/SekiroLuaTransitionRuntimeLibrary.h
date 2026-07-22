@@ -29,4 +29,35 @@ public:
         UAnimInstance* AnimInstance,
         const FString& LuaModuleName,
         const FString& RuleFunctionName);
+
+    // ── Transition Debug Pass-through ────────────────────────
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug")
+    static bool RecordBoolTransitionDebugValue(
+        UAnimInstance* AnimInstance,
+        const FString& TransitionId,
+        const FString& ExpressionLabel,
+        const FString& ParameterName,
+        bool ActualValue,
+        bool ExpectedValue,
+        bool Result,
+        bool bIsFinal);
+
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug")
+    static bool RecordFloatTransitionDebugValue(
+        UAnimInstance* AnimInstance,
+        const FString& TransitionId,
+        const FString& ExpressionLabel,
+        const FString& ParameterName,
+        float ActualValue,
+        float Threshold,
+        bool Result,
+        bool bIsFinal);
+
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug")
+    static bool RecordTransitionExpressionDebugValue(
+        UAnimInstance* AnimInstance,
+        const FString& TransitionId,
+        const FString& ExpressionLabel,
+        bool Result,
+        bool bIsFinal);
 };

@@ -19,7 +19,9 @@ local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 ---@field bAlwaysResetOnEntry boolean|nil 重新进入状态时是否重置 Pose Graph。
 
 ---@class LuaAnimTransitionSettings
----@field RuleFunctionName string|nil 自定义 Lua 规则函数名；为空时由状态机节点名和 Transition Key 推导。
+---@field Rule LuaTransitionGateExpression|nil 完整的强类型原生规则；设置后不生成或调用 Lua CanEnter 函数。
+---@field Gate LuaTransitionGateExpression|nil 与 Lua CanEnter 返回值额外组合的旧式原生 Gate。
+---@field RuleFunctionName string|nil 自定义 Lua 规则函数名；仅旧式 Runtime Lua 规则使用。
 ---@field BlendDuration number|nil 过渡混合时长，单位为秒。
 ---@field PriorityOrder number|nil 同一源状态下的显式过渡优先级整数。
 ---@field BlendMode string|nil UE 过渡混合模式注册名。
@@ -151,8 +153,15 @@ function LuaAnimStateMachineGraph:Transition(key, source_state_name, target_stat
     local target_name = IRSchema.RequireSemanticName(target_state_name, "Transition Target State")
     ---@type LuaAnimTransitionSettings
     local transition_settings = settings or {}
-    local rule_function_name = string.format("CanEnter_%s_%s", self.OwnerNode.Name, transition_key)
+    assert(transition_settings.Rule == nil or transition_settings.Gate == nil,
+        "Transition cannot declare both Rule and legacy Gate")
+    local rule_function_name = ""
+    if transition_settings.Rule == nil then
+        rule_function_name = string.format("CanEnter_%s_%s", self.OwnerNode.Name, transition_key)
+    end
     if transition_settings.RuleFunctionName ~= nil then
+        assert(transition_settings.Rule == nil,
+            "Transition RuleFunctionName cannot be combined with a complete native Rule")
         rule_function_name = IRSchema.RequireLuaIdentifier(
             transition_settings.RuleFunctionName,
             "Transition Rule Function")

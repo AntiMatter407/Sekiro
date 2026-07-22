@@ -2,7 +2,7 @@
 
 本文说明如何使用 `SekiroAnimBlueprintExt` 的 Lua AnimGraph Function API 编写动画蓝图。
 
-Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；Lua 来源的动画蓝图暂时使用单线程更新，每条 Transition Rule Graph 只在原生状态机真正检查它时直接调用对应 Lua 函数。
+Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；推荐使用强类型 `Rule` AST 生成原生 Transition Rule Graph，只有兼容旧模块时才运行 `CanEnter_*` Lua 函数。
 
 ## 一、核心写法
 
@@ -15,7 +15,7 @@ Lua 文件直接对应动画蓝图的结构：
 | `graph:StateMachine()` | State Machine 节点 |
 | `StateMachine(Machine)` | Entry、State、Transition 拓扑 |
 | `StateGraph_Idle(Graph)` | Idle 状态内部 Graph |
-| `CanEnter_Idle_Move(Inst)` | Idle 到 Move 的 Transition Rule |
+| `Rule.BoolProperty("bIsMoving", true)` | Idle 到 Move 的原生 Transition Rule |
 | `Pin:Connect(SourcePin)` | 两个节点 Pin 之间的连线 |
 
 业务代码不创建 Layer、Owned Graph、稳定 ID 或 IR，也不编写 `BuildAnimGraph()`。这些步骤由 `LuaAnimBlueprint` 基类完成。
@@ -136,10 +136,9 @@ end
 ```text
 StateMachine
 StateGraph_<StateName>
-CanEnter_<TransitionKey>
 ```
 
-主动画蓝图实例化时使用的节点名会自动加入最终运行时规则名：
+Transition 推荐直接在拓扑旁声明完整的强类型 `Rule`。旧模块仍可省略 `Rule` 并提供 `CanEnter_<TransitionKey>`；主动画蓝图实例化时使用的节点名会自动加入最终运行时规则名：
 
 ```text
 状态机文件：CanEnter_Idle_Start
@@ -257,27 +256,37 @@ end
 ## 八、Transition Rule
 
 ```lua
----角色有地面移动输入时，从 Idle 进入 Start。
----@param Inst userdata 生成动画蓝图实际使用的 USKAnimInstance 的 UnLua 代理。
----@return boolean can_enter 是否允许本帧开始 Transition。
-function GroundLocomotion.CanEnter_Idle_Start(Inst)
-    return Inst.bHasMovementInput == true
-        and Inst.bIsInAir ~= true
-end
+local Rule = require("Animation.Compiler.TransitionRule")
+
+Machine:Transition("Idle_Start", "Idle", "Start", {
+    BlendDuration = 0.12,
+    PriorityOrder = 0,
+    Rule = Rule.All(
+        Rule.BoolProperty("bHasMovementInput", true),
+        Rule.BoolProperty("bIsInAir", false)),
+})
 ```
 
-规则函数的 `Inst` 是真实 `UAnimInstance` 的 UnLua 代理，因此可以直接访问反射暴露的 C++ 属性和函数：
+`Rule` 表示完整的 Transition 条件，不会生成 `EvaluateLuaTransitionRule` 调用。当前强类型叶节点包括：
+
+- `Rule.BoolProperty(Name, ExpectedValue)`：比较 AnimInstance 或生成类上的 Bool 属性；
+- `Rule.CurveGreaterEqual(Name, Threshold)`：比较当前动画曲线；
+- `Rule.TimeRemainingLessEqual(Seconds)`：比较源状态最相关动画的剩余时间；
+- `Rule.All(...)`、`Rule.Any(...)`、`Rule.Not(...)`：组合子条件。
+
+曲线和属性条件应写在同一棵 Rule AST 中：
 
 ```lua
----@param Inst userdata 当前 Transition 所属 AnimInstance 的 UnLua UObject 代理。
----@return boolean can_enter 是否允许进入目标状态。
-function GroundLocomotion.CanEnter_Cycle_Stop(Inst)
-    return Inst.bHasMovementInput ~= true
-        and Inst:GetCurveValue("CanEnterStop") >= 0.5
-end
+Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
+    BlendDuration = 0.12,
+    PriorityOrder = 0,
+    Rule = Rule.All(
+        Rule.BoolProperty("bHasMovementInput", false),
+        Rule.CurveGreaterEqual("CanEnterStop", 0.5)),
+})
 ```
 
-不要在 Transition 中保存 Pose、创建 AnimNode、修改 Graph 或写入游戏状态。Graph 声明只发生在编辑器编译期；Transition Rule 应保持只读，并且必须返回严格的 Lua `boolean`。原生状态机只会按优先级检查当前状态的出边，找到第一条返回 `true` 的规则后开始过渡。
+`Gate = ...` 与 `CanEnter_*` 的组合仅用于兼容旧模块：Lua 返回值会与 Gate 再做 AND。新代码不要同时声明 `Rule` 和 `Gate/RuleFunctionName`。原生状态机按优先级检查当前状态的出边，找到第一条原生 Rule 为 true 的过渡后开始混合。
 
 ## 九、Cached Pose
 
@@ -320,7 +329,9 @@ function ABP_Sekiro.StateMachine_HitReaction(Machine)
     Machine:Entry("None")
     Machine:State("None")
     Machine:State("React")
-    Machine:Transition("None_React", "None", "React")
+    Machine:Transition("None_React", "None", "React", {
+        Rule = Rule.BoolProperty("bShouldPlayHitReaction", true),
+    })
 end
 
 function ABP_Sekiro.StateGraph_HitReaction_None(Graph)
@@ -331,11 +342,6 @@ function ABP_Sekiro.StateGraph_HitReaction_React(Graph)
     -- 声明 React 的 Pose 节点并连接 Graph.Result。
 end
 
----@param Inst userdata 当前 Transition 所属 AnimInstance 的 UnLua UObject 代理。
----@return boolean can_enter 是否允许进入受击状态。
-function ABP_Sekiro.CanEnter_HitReaction_None_React(Inst)
-    return Inst.bShouldPlayHitReaction == true
-end
 ```
 
 主文件内约定为：
@@ -343,7 +349,6 @@ end
 ```text
 StateMachine_<MachineName>
 StateGraph_<MachineName>_<StateName>
-CanEnter_<MachineName>_<TransitionKey>
 ```
 
 ## 十一、当前节点范围
@@ -387,7 +392,7 @@ require 动画蓝图 Lua 模块
 UAnimInstance 更新
     -> 游戏线程更新 Lua 动画参数
     -> 原生状态机检查当前状态的出边
-    -> 对应 Transition Rule Graph 直接调用 CanEnter_* Lua 规则
+    -> Transition Rule Graph 求值原生属性、曲线与时间节点
     -> 原生状态机执行 Transition 和 Pose 混合
     -> UE 原生 AnimNode 更新并求值
     -> 输出最终 Pose
@@ -399,11 +404,13 @@ Lua 来源的动画蓝图会关闭 `bUseMultiThreadedAnimationUpdate`。Lua 不�
 
 ## 十三、调试与常见错误
 
-### Rider 调试 Transition
+### 调试 Transition
 
-在 `CanEnter_*` 函数内设置 Lua 断点。PIE 中只有当前状态的对应出边被原生状态机检查时才会命中，断点中可以直接查看 `Inst`、Lua 局部变量和调用栈。
+强类型 `Rule` 生成普通原生 Transition Graph，使用 UE AnimBP Debugger 查看属性值、State Weight、Transition Blend Alpha 和 Pose 结果。兼容旧模块的 `CanEnter_*` 仍可在 Rider 中设置 Lua 断点；只有原生状态机检查对应出边时才会命中。
 
-`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Generate From Lua` 或 Lua 源码编译流程中命中，不会在 PIE 每帧执行。PIE 中节点的播放时间、State Weight、Transition Blend Alpha 和 Pose 结果使用 UE AnimBP Debugger 查看；Lua 调试器负责规则和动画参数逻辑。
+需要连续观察运行时真实层级、动画来源、混合权重与 Transition 实参时，使用 `Sekiro.LuaAnim.Debug` 或 `Sekiro.LuaAnim.Snapshot [IntervalSeconds]`，再从编辑器 `Window > Lua Anim Snapshot Viewer` 打开时间轴回放。完整命令和操作说明见 [Lua 动画蓝图层级调试与快照回放](lua-anim-snapshot-debugger.md)。
+
+`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Generate From Lua` 或 Lua 源码编译流程中命中，不会在 PIE 每帧执行。Lua 调试器继续负责 `BlueprintUpdateAnimation` 和旧式规则；强类型 Transition Rule 不进入 Lua Runtime。
 
 动画蓝图编辑器工具栏的 `Editor Debug: Off/On` 是按用户持久化的 Lua 调试端口开关：
 
@@ -431,13 +438,13 @@ State 'GroundLocomotion.Cycle' requires function 'StateGraph_Cycle'
 
 每个 State 必须存在对应函数，函数名大小写必须与 State 名完全一致。
 
-### Transition 函数缺失
+### 旧式 Transition 函数缺失
 
 ```text
 Transition 'GroundLocomotion.Idle_Start' requires function 'CanEnter_Idle_Start'
 ```
 
-独立状态机文件不要添加状态机节点名前缀；基类会在导出时自动补上。
+该错误只会出现在没有声明完整 `Rule` 的兼容旧模块。独立状态机文件不要添加状态机节点名前缀；基类会在导出时自动补上。新代码应直接在 `Machine:Transition` 设置 `Rule`。
 
 ### Pin 方向错误
 

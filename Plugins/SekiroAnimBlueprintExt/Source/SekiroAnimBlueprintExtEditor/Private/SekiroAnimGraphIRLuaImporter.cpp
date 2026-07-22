@@ -905,6 +905,7 @@ namespace SekiroAnimGraphIRLua
         return ReadNameField(Context, TableIndex, "Type", Path + TEXT(".Type"), SourceLocation, OutNode.Type)
             && ReadNameField(Context, TableIndex, "Name", Path + TEXT(".Name"), SourceLocation, OutNode.Name)
             && ReadFloatField(Context, TableIndex, "Threshold", Path + TEXT(".Threshold"), SourceLocation, OutNode.Threshold)
+            && ReadBoolField(Context, TableIndex, "ExpectedBool", Path + TEXT(".ExpectedBool"), SourceLocation, OutNode.bExpectedBool)
             && ParseIntegerArrayField(Context, TableIndex, Path + TEXT(".Children"), SourceLocation, OutNode.Children);
     }
 
@@ -1234,6 +1235,7 @@ namespace SekiroAnimGraphIRLua
             {
                 for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
                 {
+                    if (Transition.RuleFunctionName.IsNone()) continue;
                     const int32 InitialTop = lua_gettop(Context.State);
                     const FString RuleName = Transition.RuleFunctionName.ToString();
                     const FTCHARToUTF8 RuleNameUtf8(*RuleName);

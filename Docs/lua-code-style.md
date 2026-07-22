@@ -144,7 +144,7 @@ Lua 新代码要求详细注释，但注释要解释“为什么”和“边界�
 - 多返回值函数为每个返回位置分别写一条 `---@return`，顺序必须和 `return` 一致。
 - 可变参数使用 `---@param ... any 透传给目标函数的参数列表`，并在说明中写明最终消费者。
 - 冒号方法隐含的 `self` 不写 `---@param self`；所属类已经由函数名和 `---@class` 表达。
-- `CanEnter_*` 不是状态机类方法绑定，必须使用点号和显式 `Inst` 参数声明，例如 `function GroundLocomotion.CanEnter_Idle_Move(Inst)`，并补充 `---@param Inst userdata`；禁止使用冒号和隐式 `self`。
+- 新 Transition 优先使用 `Rule.BoolProperty/CurveGreaterEqual/TimeRemainingLessEqual/All/Any/Not` 声明完整强类型规则；兼容旧模块的 `CanEnter_*` 才使用点号和显式 `Inst` 参数，并补充 `---@param Inst userdata`。
 - `_context`、`_delta_seconds` 等当前未使用参数也必须标注，说明它们为何保留以及由谁传入。
 - 类型不确定时优先写准确联合类型，例如 `number|nil`、`table|string`；只有真正无法约束的跨语言值才使用 `any`。
 - 注释块必须紧邻对应函数，中间不得插入空行或其他语句。
@@ -390,7 +390,8 @@ end
 - StateMachine 必须由 `PoseGraph:StateMachine()` 创建为 `LuaAnimNode` 子类，并通过 `OwnedGraphId` 持有内部 StateMachine Graph；禁止把内部状态机 Graph 直接作为 Layer 根。
 - 大型状态机继承 `Animation.Compiler.LuaAnimStateMachine` 并拆分到独立文件；主图通过 `graph:StateMachine("Name", Definition)` 引用。
 - 状态机拓扑和状态图回调统一使用点号声明：`StateMachine(Machine)`、`StateGraph_<State>(Graph)`；编译器只传入显式 `Machine` 或 `Graph`，禁止冒号声明和隐式 `self`。
-- Transition Rule 统一使用点号声明 `CanEnter_<TransitionKey>(Inst)`；`Inst` 是运行时 AnimInstance 的 UnLua 代理，不写 Builder 回调和运行时转发函数。
+- Transition Rule 统一在 `Machine:Transition(..., { Rule = ... })` 中声明强类型 AST，由插件生成原生属性、曲线、时间和布尔组合节点；禁止同时声明完整 `Rule` 与旧式 `Gate/RuleFunctionName`。
+- 只有强类型 AST 暂时无法表达的兼容规则才允许点号声明 `CanEnter_<TransitionKey>(Inst)`；`Inst` 是运行时 AnimInstance 的 UnLua 代理，不写 Builder 回调和运行时转发函数。
 - 很小的内联状态机使用 `StateMachine_<Machine>`、`StateGraph_<Machine>_<State>` 和 `CanEnter_<Machine>_<TransitionKey>` 约定。
 - State 使用 `machine:State(Name)` 声明；每个 State 必须有独立 `StateGraph_*`，禁止多个 State 共享一个 StatePose Graph。
 - Transition 使用 `machine:Transition(Key, From, To)` 创建对象，并直接配置 `BlendDuration`、`PriorityOrder` 和 `BlendMode`。
@@ -410,7 +411,7 @@ end
 2. 动画蓝图类和 Skeleton/ParentClass 配置。
 3. `AnimGraph(graph)` 主图函数。
 4. 点号声明的内联状态机 `StateMachine_*(Machine)` 和 `StateGraph_*(Graph)`；大型状态机移到独立文件。
-5. 运行时点号声明的 `CanEnter_*(Inst)` 规则函数。
+5. 兼容旧模块时才保留运行时点号声明的 `CanEnter_*(Inst)` 规则函数。
 6. `return ABP_Class:Export()`。
 
 Transition 声明必须写明影响过渡质量的设置：
@@ -419,7 +420,10 @@ Transition 声明必须写明影响过渡质量的设置：
 local start_to_cycle = machine:Transition(
     "Start_Cycle",
     "Start",
-    "Cycle")
+    "Cycle",
+    {
+        Rule = Rule.BoolProperty("bHasMovementInput", true),
+    })
 start_to_cycle.BlendDuration = 0.12
 start_to_cycle.PriorityOrder = 0
 start_to_cycle.BlendMode = "Linear"

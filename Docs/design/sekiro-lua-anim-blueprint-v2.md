@@ -19,7 +19,7 @@ ABP_Sekiro.lua
 运行时 Lua 只做两件事：
 
 1. 在游戏线程更新方向、步态和一次性动作选择等 AnimInstance 参数。
-2. 实现只读 `CanEnter_*` 意图规则，由当前 Transition Rule Graph 在游戏线程按需调用。
+2. 以强类型 Rule AST 声明只读切换条件，由 Factory 生成 UE 原生 Transition Rule Graph。
 
 Lua 不再返回 Pose，不再用动画名字符串驱动播放器，不再维护假的 `FPoseLink`、状态时间或播放时间。
 
@@ -188,7 +188,7 @@ Entry -> JumpStart -> InAir -> Land -> Grounded
 
 ## 六、AnimInstance 变量
 
-`USKAnimInstance` 已有字段继续作为事实来源。运行时入口和 Transition Rule 统一通过显式 `Inst` 参数读取 `Inst.Gait`、`Inst.bIsLockedOn` 等字段。
+`USKAnimInstance` 已有字段继续作为事实来源。Transition Rule 通过原生 Bool 属性 Getter 读取这些字段；`BlueprintUpdateAnimation` 仍通过显式 `Inst` 参数更新生成变量。
 
 运行时数据顺序固定为：
 
@@ -314,7 +314,7 @@ Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
 })
 ```
 
-Gate 由 NodeFactory 生成原生 Transition Rule 节点。Lua 来源 AnimBlueprint 关闭多线程 Update；状态机检查当前出边时直接调用 Lua Rule，再将其 boolean 结果与原生 Gate 组合。
+完整 Rule AST 由 NodeFactory 生成原生 Transition Rule 节点，支持 BoolProperty、Curve、TimeRemaining、All/Any/Not。兼容旧模块仍可把 Lua Rule boolean 与附加 Gate 组合；正式 `ABP_Sekiro` 的状态切换不再进入 Lua Runtime。Lua 来源 AnimBlueprint 仍因每帧 `BlueprintUpdateAnimation` 关闭多线程 Update。
 
 ## 九、当前混合与相位边界
 
@@ -354,7 +354,7 @@ Content/Script/Animation/Sekiro/
 1. **生成变量与 Lua Update Bridge**：IR Variable、Blueprint Member Variable、`BlueprintUpdateAnimation` Lua override。
 2. **非 Pose 数据连接**：AnimInstance Property Getter、Bool/Float/Byte/Enum Pin 和 Link。
 3. **选择与混合节点**：`BlendListByBool`、`BlendListByEnum`、Sync Group、Inertialization 请求。
-4. **Transition Gate AST**：Lua bool、Curve Compare、Time Remaining、All/Any/Not。
+4. **Transition Rule AST**：Bool Property、Curve Compare、Time Remaining、All/Any/Not；Lua bool 只保留兼容。
 5. **状态生命周期**：进入状态时锁定 Action Direction/Gait，离开后清理一次性选择。
 6. **调试映射**：稳定 State/Transition ID 映射到生成节点，PIE 显示 Lua Rule、Native Gate、BlendAlpha 和活跃 Sequence。
 7. **后续层节点**：Save/Use Cached Pose 与 Orientation Warping 已接入；Slot、LayeredBoneBlend 仍待战斗层实现。

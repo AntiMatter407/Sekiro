@@ -1,0 +1,66 @@
+﻿#pragma once
+
+#include "CoreMinimal.h"
+
+/** 单个活跃动画节点的可视化数据。 */
+struct FSekiroLuaAnimSnapshotNode
+{
+    FString NodeType;
+    FString RawDebugLine;
+    double AbsoluteWeight = 0.0;
+    int32 Depth = 0;
+    FString ChainId;
+    bool bPoseSource = false;
+    FString NativeAssetName;
+    FString ResolvedAnimationName;
+    FString PoseAlias;
+    TMap<FString, FString> Inputs;
+    FString MachineName;
+    FString CurrentState;
+    FString PreviousState;
+    double BlendAlpha = 0.0;
+    TMap<FString, double> StateWeights;
+    FString OutputKind;
+    FString OutputDerivation;
+    TArray<TSharedPtr<FSekiroLuaAnimSnapshotNode>> Children;
+};
+
+/** 一次 Transition 表达式求值采样。 */
+struct FSekiroLuaAnimTransitionSample
+{
+    FString TransitionId;
+    FString ExpressionLabel;
+    FString ParameterName;
+    FString ParameterType;
+    FString ParameterValue;
+    FString ExpectedValue;
+    FString Threshold;
+    bool bExpressionResult = false;
+    bool bRuleResult = false;
+    bool bIsFinal = false;
+    FString EvaluatedUtcTimestamp;
+};
+
+/** JSONL 文件中的一帧 Lua 动画快照。 */
+struct FSekiroLuaAnimSnapshotFrame
+{
+    int32 SchemaVersion = 0;
+    int64 FrameIndex = 0;
+    FString UtcTimestamp;
+    double SessionElapsedSeconds = 0.0;
+    FString CaptureReason;
+    FString AnimInstancePath;
+    FString LuaModuleName;
+    TMap<FString, FString> Variables;
+    TMap<FString, double> Curves;
+    TArray<TSharedPtr<FSekiroLuaAnimSnapshotNode>> Roots;
+    TArray<FSekiroLuaAnimTransitionSample> Transitions;
+};
+
+/** 一个 JSONL 快照文件的容错加载结果。 */
+struct FSekiroLuaAnimSnapshotDocument
+{
+    FString SourceFilePath;
+    TArray<TSharedPtr<FSekiroLuaAnimSnapshotFrame>> Frames;
+    TArray<FString> Warnings;
+};

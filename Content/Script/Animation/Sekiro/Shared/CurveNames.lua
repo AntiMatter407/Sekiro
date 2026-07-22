@@ -11,6 +11,11 @@
 ---@field CanEnterInAir string Jump Start 已进入可衔接 InAir 姿势的窗口。
 ---@field CanResumeMovement string Jump Land 姿势已恢复到可被地面移动打断的窗口。
 ---@field CanExitLand string Jump Land 已进入可退出空中外层状态的窗口。
+---@field AttackSide string 攻击动作提交下一攻击侧，-1 为左、0 为保持、1 为右。
+---@field CanAcceptLightAttack string 当前动作允许缓存下一段轻攻击输入。
+---@field CanAcceptHeavyAttack string 当前动作允许缓存蓄力攻击输入。
+---@field CanCancelToGuard string 当前动作允许被防御输入取消。
+---@field CanCancelToDodge string 当前动作允许被闪避输入取消。
 local CurveNames = {
     CanEnterLoop = "CanEnterLoop",
     CanEnterStop = "CanEnterStop",
@@ -20,6 +25,11 @@ local CurveNames = {
     CanEnterInAir = "CanEnterInAir",
     CanResumeMovement = "CanResumeMovement",
     CanExitLand = "CanExitLand",
+    AttackSide = "AttackSide",
+    CanAcceptLightAttack = "CanAcceptLightAttack",
+    CanAcceptHeavyAttack = "CanAcceptHeavyAttack",
+    CanCancelToGuard = "CanCancelToGuard",
+    CanCancelToDodge = "CanCancelToDodge",
 }
 
 return CurveNames

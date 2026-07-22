@@ -1,6 +1,7 @@
 ﻿#include "SKAnimInstance.h"
 #include "Animation/AnimNodeBase.h"
 #include "Character/SKCharacter.h"
+#include "Combat/SKCombatComponent.h"
 #include "Engine/Canvas.h"
 #include "Input/SKInputManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -428,6 +429,23 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     DodgeDirection = OwnerCharacter->DodgeDirection;
     DodgeDirectionLateral = OwnerCharacter->DodgeDirectionLateral;
 
+    // ── Combat ────────────────────────────────────────────────
+    if (OwnerCombatComponent)
+    {
+        CombatActionState = OwnerCombatComponent->GetCombatActionState();
+        bIsGuardHeld = OwnerCombatComponent->IsGuardHeld();
+        bIsCombatGuardPoseActive = CombatActionState == ESKCombatActionState::GuardRaise
+            || CombatActionState == ESKCombatActionState::Guarding;
+        bIsCombatFullBodyActionActive = OwnerCombatComponent->IsCombatFullBodyActionActive();
+    }
+    else
+    {
+        CombatActionState = ESKCombatActionState::Neutral;
+        bIsGuardHeld = false;
+        bIsCombatGuardPoseActive = false;
+        bIsCombatFullBodyActionActive = false;
+    }
+
     const float TurnEnterAngle = 60.f;
     const float AbsDirectionDelta = FMath::Abs(DirectionDelta);
     const bool bChangedBetweenLockAndFree =
@@ -564,10 +582,12 @@ void USKAnimInstance::CacheOwnerReferences()
         OwnerMovement = nullptr;
         OwnerCameraManager = nullptr;
         OwnerInputManager = nullptr;
+        OwnerCombatComponent = nullptr;
         return;
     }
 
     OwnerMovement = Cast<USKMovementComponent>(OwnerCharacter->GetCharacterMovement());
     OwnerCameraManager = OwnerCharacter->FindComponentByClass<USKCameraManagerComponent>();
     OwnerInputManager = OwnerCharacter->FindComponentByClass<USKInputManager>();
+    OwnerCombatComponent = OwnerCharacter->FindComponentByClass<USKCombatComponent>();
 }

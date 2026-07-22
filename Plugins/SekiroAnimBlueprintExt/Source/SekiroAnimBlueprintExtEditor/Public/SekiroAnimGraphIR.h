@@ -209,19 +209,22 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRTransitionGateNode
     GENERATED_BODY()
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
-    FName Type = NAME_None;               // LuaBool/TimeRemainingLessEqual/CurveGreaterEqual/All/Any/Not
+    FName Type = NAME_None;               // LuaBool/BoolProperty/TimeRemainingLessEqual/CurveGreaterEqual/All/Any/Not
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
-    FName Name = NAME_None;               // Curve 名；其他节点可为 None
+    FName Name = NAME_None;               // Bool 属性名或 Curve 名；其他节点可为 None
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     float Threshold = 0.0f;               // 时间或曲线比较阈值
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    bool bExpectedBool = false;            // BoolProperty 叶节点期望值
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     TArray<int32> Children;               // 子 Gate 节点索引
 };
 
-/** Transition Gate 的扁平 AST。RootIndex 为 -1 表示仅使用 Lua bool。 */
+/** Transition Gate 的扁平 AST。RootIndex 为 -1 表示没有原生 Gate。 */
 USTRUCT(BlueprintType)
 struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRTransitionGate
 {

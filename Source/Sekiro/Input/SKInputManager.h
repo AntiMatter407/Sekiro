@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "InputActionValue.h"
+#include "Combat/SKCombatTypes.h"
 #include "Movement/SKMovementComponent.h"
 #include "UnLuaInterface.h"
 #include "SKInputManager.generated.h"
@@ -20,6 +21,7 @@ class UInputAction;
 class UEnhancedInputComponent;
 class ACharacter;
 class APlayerController;
+class USKCombatComponent;
 
 // ── 输入缓冲条目 ────────────────────────────────────────────
 USTRUCT(BlueprintType)
@@ -401,6 +403,7 @@ private:
 	bool TryCallLuaInputAxisEvent(FName FunctionName, const FVector2D& AxisValue); // 调用 Lua 轴输入事件
 	bool TryCallLuaInputTick(float DeltaTime);       // 调用 Lua Tick
 	FString ResolveLuaInputModuleName() const;       // 解析 UnLua 接口模块名
+	void PublishCombatInputEvent(ESKCombatInputAction Action, ESKCombatInputPhase Phase, int32 InputSerial, double EventTimeSeconds, float HoldDuration); // 转发战斗输入边沿
 
 	// ── 移动档位解析 ──────────────────────────────────────────
 
@@ -533,6 +536,11 @@ private:
 
 	float AttackHoldTime = 0.f;                      // 攻击长按累计时间（秒，> 0.3s 视为蓄力）
 	float ProstheticHoldTime = 0.f;                  // 义手长按累计时间（秒）
+	double AttackPressedTimeSeconds = 0.0;            // 当前攻击按下的绝对游戏时间
+	double GuardPressedTimeSeconds = 0.0;             // 当前防御按下的绝对游戏时间
+	int32 NextCombatInputSerial = 0;                  // 下一个战斗物理输入序列号来源
+	int32 ActiveAttackInputSerial = 0;                // 当前攻击按下对应的序列号
+	int32 ActiveGuardInputSerial = 0;                 // 当前防御按下对应的序列号
 
 	// ── 连段 ────────────────────────────────────────────────
 

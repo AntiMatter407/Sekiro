@@ -4,6 +4,7 @@
 #include "Weapon/SKWeaponComponent.h"
 #include "Input/SKInputManager.h"
 #include "Camera/SKCameraManagerComponent.h"
+#include "Combat/SKCombatComponent.h"
 #include "UI/SKLockOnIndicatorComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -62,6 +63,7 @@ ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	// 沿用旧蓝图序列化的默认子对象名称；类型与业务实现均已迁移到 WeaponManager。
 	WeaponManager = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
 	InputManager = CreateDefaultSubobject<USKInputManager>(TEXT("InputManager"));
+	CombatComponent = CreateDefaultSubobject<USKCombatComponent>(TEXT("CombatComponent"));
 	CameraManager = CreateDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
 	LockOnIndicator = CreateDefaultSubobject<USKLockOnIndicatorComponent>(TEXT("LockOnIndicator"));
 }

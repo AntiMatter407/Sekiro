@@ -18,7 +18,7 @@ local IRValue = require("Animation.Compiler.IRValue")
 ---@field TargetSkeleton string 普通 AnimBlueprint 必填的目标 Skeleton 资产软路径。
 ---@field Layers LuaAnimLayer[] 本次编译声明的 Graph 所有权作用域；当前 Factory 仅支持一个 Main Layer。
 ---@field LayerNames table<string, LuaAnimLayer> 按语义名称索引的 Graph 所有权作用域。
----@field RuntimeFunctions table<string, function> 独立状态机文件导出的运行时 Transition 函数。
+---@field RuntimeFunctions table<string, function> 兼容旧模块时导出的运行时 Transition 函数；纯原生 Rule 不登记。
 ---@field SourceLocation SekiroAnimIRSourceLocation 动画蓝图源码位置。
 ---@field AnimGraph fun(self: LuaAnimBlueprint, graph: LuaAnimGraph):nil 子类必须 override 的主动画图函数。
 local LuaAnimBlueprint = CompilerClass:Extend("LuaAnimBlueprint", {
@@ -124,7 +124,7 @@ function LuaAnimBlueprint:AnimationLayer(name, build_function)
     return layer
 end
 
----登记独立状态机文件提供的运行时函数；导出模块会把函数直接暴露给 UnLua Transition 桥接。
+---登记兼容旧状态机文件提供的运行时函数；纯原生 Rule 不调用本入口。
 ---@param function_name string IR 中引用的完整 CanEnter_<状态机>_<过渡键> 函数名。
 ---@param runtime_function function 运行时以真实 UAnimInstance 代理作为显式 Inst 参数调用的规则函数。
 ---@return nil result 该函数只登记本次编译需要导出的函数。
@@ -136,8 +136,8 @@ function LuaAnimBlueprint:RegisterRuntimeFunction(function_name, runtime_functio
     self.RuntimeFunctions[function_name] = runtime_function
 end
 
----根据内联约定或独立状态机类，构建 StateMachine 拓扑、每个 State Pose Graph 和运行时规则映射。
----独立文件使用 StateMachine/StateGraph_<State>/CanEnter_<Key>；内联写法增加节点名前缀。
+---根据内联约定或独立状态机类，构建 StateMachine 拓扑、每个 State Pose Graph 和可选旧式运行时规则映射。
+---强类型 Rule 不登记运行时函数；旧式独立文件使用 CanEnter_<Key>，内联写法增加节点名前缀。
 ---@param machine LuaStateMachineNode 已创建且拥有内部 StateMachine Graph 的节点。
 ---@param definition LuaAnimStateMachine|nil 可复用状态机描述类；为空时使用当前 AnimBlueprint 类。
 ---@return nil result 该函数完成状态机的全部编译期展开。
@@ -168,16 +168,18 @@ function LuaAnimBlueprint:ConfigureStateMachine(machine, definition)
     end
 
     for _, transition in ipairs(machine.OwnedGraph.Transitions) do
-        local local_rule_name = is_external
-            and "CanEnter_" .. transition.Key
-            or transition.RuleFunctionName
-        local runtime_function = owner[local_rule_name]
-        assert(type(runtime_function) == "function", string.format(
-            "Transition '%s.%s' requires function '%s'",
-            machine.Name,
-            transition.Key,
-            local_rule_name))
-        self:RegisterRuntimeFunction(transition.RuleFunctionName, runtime_function)
+        if transition.RuleFunctionName ~= "" then
+            local local_rule_name = is_external
+                and "CanEnter_" .. transition.Key
+                or transition.RuleFunctionName
+            local runtime_function = owner[local_rule_name]
+            assert(type(runtime_function) == "function", string.format(
+                "Transition '%s.%s' requires function '%s'",
+                machine.Name,
+                transition.Key,
+                local_rule_name))
+            self:RegisterRuntimeFunction(transition.RuleFunctionName, runtime_function)
+        end
     end
 end
 

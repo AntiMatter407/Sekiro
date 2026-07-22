@@ -16,6 +16,7 @@ public class SekiroAnimBlueprintExt : ModuleRules
 
         PrivateDependencyModuleNames.AddRange(new string[]
         {
+            "Json",
             "Lua",
         });
     }

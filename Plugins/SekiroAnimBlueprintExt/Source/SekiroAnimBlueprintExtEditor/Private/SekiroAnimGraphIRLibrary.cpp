@@ -1541,16 +1541,20 @@ bool USekiroAnimGraphIRLibrary::Validate(
                         }
                     }
 
-                    if (Transition.RuleFunctionName.IsNone())
+                    const FSekiroAnimIRTransitionGate& Gate = Transition.Gate;
+                    const bool bHasNativeGate = Gate.RootIndex != INDEX_NONE;
+                    if (Transition.RuleFunctionName.IsNone() && !bHasNativeGate)
                     {
                         AddError(
                             OutDiagnostics,
                             EmptyTransitionRule,
-                            FString::Printf(TEXT("Transition '%s' has no RuleFunctionName."), *Transition.Id),
+                            FString::Printf(
+                                TEXT("Transition '%s' has neither RuleFunctionName nor native Gate."),
+                                *Transition.Id),
                             Transition.Id,
                             Transition.SourceLocation);
                     }
-                    else
+                    else if (!Transition.RuleFunctionName.IsNone())
                     {
                         const FString RuleFunctionName = Transition.RuleFunctionName.ToString();
                         if (!IsValidLuaIdentifier(RuleFunctionName))
@@ -1593,7 +1597,6 @@ bool USekiroAnimGraphIRLibrary::Validate(
                             Transition.SourceLocation);
                     }
 
-                    const FSekiroAnimIRTransitionGate& Gate = Transition.Gate;
                     if (Gate.RootIndex != INDEX_NONE)
                     {
                         if (!Gate.Nodes.IsValidIndex(Gate.RootIndex))
@@ -1605,6 +1608,7 @@ bool USekiroAnimGraphIRLibrary::Validate(
                         {
                             const FSekiroAnimIRTransitionGateNode& GateNode = Gate.Nodes[GateIndex];
                             const bool bKnownType = GateNode.Type == TEXT("LuaBool")
+                                || GateNode.Type == TEXT("BoolProperty")
                                 || GateNode.Type == TEXT("TimeRemainingLessEqual")
                                 || GateNode.Type == TEXT("CurveGreaterEqual")
                                 || GateNode.Type == TEXT("All")
@@ -1616,11 +1620,14 @@ bool USekiroAnimGraphIRLibrary::Validate(
                                 if (!Gate.Nodes.IsValidIndex(ChildIndex) || ChildIndex >= GateIndex) bChildrenValid = false;
                             }
                             const bool bArityValid = ((GateNode.Type == TEXT("LuaBool")
+                                    || GateNode.Type == TEXT("BoolProperty")
                                     || GateNode.Type == TEXT("TimeRemainingLessEqual")
                                     || GateNode.Type == TEXT("CurveGreaterEqual")) && GateNode.Children.Num() == 0)
                                 || ((GateNode.Type == TEXT("All") || GateNode.Type == TEXT("Any")) && GateNode.Children.Num() > 0)
                                 || (GateNode.Type == TEXT("Not") && GateNode.Children.Num() == 1);
                             if (!bKnownType || !bChildrenValid || !bArityValid
+                                || (GateNode.Type == TEXT("LuaBool") && Transition.RuleFunctionName.IsNone())
+                                || (GateNode.Type == TEXT("BoolProperty") && GateNode.Name.IsNone())
                                 || (GateNode.Type == TEXT("CurveGreaterEqual") && GateNode.Name.IsNone())
                                 || (GateNode.Type == TEXT("TimeRemainingLessEqual") && GateNode.Threshold < 0.0f))
                             {
@@ -1629,6 +1636,15 @@ bool USekiroAnimGraphIRLibrary::Validate(
                                     Transition.Id, Transition.SourceLocation);
                             }
                         }
+                    }
+                    else if (!Gate.Nodes.IsEmpty())
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTransitionGate,
+                            TEXT("Transition Gate without a root must not contain Nodes."),
+                            Transition.Id,
+                            Transition.SourceLocation);
                     }
 
                     if (!Transition.SourceStateId.IsEmpty())
