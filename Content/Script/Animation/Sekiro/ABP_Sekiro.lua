@@ -101,11 +101,12 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("bJumpStartedCrouchedPose", "Bool", false)
     self:Variable("bWasInAir", "Bool", false)
     self:Variable("FootIKAlpha", "Float", 0.0)
+    self:Variable("WeaponHandIKAlpha", "Float", 0.0)
     self:Variable("bCombatGuardPose", "Bool", false)
     self:Variable("bCombatHasMovementInput", "Bool", false)
 end
 
----声明根动画图：Locomotion 经惯性化后与上半身 Slot 按 Spine 分层，再进入 Foot Placement 与双腿 Leg IK。
+---声明根动画图：Locomotion 经惯性化后与上半身 Slot 按 Spine 分层，再进入收拔刀右手 IK、Foot Placement 与双腿 Leg IK。
 ---Foot Placement 自行读取 CharacterMovement 接地状态并执行双脚地面检测，Lua 只声明骨骼与调参。
 ---@param Graph LuaAnimGraph 基类创建的主 AnimGraph。
 ---@return nil result 最终姿势连接 Graph Result。
@@ -113,6 +114,7 @@ function ABP_Sekiro:AnimGraph(Graph)
     Graph.LayoutStyle = LayoutStyle.HierarchicalBlocks
     self:DeclareVariables()
     local foot_ik = Tuning.FootIK
+    local weapon_ik = Tuning.WeaponIK
     local locomotion = Graph:StateMachine("RootLocomotion", RootLocomotion)
     local inertialization = Graph:Inertialization("LocomotionInertialization")
     inertialization.Source:Connect(locomotion.Pose)
@@ -154,8 +156,25 @@ function ABP_Sekiro:AnimGraph(Graph)
     combat_full_body_slot.bAlwaysUpdateSourcePose = true
     combat_full_body_slot.Source:Connect(combat_base.Pose)
 
-    local to_component = Graph:LocalToComponentSpace("FootIKLocalToComponent")
+    local to_component = Graph:LocalToComponentSpace("SkeletalControlsLocalToComponent")
     to_component.LocalPose:Connect(combat_full_body_slot.Pose)
+
+    -- 挂点与刀身偏移反解得到收拔刀共用目标；WeaponManager 在 Montage 启动前发布权重，
+    -- 避免低帧率跨过窄曲线窗口时换挂帧仍读取到上一帧的零权重。
+    -- 关节目标引用输入姿势的右肘位置，保留原动画肘部弯曲方向；禁止拉伸以免改变手臂比例。
+    local weapon_hand_ik = Graph:TwoBoneIK("WeaponHandIK")
+    weapon_hand_ik.IKBone = weapon_ik.IKBone
+    weapon_hand_ik.EffectorLocationSpace = "BoneSpace"
+    weapon_hand_ik.EffectorTargetSocketName = weapon_ik.EffectorSocket
+    weapon_hand_ik.JointTargetLocationSpace = "BoneSpace"
+    weapon_hand_ik.JointTargetBoneName = weapon_ik.JointTargetBone
+    weapon_hand_ik.bTakeRotationFromEffectorSpace = true
+    weapon_hand_ik.bAllowStretching = false
+    weapon_hand_ik.AlphaInputType = "Float"
+    weapon_hand_ik.ComponentPose:Connect(to_component.ComponentPose)
+
+    local weapon_hand_ik_alpha = Graph:Property("WeaponHandIKAlpha", "WeaponHandIKAlpha")
+    weapon_hand_ik.Alpha:Connect(weapon_hand_ik_alpha.Value)
 
     local foot_placement = Graph:FootPlacement("FootPlacement")
     foot_placement.IKFootRootBone = foot_ik.IKFootRootBone
@@ -172,7 +191,7 @@ function ABP_Sekiro:AnimGraph(Graph)
     foot_placement.TraceSweepRadius = foot_ik.TraceSweepRadius
     foot_placement.TraceMaxGroundPenetration = foot_ik.TraceMaxGroundPenetration
     foot_placement.bTraceEnabled = true
-    foot_placement.ComponentPose:Connect(to_component.ComponentPose)
+    foot_placement.ComponentPose:Connect(weapon_hand_ik.Pose)
 
     -- Foot Placement 和 Leg IK 必须使用同一权重；否则空中关闭贴地后，Leg IK 仍会把双脚拉回旧目标。
     local foot_ik_alpha = Graph:Property("FootIKAlpha", "FootIKAlpha")
@@ -205,11 +224,13 @@ function ABP_Sekiro:AnimGraph(Graph)
     main_flow:Place(combat_base, 7, 0)
     main_flow:Place(combat_full_body_slot, 8, 0)
     main_flow:Place(to_component, 9, 0)
-    main_flow:Place(foot_placement, 10, 0)
-    main_flow:Place(foot_ik_alpha, 10, 1)
-    main_flow:Place(leg_ik, 11, 0)
-    main_flow:Place(to_local, 12, 0)
-    main_flow:Place(Graph.OutputNode, 13, 0)
+    main_flow:Place(weapon_hand_ik, 10, 0)
+    main_flow:Place(weapon_hand_ik_alpha, 10, 1)
+    main_flow:Place(foot_placement, 11, 0)
+    main_flow:Place(foot_ik_alpha, 11, 1)
+    main_flow:Place(leg_ik, 12, 0)
+    main_flow:Place(to_local, 13, 0)
+    main_flow:Place(Graph.OutputNode, 14, 0)
 end
 
 ---每帧在游戏线程更新原生 Graph 消费的方向、步态和一次性动作锁存变量。

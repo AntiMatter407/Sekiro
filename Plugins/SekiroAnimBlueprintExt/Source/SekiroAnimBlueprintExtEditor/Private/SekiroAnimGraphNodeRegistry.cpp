@@ -11,7 +11,7 @@ namespace SekiroAnimGraphNodeRegistryPrivate
     TArray<FSekiroAnimIRNodeContract> BuildContracts()
     {
         TArray<FSekiroAnimIRNodeContract> Contracts;
-        Contracts.Reserve(20);
+        Contracts.Reserve(21);
 
         FSekiroAnimIRNodeContract& OutputPose = Contracts.AddDefaulted_GetRef();
         OutputPose.NodeType = SekiroAnimGraphIRNames::OutputPoseNode;
@@ -262,6 +262,71 @@ namespace SekiroAnimGraphNodeRegistryPrivate
         FSekiroAnimIRPropertyContract& LegIKMaxIterations = LegIK.Properties.AddDefaulted_GetRef();
         LegIKMaxIterations.Name = TEXT("MaxIterations");
         LegIKMaxIterations.ValueType = ESekiroAnimIRValueType::Integer;
+
+        FSekiroAnimIRNodeContract& TwoBoneIK = Contracts.AddDefaulted_GetRef();
+        TwoBoneIK.NodeType = SekiroAnimGraphIRNames::TwoBoneIKNode;
+        TwoBoneIK.EditorNodeClassPath = FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_TwoBoneIK"));
+        TwoBoneIK.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        TwoBoneIK.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        FSekiroAnimIRPinContract& TwoBoneIKComponentPose = TwoBoneIK.Pins.AddDefaulted_GetRef();
+        TwoBoneIKComponentPose.Name = TEXT("ComponentPose");
+        TwoBoneIKComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        TwoBoneIKComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPinContract& TwoBoneIKAlpha = TwoBoneIK.Pins.AddDefaulted_GetRef();
+        TwoBoneIKAlpha.Name = TEXT("Alpha");
+        TwoBoneIKAlpha.Direction = ESekiroAnimIRPinDirection::Input;
+        TwoBoneIKAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& TwoBoneIKPose = TwoBoneIK.Pins.AddDefaulted_GetRef();
+        TwoBoneIKPose.Name = TEXT("Pose");
+        TwoBoneIKPose.Direction = ESekiroAnimIRPinDirection::Output;
+        TwoBoneIKPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        TwoBoneIKPose.bAllowMultipleConnections = true;
+        FSekiroAnimIRPropertyContract& TwoBoneIKBone = TwoBoneIK.Properties.AddDefaulted_GetRef();
+        TwoBoneIKBone.Name = TEXT("IKBone");
+        TwoBoneIKBone.ValueType = ESekiroAnimIRValueType::Name;
+        TwoBoneIKBone.bRequired = true;
+        const TCHAR* TwoBoneIKNamePropertyNames[] = {
+            TEXT("EffectorLocationSpace"),
+            TEXT("EffectorTargetBoneName"),
+            TEXT("EffectorTargetSocketName"),
+            TEXT("JointTargetLocationSpace"),
+            TEXT("JointTargetBoneName"),
+            TEXT("JointTargetSocketName"),
+            TEXT("AlphaInputType"),
+            TEXT("AlphaCurveName"),
+        };
+        for (const TCHAR* PropertyName : TwoBoneIKNamePropertyNames)
+        {
+            FSekiroAnimIRPropertyContract& Property = TwoBoneIK.Properties.AddDefaulted_GetRef();
+            Property.Name = PropertyName;
+            Property.ValueType = ESekiroAnimIRValueType::Name;
+        }
+        const TCHAR* TwoBoneIKFloatPropertyNames[] = {
+            TEXT("EffectorLocationX"),
+            TEXT("EffectorLocationY"),
+            TEXT("EffectorLocationZ"),
+            TEXT("JointTargetLocationX"),
+            TEXT("JointTargetLocationY"),
+            TEXT("JointTargetLocationZ"),
+            TEXT("StartStretchRatio"),
+            TEXT("MaxStretchScale"),
+        };
+        for (const TCHAR* PropertyName : TwoBoneIKFloatPropertyNames)
+        {
+            FSekiroAnimIRPropertyContract& Property = TwoBoneIK.Properties.AddDefaulted_GetRef();
+            Property.Name = PropertyName;
+            Property.ValueType = ESekiroAnimIRValueType::Float;
+        }
+        const TCHAR* TwoBoneIKBoolPropertyNames[] = {
+            TEXT("bTakeRotationFromEffectorSpace"),
+            TEXT("bAllowStretching"),
+        };
+        for (const TCHAR* PropertyName : TwoBoneIKBoolPropertyNames)
+        {
+            FSekiroAnimIRPropertyContract& Property = TwoBoneIK.Properties.AddDefaulted_GetRef();
+            Property.Name = PropertyName;
+            Property.ValueType = ESekiroAnimIRValueType::Bool;
+        }
 
         FSekiroAnimIRNodeContract& SaveCachedPose = Contracts.AddDefaulted_GetRef();
         SaveCachedPose.NodeType = SekiroAnimGraphIRNames::SaveCachedPoseNode;

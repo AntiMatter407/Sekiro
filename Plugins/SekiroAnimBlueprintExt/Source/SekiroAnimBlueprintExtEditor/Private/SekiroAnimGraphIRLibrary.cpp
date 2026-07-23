@@ -18,6 +18,7 @@ const FName SekiroAnimGraphIRNames::ComponentToLocalSpaceNode(TEXT("ComponentToL
 const FName SekiroAnimGraphIRNames::OrientationWarpingNode(TEXT("OrientationWarping"));
 const FName SekiroAnimGraphIRNames::FootPlacementNode(TEXT("FootPlacement"));
 const FName SekiroAnimGraphIRNames::LegIKNode(TEXT("LegIK"));
+const FName SekiroAnimGraphIRNames::TwoBoneIKNode(TEXT("TwoBoneIK"));
 const FName SekiroAnimGraphIRNames::SaveCachedPoseNode(TEXT("SaveCachedPose"));
 const FName SekiroAnimGraphIRNames::UseCachedPoseNode(TEXT("UseCachedPose"));
 const FName SekiroAnimGraphIRNames::BoolPropertyGetterNode(TEXT("BoolPropertyGetter"));

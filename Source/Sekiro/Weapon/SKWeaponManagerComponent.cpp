@@ -17,6 +17,7 @@
 #include "TimerManager.h"
 #include "UnLua.h"
 #include "UnLuaModule.h"
+#include "UObject/UnrealType.h"
 
 namespace
 {
@@ -487,6 +488,38 @@ void USKWeaponManagerComponent::RestoreCharacterAnimationBlueprint()
     {
         CharacterMesh->SetAnimInstanceClass(CachedAnimInstanceClass);
     }
+}
+
+/**
+ * 按名称写入角色当前 AnimInstance 上的浮点反射属性，供 Lua 在播放动作前发布动画图控制量。
+ * 本函数只接受当前生成类真实存在的 float 属性，不创建字段、不解释属性业务含义，必须在游戏线程调用。
+ *
+ * @param PropertyName AnimInstance 生成类上的非空浮点属性名。
+ * @param Value 要立即写入实例的浮点值；函数不做范围限制。
+ * @return 找到有效 AnimInstance 与同名 float 属性并完成写入时返回 true，否则返回 false。
+ */
+bool USKWeaponManagerComponent::SetCharacterAnimFloatPropertyByName(
+    FName PropertyName,
+    float Value)
+{
+    USkeletalMeshComponent* CharacterMesh = ResolveCharacterMesh();
+    UAnimInstance* AnimInstance = CharacterMesh ? CharacterMesh->GetAnimInstance() : nullptr;
+    FFloatProperty* FloatProperty = AnimInstance && !PropertyName.IsNone()
+        ? FindFProperty<FFloatProperty>(AnimInstance->GetClass(), PropertyName)
+        : nullptr;
+    if (!FloatProperty)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("SKWeaponManager AnimInstance float property missing. Property=%s AnimInstance=%s"),
+            *PropertyName.ToString(),
+            *GetNameSafe(AnimInstance));
+        return false;
+    }
+
+    FloatProperty->SetPropertyValue_InContainer(AnimInstance, Value);
+    return true;
 }
 
 /**

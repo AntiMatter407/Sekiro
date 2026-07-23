@@ -548,6 +548,7 @@ namespace SekiroAnimGraphIRNames
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName OrientationWarpingNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName FootPlacementNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LegIKNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName TwoBoneIKNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName SaveCachedPoseNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName UseCachedPoseNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BoolPropertyGetterNode;

@@ -7,6 +7,7 @@
 #include "SekiroAnimBlueprintFactoryLibrary.generated.h"
 
 class UAnimBlueprint;
+class USkeletalMesh;
 
 /** 将已验证 AnimBlueprint IR 物化为 UE 原生编辑器资产。 */
 UCLASS()
@@ -36,6 +37,15 @@ public:
         const FString& PackagePath,
         const FString& AssetName,
         TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics);
+
+    /** 创建或更新 SkeletalMesh 的 Mesh Socket，并同步保存资产。 */
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation|Skeletal Mesh")
+    static bool UpsertSkeletalMeshSocket(
+        USkeletalMesh* SkeletalMesh,
+        FName SocketName,
+        FName BoneName,
+        const FTransform& RelativeTransform,
+        FString& OutError);
 
     /** 将已有标准 AnimBlueprint 配置为由指定 Lua 模块管理。 */
     UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation|Factory")

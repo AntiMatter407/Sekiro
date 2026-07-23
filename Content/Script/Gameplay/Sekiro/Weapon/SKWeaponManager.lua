@@ -19,6 +19,18 @@ local WeaponConfig = require("Gameplay.Sekiro.Weapon.WeaponConfig")
 ---@field CurrentPresentation string|nil Lua 已确认的当前武器展示状态。
 local SKWeaponManager = UnLua.Class()
 local Debug = true
+local WeaponHandIKAlphaProperty = "WeaponHandIKAlpha"
+
+---发布右手 IK 权重到当前角色 AnimInstance 的生成变量。
+---权重必须在动态 Montage 启动前写入，确保单帧跨过 Notify 时 SkeletalControl 仍使用本帧有效值。
+---@param manager USKWeaponManagerComponent 当前武器管理组件，负责解析所属角色 AnimInstance。
+---@param alpha number 要发布的 IK 权重；当前流程只写入 0 或 1。
+---@return boolean written AnimInstance 生成变量存在且已成功写入时返回 true。
+local function set_weapon_hand_ik_alpha(manager, alpha)
+    return manager:SetCharacterAnimFloatPropertyByName(
+        WeaponHandIKAlphaProperty,
+        alpha) == true
+end
 
 ---按稳定配置键读取武器定义，缺失时返回 nil，避免把无效路径传入 C++。
 ---@param weapon_id string|nil 武器配置键；nil 时使用模块默认武器键。
@@ -115,6 +127,10 @@ function SKWeaponManager:StartWeaponTransition(transition_name)
         animation_path = transition_config.AdditiveAnimationPath
     end
 
+    if set_weapon_hand_ik_alpha(self, 1.0) ~= true then
+        return false
+    end
+
     -- Slot 动态 Montage 只进入 AnimGraph 的上半身分支；Additive 资源会在 Slot 内叠加到当前 Run/Sprint Pose。
     if self:PlayCharacterSlotAnimationByPath(
         animation_path,
@@ -123,6 +139,7 @@ function SKWeaponManager:StartWeaponTransition(transition_name)
         transition_config.BlendOutTime,
         1.0,
         1) ~= true then
+        set_weapon_hand_ik_alpha(self, 0.0)
         return false
     end
 
@@ -172,6 +189,9 @@ function SKWeaponManager:ReceiveBeginPlay()
     if self:SpawnConfiguredWeapon(nil) ~= true then
         return
     end
+    if set_weapon_hand_ik_alpha(self, 0.0) ~= true then
+        return
+    end
 
     self.bRestrictedZoneObserved = self:IsRestrictedZoneActive() == true
     if self.bRestrictedZoneObserved then
@@ -206,6 +226,8 @@ function SKWeaponManager:OnWeaponAnimationEvent(event_name, _animation)
         return false
     end
 
+    -- 当前帧的 Pose 已按权重 1 求值并完成换挂；随后释放约束，让下一帧继续跟随收拔刀原动画。
+    set_weapon_hand_ik_alpha(self, 0.0)
     transition.bPresentationSwitched = true
     LuaLog.Debug(
         Debug,
@@ -235,6 +257,7 @@ function SKWeaponManager:Tick(delta_seconds)
         local delta = delta_seconds or 0.0
         transition.ElapsedSeconds = transition.ElapsedSeconds + delta
         if transition.ElapsedSeconds >= transition.Config.Duration then
+            set_weapon_hand_ik_alpha(self, 0.0)
             self.ActiveTransition = nil
         end
     end

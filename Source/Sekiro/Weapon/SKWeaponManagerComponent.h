@@ -94,6 +94,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Weapon|Animation")
     void RestoreCharacterAnimationBlueprint();         // 恢复角色动画蓝图
 
+    UFUNCTION(BlueprintCallable, Category = "Weapon|Animation")
+    bool SetCharacterAnimFloatPropertyByName(FName PropertyName, float Value); // 写入角色 AnimInstance 浮点属性
+
     // ── 上半身 Slot 动画 ─────────────────────────────────────────────────────
 
     UFUNCTION(BlueprintCallable, Category = "Weapon|Animation")

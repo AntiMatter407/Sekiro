@@ -10,6 +10,7 @@
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_Slot.h"
 #include "AnimGraphNode_TransitionResult.h"
+#include "AnimGraphNode_TwoBoneIK.h"
 #include "AnimGraphNode_UseCachedPose.h"
 #include "AnimGraphNode_LegIK.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
@@ -29,6 +30,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Editor.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
 #include "Framework/Commands/UICommandList.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "Framework/MultiBox/MultiBox.h"
@@ -664,6 +667,103 @@ namespace SekiroAnimBlueprintFactoryTests
     }
 
     /**
+     * 在 OrientationWarping 与 FootPlacement 之间插入 TwoBoneIK，覆盖骨骼、Socket、空间、位置、拉伸和曲线 Alpha 配置。
+     * 函数仅修改调用方独占的 IR，不访问 UObject；测试目标名均由参数或本函数的测试常量提供。
+     *
+     * @param Graph 已包含 Link.Move.ToFootPlacement 的 StatePose Graph。
+     * @param BoneName IKBone 与 JointTarget 使用的有效测试骨骼名。
+     * @param SourceLocation 复制到新增节点与连接的 Lua 源位置。
+     * @return 找到现有 FootPlacement 输入连接且 BoneName 有效时返回 true，否则返回 false。
+     */
+    bool AddTwoBoneIKNode(
+        FSekiroAnimIRGraph& Graph,
+        const FName BoneName,
+        const FSekiroAnimIRSourceLocation& SourceLocation)
+    {
+        FSekiroAnimIRLink* ToFootPlacement = nullptr;
+        for (FSekiroAnimIRLink& Link : Graph.Links)
+        {
+            if (Link.Id == TEXT("Link.Move.ToFootPlacement"))
+            {
+                ToFootPlacement = &Link;
+                break;
+            }
+        }
+        if (ToFootPlacement == nullptr || BoneName.IsNone()) return false;
+
+        const FSekiroAnimIRPinEndpoint OriginalSource = ToFootPlacement->Source;
+        const FString TwoBoneIKId(TEXT("Node.Move.TwoBoneIK"));
+        ToFootPlacement->Source.NodeId = TwoBoneIKId;
+        ToFootPlacement->Source.PinName = TEXT("Pose");
+
+        FSekiroAnimIRNode& TwoBoneIK = Graph.Nodes.AddDefaulted_GetRef();
+        TwoBoneIK.Id = TwoBoneIKId;
+        TwoBoneIK.NodeType = SekiroAnimGraphIRNames::TwoBoneIKNode;
+        TwoBoneIK.DisplayName = TEXT("Two Bone IK");
+        TwoBoneIK.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& ComponentPose = TwoBoneIK.Pins.AddDefaulted_GetRef();
+        ComponentPose.Name = TEXT("ComponentPose");
+        ComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        ComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPin& Alpha = TwoBoneIK.Pins.AddDefaulted_GetRef();
+        Alpha.Name = TEXT("Alpha");
+        Alpha.Direction = ESekiroAnimIRPinDirection::Input;
+        Alpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& Pose = TwoBoneIK.Pins.AddDefaulted_GetRef();
+        Pose.Name = TEXT("Pose");
+        Pose.Direction = ESekiroAnimIRPinDirection::Output;
+        Pose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        Pose.bAllowMultipleConnections = true;
+
+        const auto AddNameProperty = [&TwoBoneIK](const TCHAR* Name, const FName Value)
+        {
+            FSekiroAnimIRProperty& Property = TwoBoneIK.Properties.AddDefaulted_GetRef();
+            Property.Name = Name;
+            Property.Value.Type = ESekiroAnimIRValueType::Name;
+            Property.Value.NameValue = Value;
+        };
+        const auto AddFloatProperty = [&TwoBoneIK](const TCHAR* Name, const double Value)
+        {
+            FSekiroAnimIRProperty& Property = TwoBoneIK.Properties.AddDefaulted_GetRef();
+            Property.Name = Name;
+            Property.Value.Type = ESekiroAnimIRValueType::Float;
+            Property.Value.FloatValue = Value;
+        };
+        const auto AddBoolProperty = [&TwoBoneIK](const TCHAR* Name, const bool bValue)
+        {
+            FSekiroAnimIRProperty& Property = TwoBoneIK.Properties.AddDefaulted_GetRef();
+            Property.Name = Name;
+            Property.Value.Type = ESekiroAnimIRValueType::Bool;
+            Property.Value.BoolValue = bValue;
+        };
+        AddNameProperty(TEXT("IKBone"), BoneName);
+        AddNameProperty(TEXT("EffectorLocationSpace"), TEXT("BoneSpace"));
+        AddNameProperty(TEXT("EffectorTargetSocketName"), TEXT("FactoryTestEffectorSocket"));
+        AddFloatProperty(TEXT("EffectorLocationX"), 11.0);
+        AddFloatProperty(TEXT("EffectorLocationY"), 12.0);
+        AddFloatProperty(TEXT("EffectorLocationZ"), 13.0);
+        AddNameProperty(TEXT("JointTargetLocationSpace"), TEXT("BoneSpace"));
+        AddNameProperty(TEXT("JointTargetBoneName"), BoneName);
+        AddFloatProperty(TEXT("JointTargetLocationX"), 21.0);
+        AddFloatProperty(TEXT("JointTargetLocationY"), 22.0);
+        AddFloatProperty(TEXT("JointTargetLocationZ"), 23.0);
+        AddBoolProperty(TEXT("bTakeRotationFromEffectorSpace"), true);
+        AddBoolProperty(TEXT("bAllowStretching"), true);
+        AddFloatProperty(TEXT("StartStretchRatio"), 0.8);
+        AddFloatProperty(TEXT("MaxStretchScale"), 1.4);
+        AddNameProperty(TEXT("AlphaInputType"), TEXT("Curve"));
+        AddNameProperty(TEXT("AlphaCurveName"), TEXT("FactoryTestIKAlpha"));
+
+        FSekiroAnimIRLink& ToTwoBoneIK = Graph.Links.AddDefaulted_GetRef();
+        ToTwoBoneIK.Id = TEXT("Link.Move.ToTwoBoneIK");
+        ToTwoBoneIK.Source = OriginalSource;
+        ToTwoBoneIK.Target.NodeId = TwoBoneIKId;
+        ToTwoBoneIK.Target.PinName = TEXT("ComponentPose");
+        ToTwoBoneIK.SourceLocation = SourceLocation;
+        return true;
+    }
+
+    /**
      * 在 StatePose 根输出前插入 Slot 与单层 Layered Blend Per Bone，模拟上半身 Montage 合成链。
      * 函数仅修改调用方独占的值类型 IR；基础姿势同时作为 Slot Source 和 Layered BasePose。
      *
@@ -1141,6 +1241,13 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
                 OrientationTestBone,
                 BlueprintIR.SourceLocation));
     TestTrue(
+        TEXT("Test IR adds a configurable TwoBoneIK node"),
+        OrientationGraph != nullptr
+            && AddTwoBoneIKNode(
+                *OrientationGraph,
+                OrientationTestBone,
+                BlueprintIR.SourceLocation));
+    TestTrue(
         TEXT("Test IR adds Slot and Layered Blend Per Bone nodes"),
         OrientationGraph != nullptr
             && AddUpperBodyBlendChain(
@@ -1316,6 +1423,7 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     UAnimGraphNode_FootPlacement* FootPlacement =
         FindFirstNode<UAnimGraphNode_FootPlacement>(MoveGraph);
     UAnimGraphNode_LegIK* LegIK = FindFirstNode<UAnimGraphNode_LegIK>(MoveGraph);
+    UAnimGraphNode_TwoBoneIK* TwoBoneIK = FindFirstNode<UAnimGraphNode_TwoBoneIK>(MoveGraph);
     UAnimGraphNode_Slot* Slot = FindFirstNode<UAnimGraphNode_Slot>(MoveGraph);
     UAnimGraphNode_LayeredBoneBlend* LayeredBlend =
         FindFirstNode<UAnimGraphNode_LayeredBoneBlend>(MoveGraph);
@@ -1343,6 +1451,7 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
     TestNotNull(TEXT("OrientationWarping node is created"), OrientationWarping);
     TestNotNull(TEXT("FootPlacement node is created"), FootPlacement);
     TestNotNull(TEXT("LegIK node is created"), LegIK);
+    TestNotNull(TEXT("TwoBoneIK node is created"), TwoBoneIK);
     TestNotNull(TEXT("Slot node is created"), Slot);
     TestNotNull(TEXT("Layered Blend Per Bone node is created"), LayeredBlend);
     TestNotNull(TEXT("ComponentToLocalSpace node is explicitly created"), ComponentToLocal);
@@ -1522,6 +1631,62 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         TEXT("LegIK writes byte MaxIterations into int32"),
         LegIK != nullptr ? LegIK->Node.MaxIterations : 0,
         7);
+    TestEqual(
+        TEXT("TwoBoneIK receives IKBone"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.IKBone.BoneName : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("TwoBoneIK uses Effector BoneSpace"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.EffectorLocationSpace.GetValue() : BCS_MAX,
+        BCS_BoneSpace);
+    TestTrue(
+        TEXT("TwoBoneIK uses an Effector Socket target"),
+        TwoBoneIK != nullptr && TwoBoneIK->Node.EffectorTarget.bUseSocket);
+    TestEqual(
+        TEXT("TwoBoneIK receives Effector Socket name"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.EffectorTarget.SocketReference.SocketName : NAME_None,
+        FName(TEXT("FactoryTestEffectorSocket")));
+    TestEqual(
+        TEXT("TwoBoneIK receives Effector location"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.EffectorLocation : FVector::ZeroVector,
+        FVector(11.0, 12.0, 13.0));
+    TestEqual(
+        TEXT("TwoBoneIK uses JointTarget BoneSpace"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.JointTargetLocationSpace.GetValue() : BCS_MAX,
+        BCS_BoneSpace);
+    TestFalse(
+        TEXT("TwoBoneIK uses a JointTarget bone"),
+        TwoBoneIK != nullptr && TwoBoneIK->Node.JointTarget.bUseSocket);
+    TestEqual(
+        TEXT("TwoBoneIK receives JointTarget bone name"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.JointTarget.BoneReference.BoneName : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("TwoBoneIK receives JointTarget location"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.JointTargetLocation : FVector::ZeroVector,
+        FVector(21.0, 22.0, 23.0));
+    TestTrue(
+        TEXT("TwoBoneIK takes Effector rotation"),
+        TwoBoneIK != nullptr && TwoBoneIK->Node.bTakeRotationFromEffectorSpace);
+    TestTrue(
+        TEXT("TwoBoneIK allows stretching"),
+        TwoBoneIK != nullptr && TwoBoneIK->Node.bAllowStretching);
+    TestEqual(
+        TEXT("TwoBoneIK receives start stretch ratio"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.StartStretchRatio : 0.0,
+        0.8);
+    TestEqual(
+        TEXT("TwoBoneIK receives max stretch scale"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.MaxStretchScale : 0.0,
+        1.4);
+    TestEqual(
+        TEXT("TwoBoneIK uses Curve Alpha"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.AlphaInputType : EAnimAlphaInputType::Float,
+        EAnimAlphaInputType::Curve);
+    TestEqual(
+        TEXT("TwoBoneIK receives Alpha curve name"),
+        TwoBoneIK != nullptr ? TwoBoneIK->Node.AlphaCurveName : NAME_None,
+        FName(TEXT("FactoryTestIKAlpha")));
 
     UEdGraphPin* LocalPosePin = LocalToComponent != nullptr
         ? LocalToComponent->FindPin(TEXT("LocalPose"), EGPD_Input)
@@ -1531,6 +1696,9 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         : nullptr;
     UEdGraphPin* FootPlacementComponentPin = FootPlacement != nullptr
         ? FootPlacement->FindPin(TEXT("ComponentPose"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* TwoBoneIKComponentPin = TwoBoneIK != nullptr
+        ? TwoBoneIK->FindPin(TEXT("ComponentPose"), EGPD_Input)
         : nullptr;
     UEdGraphPin* LegIKComponentPin = LegIK != nullptr
         ? LegIK->FindPin(TEXT("ComponentPose"), EGPD_Input)
@@ -1547,7 +1715,11 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         OrientationComponentPin != nullptr ? OrientationComponentPin->LinkedTo.Num() : 0,
         1);
     TestEqual(
-        TEXT("FootPlacement receives OrientationWarping component Pose"),
+        TEXT("TwoBoneIK receives OrientationWarping component Pose"),
+        TwoBoneIKComponentPin != nullptr ? TwoBoneIKComponentPin->LinkedTo.Num() : 0,
+        1);
+    TestEqual(
+        TEXT("FootPlacement receives TwoBoneIK component Pose"),
         FootPlacementComponentPin != nullptr ? FootPlacementComponentPin->LinkedTo.Num() : 0,
         1);
     TestEqual(
@@ -2464,6 +2636,158 @@ bool FSekiroAnimBlueprintFactoryCompileSaveEndToEndTest::RunTest(const FString& 
     }
     IFileManager::Get().Delete(*Filename, false, true);
     TestFalse(TEXT("Generated package file is cleaned"), IFileManager::Get().FileExists(*Filename));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimBlueprintFactoryUpsertSkeletalMeshSocketTest,
+    "Sekiro.AnimGraphIR.Factory.UpsertSkeletalMeshSocket",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Mesh Socket 工具可创建、保存并原地更新同名 Socket，同时拒绝空名称和无效骨骼。
+ * 测试复制引擎 SkeletalCube 到唯一 /Game 测试包，完成后注销对象并删除生成文件，不保留 Content 资产。
+ * 必须由 Automation Framework 在游戏线程执行。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集与测试资产清理。
+ */
+bool FSekiroAnimBlueprintFactoryUpsertSkeletalMeshSocketTest::RunTest(const FString& Parameters)
+{
+    USkeletalMesh* SourceMesh = LoadObject<USkeletalMesh>(
+        nullptr,
+        TEXT("/Engine/EngineMeshes/SkeletalCube.SkeletalCube"));
+    TestNotNull(TEXT("Socket test source SkeletalMesh loads"), SourceMesh);
+    if (SourceMesh == nullptr) return true;
+
+    const FString AssetName = TEXT("SKM_SocketUpsert_")
+        + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString LongPackageName = TEXT("/Game/__SekiroAnimGraphIRTests__/") + AssetName;
+    UPackage* Package = CreatePackage(*LongPackageName);
+    USkeletalMesh* TestMesh = DuplicateObject<USkeletalMesh>(
+        SourceMesh,
+        Package,
+        FName(*AssetName));
+    TestNotNull(TEXT("Socket test duplicates a SkeletalMesh asset"), TestMesh);
+    if (TestMesh == nullptr) return true;
+
+    TestMesh->SetFlags(RF_Public | RF_Standalone);
+    FAssetRegistryModule::AssetCreated(TestMesh);
+    const FReferenceSkeleton& ReferenceSkeleton = TestMesh->GetRefSkeleton();
+    const FName BoneName = ReferenceSkeleton.GetNum() > 0
+        ? ReferenceSkeleton.GetBoneName(0)
+        : NAME_None;
+    TestFalse(TEXT("Socket test mesh has a reference bone"), BoneName.IsNone());
+
+    const FName SocketName(TEXT("FactoryTestMeshSocket"));
+    const FTransform FirstTransform(
+        FRotator(10.0, 20.0, 30.0),
+        FVector(11.0, 12.0, 13.0),
+        FVector(1.1, 1.2, 1.3));
+    FString ErrorMessage;
+    TestTrue(
+        TEXT("Upsert creates and saves a Mesh Socket"),
+        USekiroAnimBlueprintFactoryLibrary::UpsertSkeletalMeshSocket(
+            TestMesh,
+            SocketName,
+            BoneName,
+            FirstTransform,
+            ErrorMessage));
+    TestTrue(TEXT("Successful Socket creation clears error"), ErrorMessage.IsEmpty());
+
+    const FString Filename = FPackageName::LongPackageNameToFilename(
+        LongPackageName,
+        FPackageName::GetAssetPackageExtension());
+    TestTrue(TEXT("Socket upsert saves the SkeletalMesh package"), IFileManager::Get().FileExists(*Filename));
+
+    USkeletalMeshSocket* CreatedSocket = nullptr;
+    int32 MatchingSocketCount = 0;
+    for (USkeletalMeshSocket* Socket : TestMesh->GetMeshOnlySocketList())
+    {
+        if (Socket == nullptr || Socket->SocketName != SocketName) continue;
+        CreatedSocket = Socket;
+        ++MatchingSocketCount;
+    }
+    TestEqual(TEXT("Socket upsert creates one Mesh Socket"), MatchingSocketCount, 1);
+    TestNotNull(TEXT("Created Mesh Socket is discoverable"), CreatedSocket);
+    if (CreatedSocket != nullptr)
+    {
+        TestEqual(TEXT("Created Socket uses requested bone"), CreatedSocket->BoneName, BoneName);
+        TestEqual(
+            TEXT("Created Socket receives relative location"),
+            CreatedSocket->RelativeLocation,
+            FirstTransform.GetLocation());
+        TestTrue(
+            TEXT("Created Socket receives relative rotation"),
+            CreatedSocket->RelativeRotation.Equals(FirstTransform.Rotator()));
+        TestEqual(
+            TEXT("Created Socket receives relative scale"),
+            CreatedSocket->RelativeScale,
+            FirstTransform.GetScale3D());
+    }
+
+    const FTransform UpdatedTransform(
+        FRotator(-15.0, 25.0, 35.0),
+        FVector(21.0, 22.0, 23.0),
+        FVector(0.9, 0.8, 0.7));
+    TestTrue(
+        TEXT("Second upsert updates and saves the existing Mesh Socket"),
+        USekiroAnimBlueprintFactoryLibrary::UpsertSkeletalMeshSocket(
+            TestMesh,
+            SocketName,
+            BoneName,
+            UpdatedTransform,
+            ErrorMessage));
+    MatchingSocketCount = 0;
+    USkeletalMeshSocket* UpdatedSocket = nullptr;
+    for (USkeletalMeshSocket* Socket : TestMesh->GetMeshOnlySocketList())
+    {
+        if (Socket == nullptr || Socket->SocketName != SocketName) continue;
+        UpdatedSocket = Socket;
+        ++MatchingSocketCount;
+    }
+    TestEqual(TEXT("Second upsert does not duplicate the Mesh Socket"), MatchingSocketCount, 1);
+    TestEqual(TEXT("Second upsert preserves Socket object identity"), UpdatedSocket, CreatedSocket);
+    if (UpdatedSocket != nullptr)
+    {
+        TestEqual(
+            TEXT("Second upsert replaces relative location"),
+            UpdatedSocket->RelativeLocation,
+            UpdatedTransform.GetLocation());
+        TestTrue(
+            TEXT("Second upsert replaces relative rotation"),
+            UpdatedSocket->RelativeRotation.Equals(UpdatedTransform.Rotator()));
+        TestEqual(
+            TEXT("Second upsert replaces relative scale"),
+            UpdatedSocket->RelativeScale,
+            UpdatedTransform.GetScale3D());
+    }
+
+    TestFalse(
+        TEXT("Upsert rejects a missing reference bone"),
+        USekiroAnimBlueprintFactoryLibrary::UpsertSkeletalMeshSocket(
+            TestMesh,
+            TEXT("InvalidBoneSocket"),
+            TEXT("MissingFactoryTestBone"),
+            FTransform::Identity,
+            ErrorMessage));
+    TestFalse(TEXT("Invalid bone reports an error"), ErrorMessage.IsEmpty());
+    TestFalse(
+        TEXT("Upsert rejects an empty Socket name"),
+        USekiroAnimBlueprintFactoryLibrary::UpsertSkeletalMeshSocket(
+            TestMesh,
+            NAME_None,
+            BoneName,
+            FTransform::Identity,
+            ErrorMessage));
+    TestFalse(TEXT("Empty Socket name reports an error"), ErrorMessage.IsEmpty());
+
+    IFileManager::Get().Delete(*Filename, false, true);
+    TestMesh->ClearFlags(RF_Public | RF_Standalone);
+    TestMesh->SetFlags(RF_Transient);
+    TestMesh->MarkAsGarbage();
+    Package->SetDirtyFlag(false);
+    TestFalse(TEXT("Socket test package file is cleaned"), IFileManager::Get().FileExists(*Filename));
     return true;
 }
 

@@ -140,16 +140,36 @@ bool ASKWeapon::AttachSheathToBody()
 /**
  * 在拔刀和收刀展示之间切换刀身父组件，并仅在挂载成功后更新状态。
  * 本函数不生成 Actor、不播放动画，也不控制攻击碰撞，必须在游戏线程调用。
+ * 换挂前先把刀身子组件刷新到当前骨骼 Pose；成功后输出前后世界 Transform 差值，供动画 IK 连续性验收。
  *
  * @param NewPresentation 目标展示状态；Drawn 挂右手 Dummy 20，Sheathed 挂角色收刀 Dummy 147。
  * @return 目标挂载成功时返回 true；依赖组件或挂点无效时返回 false，原状态保持不变。
  */
 bool ASKWeapon::SetWeaponPresentation(ESKWeaponPresentation NewPresentation)
 {
+    if (BladeMesh) BladeMesh->UpdateComponentToWorld();
+    const FTransform BladeTransformBefore = BladeMesh
+        ? BladeMesh->GetComponentTransform()
+        : FTransform::Identity;
     const bool bAttached = NewPresentation == ESKWeaponPresentation::Drawn
         ? AttachBladeToHand()
         : AttachBladeToSheath();
     if (!bAttached) return false;
+
+    const FTransform BladeTransformAfter = BladeMesh->GetComponentTransform();
+    const float LocationDelta = FVector::Distance(
+        BladeTransformBefore.GetLocation(),
+        BladeTransformAfter.GetLocation());
+    const float RotationDelta = FMath::RadiansToDegrees(
+        BladeTransformBefore.GetRotation().AngularDistance(
+            BladeTransformAfter.GetRotation()));
+    UE_LOG(
+        LogTemp,
+        Display,
+        TEXT("SKWeapon presentation=%d attach_delta_cm=%.6f attach_delta_deg=%.6f"),
+        static_cast<int32>(NewPresentation),
+        LocationDelta,
+        RotationDelta);
 
     Presentation = NewPresentation;
     return true;

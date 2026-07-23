@@ -1457,7 +1457,7 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
 {
     const TConstArrayView<FSekiroAnimIRNodeContract> Contracts =
         FSekiroAnimGraphNodeRegistry::GetContracts();
-    TestEqual(TEXT("Registry exposes twenty built-in NodeTypes"), Contracts.Num(), 20);
+    TestEqual(TEXT("Registry exposes twenty-one built-in NodeTypes"), Contracts.Num(), 21);
 
     const FSekiroAnimIRNodeContract* OutputPose =
         FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::OutputPoseNode);
@@ -1619,6 +1619,40 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
             LegIK->Properties[2].ValueType,
             ESekiroAnimIRValueType::Integer);
         TestTrue(TEXT("LegIK legs are required"), LegIK->Properties[0].bRequired);
+    }
+
+    const FSekiroAnimIRNodeContract* TwoBoneIK =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::TwoBoneIKNode);
+    TestNotNull(TEXT("TwoBoneIK contract is registered"), TwoBoneIK);
+    if (TwoBoneIK)
+    {
+        TestEqual(
+            TEXT("TwoBoneIK keeps the AnimGraph editor class path"),
+            TwoBoneIK->EditorNodeClassPath.ToString(),
+            FString(TEXT("/Script/AnimGraph.AnimGraphNode_TwoBoneIK")));
+        TestEqual(TEXT("TwoBoneIK has three Pins"), TwoBoneIK->Pins.Num(), 3);
+        TestEqual(TEXT("TwoBoneIK has nineteen properties"), TwoBoneIK->Properties.Num(), 19);
+        TestEqual(
+            TEXT("TwoBoneIK consumes component Pose"),
+            TwoBoneIK->Pins[0].DataType,
+            SekiroAnimGraphIRNames::ComponentPoseData);
+        TestEqual(
+            TEXT("TwoBoneIK exposes Float Alpha"),
+            TwoBoneIK->Pins[1].DataType,
+            SekiroAnimGraphIRNames::FloatData);
+        TestEqual(
+            TEXT("TwoBoneIK produces component Pose"),
+            TwoBoneIK->Pins[2].DataType,
+            SekiroAnimGraphIRNames::ComponentPoseData);
+        TestTrue(TEXT("TwoBoneIK IKBone is required"), TwoBoneIK->Properties[0].bRequired);
+        TestEqual(
+            TEXT("TwoBoneIK exposes Effector Socket targets"),
+            TwoBoneIK->Properties[3].Name,
+            FName(TEXT("EffectorTargetSocketName")));
+        TestEqual(
+            TEXT("TwoBoneIK exposes AlphaCurveName"),
+            TwoBoneIK->Properties[8].Name,
+            FName(TEXT("AlphaCurveName")));
     }
 
     const FSekiroAnimIRNodeContract* SaveCachedPose =

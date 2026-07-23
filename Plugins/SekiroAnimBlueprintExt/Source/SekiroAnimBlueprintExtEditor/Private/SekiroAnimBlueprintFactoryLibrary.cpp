@@ -14,6 +14,7 @@
 #include "AnimGraphNode_StateMachine.h"
 #include "AnimGraphNode_StateResult.h"
 #include "AnimGraphNode_TransitionResult.h"
+#include "AnimGraphNode_TwoBoneIK.h"
 #include "AnimGraphNode_UseCachedPose.h"
 #include "AnimGraphNode_LegIK.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
@@ -39,6 +40,8 @@
 #include "EdGraphUtilities.h"
 #include "EdGraphSchema_K2.h"
 #include "Editor.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
 #include "Factories/AnimBlueprintFactory.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_AnimGetter.h"
@@ -91,6 +94,10 @@ namespace SekiroAnimBlueprintFactoryPrivate
     const FName InvalidLayeredBlendCurveOption = TEXT("Factory.InvalidLayeredBlendCurveOption");
     const FName InvalidFootPlacementPlantSpeedMode = TEXT("Factory.InvalidFootPlacementPlantSpeedMode");
     const FName InvalidFootPlacementPlantLockType = TEXT("Factory.InvalidFootPlacementPlantLockType");
+    const FName InvalidTwoBoneIKLocationSpace = TEXT("Factory.InvalidTwoBoneIKLocationSpace");
+    const FName InvalidTwoBoneIKTarget = TEXT("Factory.InvalidTwoBoneIKTarget");
+    const FName InvalidTwoBoneIKAlphaInputType = TEXT("Factory.InvalidTwoBoneIKAlphaInputType");
+    const FName InvalidTwoBoneIKAlphaCurve = TEXT("Factory.InvalidTwoBoneIKAlphaCurve");
     const FName NativePinNotFound = TEXT("Factory.NativePinNotFound");
     const FName ConnectionFailed = TEXT("Factory.ConnectionFailed");
     const FName EmptyCachedPoseName = TEXT("Factory.EmptyCachedPoseName");
@@ -459,6 +466,69 @@ namespace SekiroAnimBlueprintFactoryPrivate
     }
 
     /**
+     * 将 IR 中稳定的位置空间名转换为 UE5.2 骨骼控制空间枚举。
+     * 本函数仅比较名称并写入值类型输出，可在任意线程调用，不访问 UObject。
+     *
+     * @param SpaceName 位置空间名；允许 WorldSpace、ComponentSpace、ParentBoneSpace、BoneSpace。
+     * @param OutSpace 接收匹配空间；失败时保持调用前的值。
+     * @return 名称受支持时返回 true，否则返回 false。
+     */
+    bool ParseBoneControlSpace(const FName SpaceName, EBoneControlSpace& OutSpace)
+    {
+        if (SpaceName == TEXT("WorldSpace"))
+        {
+            OutSpace = BCS_WorldSpace;
+            return true;
+        }
+        if (SpaceName == TEXT("ComponentSpace"))
+        {
+            OutSpace = BCS_ComponentSpace;
+            return true;
+        }
+        if (SpaceName == TEXT("ParentBoneSpace"))
+        {
+            OutSpace = BCS_ParentBoneSpace;
+            return true;
+        }
+        if (SpaceName == TEXT("BoneSpace"))
+        {
+            OutSpace = BCS_BoneSpace;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 将 IR 中稳定的 Alpha 来源名转换为动画节点 Alpha 输入类型。
+     * 本函数仅比较名称并写入值类型输出，可在任意线程调用，不访问 UObject。
+     *
+     * @param InputTypeName Alpha 来源名；允许 Float、Bool、Curve。
+     * @param OutInputType 接收匹配类型；失败时保持调用前的值。
+     * @return 名称受支持时返回 true，否则返回 false。
+     */
+    bool ParseAnimAlphaInputType(const FName InputTypeName, EAnimAlphaInputType& OutInputType)
+    {
+        if (InputTypeName == TEXT("Float"))
+        {
+            OutInputType = EAnimAlphaInputType::Float;
+            return true;
+        }
+        if (InputTypeName == TEXT("Bool"))
+        {
+            OutInputType = EAnimAlphaInputType::Bool;
+            return true;
+        }
+        if (InputTypeName == TEXT("Curve"))
+        {
+            OutInputType = EAnimAlphaInputType::Curve;
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * 覆盖 BlendList 每个 Pose 的统一 BlendTime；仅操作尚未编译的编辑器节点结构体。
      * 必须在游戏线程调用，Node 由当前 Factory 独占。
      *
@@ -497,6 +567,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
             || NodeClass == UAnimGraphNode_OrientationWarping::StaticClass()
             || NodeClass == UAnimGraphNode_FootPlacement::StaticClass()
             || NodeClass == UAnimGraphNode_LegIK::StaticClass()
+            || NodeClass == UAnimGraphNode_TwoBoneIK::StaticClass()
             || NodeClass == UAnimGraphNode_SaveCachedPose::StaticClass()
             || NodeClass == UAnimGraphNode_UseCachedPose::StaticClass()
             || NodeClass == UK2Node_VariableGet::StaticClass()
@@ -853,6 +924,129 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     else
                     {
                         OutData.LegIKDefinitions.Add(Node.Id, MoveTemp(LegDefinitions));
+                    }
+                }
+                if (RegisteredClass != nullptr && *RegisteredClass == UAnimGraphNode_TwoBoneIK::StaticClass())
+                {
+                    const FSekiroAnimIRProperty* EffectorSpaceProperty =
+                        FindProperty(Node, TEXT("EffectorLocationSpace"));
+                    EBoneControlSpace EffectorSpace = BCS_ComponentSpace;
+                    if (EffectorSpaceProperty != nullptr
+                        && !ParseBoneControlSpace(EffectorSpaceProperty->Value.NameValue, EffectorSpace))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKLocationSpace,
+                            FString::Printf(
+                                TEXT("TwoBoneIK EffectorLocationSpace '%s' must be WorldSpace, ComponentSpace, ParentBoneSpace, or BoneSpace."),
+                                *EffectorSpaceProperty->Value.NameValue.ToString()),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+
+                    const FSekiroAnimIRProperty* JointSpaceProperty =
+                        FindProperty(Node, TEXT("JointTargetLocationSpace"));
+                    EBoneControlSpace JointSpace = BCS_ComponentSpace;
+                    if (JointSpaceProperty != nullptr
+                        && !ParseBoneControlSpace(JointSpaceProperty->Value.NameValue, JointSpace))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKLocationSpace,
+                            FString::Printf(
+                                TEXT("TwoBoneIK JointTargetLocationSpace '%s' must be WorldSpace, ComponentSpace, ParentBoneSpace, or BoneSpace."),
+                                *JointSpaceProperty->Value.NameValue.ToString()),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+
+                    const FSekiroAnimIRProperty* EffectorBoneProperty =
+                        FindProperty(Node, TEXT("EffectorTargetBoneName"));
+                    const FSekiroAnimIRProperty* EffectorSocketProperty =
+                        FindProperty(Node, TEXT("EffectorTargetSocketName"));
+                    const bool bHasEffectorBone = EffectorBoneProperty != nullptr
+                        && !EffectorBoneProperty->Value.NameValue.IsNone();
+                    const bool bHasEffectorSocket = EffectorSocketProperty != nullptr
+                        && !EffectorSocketProperty->Value.NameValue.IsNone();
+                    if (bHasEffectorBone && bHasEffectorSocket)
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKTarget,
+                            TEXT("TwoBoneIK Effector target must use either a bone or a Socket, not both."),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+                    else if ((EffectorSpace == BCS_ParentBoneSpace || EffectorSpace == BCS_BoneSpace)
+                        && !bHasEffectorBone
+                        && !bHasEffectorSocket)
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKTarget,
+                            TEXT("TwoBoneIK bone-relative Effector space requires EffectorTargetBoneName or EffectorTargetSocketName."),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+
+                    const FSekiroAnimIRProperty* JointBoneProperty =
+                        FindProperty(Node, TEXT("JointTargetBoneName"));
+                    const FSekiroAnimIRProperty* JointSocketProperty =
+                        FindProperty(Node, TEXT("JointTargetSocketName"));
+                    const bool bHasJointBone = JointBoneProperty != nullptr
+                        && !JointBoneProperty->Value.NameValue.IsNone();
+                    const bool bHasJointSocket = JointSocketProperty != nullptr
+                        && !JointSocketProperty->Value.NameValue.IsNone();
+                    if (bHasJointBone && bHasJointSocket)
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKTarget,
+                            TEXT("TwoBoneIK Joint target must use either a bone or a Socket, not both."),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+                    else if ((JointSpace == BCS_ParentBoneSpace || JointSpace == BCS_BoneSpace)
+                        && !bHasJointBone
+                        && !bHasJointSocket)
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKTarget,
+                            TEXT("TwoBoneIK bone-relative Joint target requires JointTargetBoneName or JointTargetSocketName."),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+
+                    const FSekiroAnimIRProperty* AlphaInputTypeProperty =
+                        FindProperty(Node, TEXT("AlphaInputType"));
+                    EAnimAlphaInputType AlphaInputType = EAnimAlphaInputType::Float;
+                    if (AlphaInputTypeProperty != nullptr
+                        && !ParseAnimAlphaInputType(
+                            AlphaInputTypeProperty->Value.NameValue,
+                            AlphaInputType))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKAlphaInputType,
+                            FString::Printf(
+                                TEXT("TwoBoneIK AlphaInputType '%s' must be Float, Bool, or Curve."),
+                                *AlphaInputTypeProperty->Value.NameValue.ToString()),
+                            Node.Id,
+                            Node.SourceLocation);
+                    }
+
+                    const FSekiroAnimIRProperty* AlphaCurveProperty =
+                        FindProperty(Node, TEXT("AlphaCurveName"));
+                    if (AlphaInputType == EAnimAlphaInputType::Curve
+                        && (AlphaCurveProperty == nullptr || AlphaCurveProperty->Value.NameValue.IsNone()))
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            InvalidTwoBoneIKAlphaCurve,
+                            TEXT("TwoBoneIK Curve AlphaInputType requires a non-empty AlphaCurveName."),
+                            Node.Id,
+                            Node.SourceLocation);
                     }
                 }
                 if (RegisteredClass != nullptr
@@ -2215,6 +2409,130 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
                 LegIKNode->ReconstructNode();
                 NativeNodes.Add(Node.Id, LegIKNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_TwoBoneIK::StaticClass())
+            {
+                UAnimGraphNode_TwoBoneIK* TwoBoneIKNode = CreateNativeNode<UAnimGraphNode_TwoBoneIK>(
+                    NativeGraph,
+                    Node.Id,
+                    PositionX,
+                    PositionY);
+                const FSekiroAnimIRProperty* IKBoneProperty = FindProperty(Node, TEXT("IKBone"));
+                if (TwoBoneIKNode == nullptr || IKBoneProperty == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                TwoBoneIKNode->Node.IKBone = FBoneReference(IKBoneProperty->Value.NameValue);
+                const FSekiroAnimIRProperty* EffectorSpaceProperty =
+                    FindProperty(Node, TEXT("EffectorLocationSpace"));
+                if (EffectorSpaceProperty != nullptr)
+                {
+                    EBoneControlSpace EffectorSpace = BCS_ComponentSpace;
+                    ParseBoneControlSpace(
+                        EffectorSpaceProperty->Value.NameValue,
+                        EffectorSpace);
+                    TwoBoneIKNode->Node.EffectorLocationSpace = EffectorSpace;
+                }
+                const FSekiroAnimIRProperty* JointSpaceProperty =
+                    FindProperty(Node, TEXT("JointTargetLocationSpace"));
+                if (JointSpaceProperty != nullptr)
+                {
+                    EBoneControlSpace JointSpace = BCS_ComponentSpace;
+                    ParseBoneControlSpace(
+                        JointSpaceProperty->Value.NameValue,
+                        JointSpace);
+                    TwoBoneIKNode->Node.JointTargetLocationSpace = JointSpace;
+                }
+
+                const FSekiroAnimIRProperty* EffectorBoneProperty =
+                    FindProperty(Node, TEXT("EffectorTargetBoneName"));
+                const FSekiroAnimIRProperty* EffectorSocketProperty =
+                    FindProperty(Node, TEXT("EffectorTargetSocketName"));
+                if (EffectorSocketProperty != nullptr
+                    && !EffectorSocketProperty->Value.NameValue.IsNone())
+                {
+                    TwoBoneIKNode->Node.EffectorTarget =
+                        FBoneSocketTarget(EffectorSocketProperty->Value.NameValue, true);
+                }
+                else if (EffectorBoneProperty != nullptr)
+                {
+                    TwoBoneIKNode->Node.EffectorTarget =
+                        FBoneSocketTarget(EffectorBoneProperty->Value.NameValue, false);
+                }
+
+                const FSekiroAnimIRProperty* JointBoneProperty =
+                    FindProperty(Node, TEXT("JointTargetBoneName"));
+                const FSekiroAnimIRProperty* JointSocketProperty =
+                    FindProperty(Node, TEXT("JointTargetSocketName"));
+                if (JointSocketProperty != nullptr && !JointSocketProperty->Value.NameValue.IsNone())
+                {
+                    TwoBoneIKNode->Node.JointTarget =
+                        FBoneSocketTarget(JointSocketProperty->Value.NameValue, true);
+                }
+                else if (JointBoneProperty != nullptr)
+                {
+                    TwoBoneIKNode->Node.JointTarget =
+                        FBoneSocketTarget(JointBoneProperty->Value.NameValue, false);
+                }
+
+                const auto ReadFloatProperty = [&Node](const TCHAR* PropertyName, const double DefaultValue)
+                {
+                    const FSekiroAnimIRProperty* Property = FindProperty(Node, PropertyName);
+                    return Property != nullptr ? Property->Value.FloatValue : DefaultValue;
+                };
+                TwoBoneIKNode->Node.EffectorLocation = FVector(
+                    ReadFloatProperty(TEXT("EffectorLocationX"), 0.0),
+                    ReadFloatProperty(TEXT("EffectorLocationY"), 0.0),
+                    ReadFloatProperty(TEXT("EffectorLocationZ"), 0.0));
+                TwoBoneIKNode->Node.JointTargetLocation = FVector(
+                    ReadFloatProperty(TEXT("JointTargetLocationX"), 0.0),
+                    ReadFloatProperty(TEXT("JointTargetLocationY"), 0.0),
+                    ReadFloatProperty(TEXT("JointTargetLocationZ"), 0.0));
+
+                const FSekiroAnimIRProperty* TakeEffectorRotationProperty =
+                    FindProperty(Node, TEXT("bTakeRotationFromEffectorSpace"));
+                if (TakeEffectorRotationProperty != nullptr)
+                {
+                    TwoBoneIKNode->Node.bTakeRotationFromEffectorSpace =
+                        TakeEffectorRotationProperty->Value.BoolValue;
+                }
+                const FSekiroAnimIRProperty* AllowStretchingProperty =
+                    FindProperty(Node, TEXT("bAllowStretching"));
+                if (AllowStretchingProperty != nullptr)
+                {
+                    TwoBoneIKNode->Node.bAllowStretching = AllowStretchingProperty->Value.BoolValue;
+                }
+                TwoBoneIKNode->Node.StartStretchRatio = FMath::Max(
+                    0.0,
+                    ReadFloatProperty(
+                        TEXT("StartStretchRatio"),
+                        TwoBoneIKNode->Node.StartStretchRatio));
+                TwoBoneIKNode->Node.MaxStretchScale = FMath::Max(
+                    0.0,
+                    ReadFloatProperty(
+                        TEXT("MaxStretchScale"),
+                        TwoBoneIKNode->Node.MaxStretchScale));
+
+                const FSekiroAnimIRProperty* AlphaInputTypeProperty =
+                    FindProperty(Node, TEXT("AlphaInputType"));
+                if (AlphaInputTypeProperty != nullptr)
+                {
+                    ParseAnimAlphaInputType(
+                        AlphaInputTypeProperty->Value.NameValue,
+                        TwoBoneIKNode->Node.AlphaInputType);
+                }
+                const FSekiroAnimIRProperty* AlphaCurveProperty =
+                    FindProperty(Node, TEXT("AlphaCurveName"));
+                if (AlphaCurveProperty != nullptr)
+                {
+                    TwoBoneIKNode->Node.AlphaCurveName = AlphaCurveProperty->Value.NameValue;
+                }
+
+                TwoBoneIKNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, TwoBoneIKNode);
                 return true;
             }
 
@@ -4178,6 +4496,122 @@ UAnimBlueprint* USekiroAnimBlueprintFactoryLibrary::CompileLuaModuleToAnimBluepr
     }
 
     return AnimBlueprint;
+}
+
+/**
+ * 在指定 USkeletalMesh 的 Mesh-only Socket 列表中按名称创建或更新一个 Socket，并同步保存资产 package。
+ * 本函数不会修改 Skeleton 级 Socket，也不会创建资产、修改参考骨架或回滚保存失败前的内存变更。
+ * 只能在非 PIE 的编辑器游戏线程调用；成功后会触发 PostEditChange、重建 Socket 映射并写入磁盘。
+ *
+ * @param SkeletalMesh 要修改并保存的已持久化 SkeletalMesh 资产；不可为空、transient 或非资产对象。
+ * @param SocketName Mesh Socket 的唯一名称；None 无效，同名 Mesh Socket 会原地更新。
+ * @param BoneName Socket 依附的参考骨架骨骼名；必须存在于 SkeletalMesh 的 ReferenceSkeleton。
+ * @param RelativeTransform 相对 BoneName 的位置、旋转和缩放；不得包含 NaN。
+ * @param OutError 接收失败原因；成功时清空。调用方持有字符串，函数不保留引用。
+ * @return 创建或更新并成功保存 package 时返回 true；任一校验或保存步骤失败时返回 false。
+ */
+bool USekiroAnimBlueprintFactoryLibrary::UpsertSkeletalMeshSocket(
+    USkeletalMesh* SkeletalMesh,
+    const FName SocketName,
+    const FName BoneName,
+    const FTransform& RelativeTransform,
+    FString& OutError)
+{
+    OutError.Reset();
+    if (!IsInGameThread() || !GIsEditor)
+    {
+        OutError = TEXT("UpsertSkeletalMeshSocket must run on the editor game thread.");
+        return false;
+    }
+    if (GEditor != nullptr && GEditor->PlayWorld != nullptr)
+    {
+        OutError = TEXT("UpsertSkeletalMeshSocket cannot modify assets during PIE or SIE.");
+        return false;
+    }
+    if (SkeletalMesh == nullptr || !SkeletalMesh->IsAsset())
+    {
+        OutError = TEXT("SkeletalMesh must be a persistent asset object.");
+        return false;
+    }
+    if (SocketName.IsNone())
+    {
+        OutError = TEXT("SocketName must not be None.");
+        return false;
+    }
+    if (BoneName.IsNone()
+        || SkeletalMesh->GetRefSkeleton().FindBoneIndex(BoneName) == INDEX_NONE)
+    {
+        OutError = FString::Printf(
+            TEXT("BoneName '%s' does not exist in SkeletalMesh '%s'."),
+            *BoneName.ToString(),
+            *SkeletalMesh->GetPathName());
+        return false;
+    }
+    if (RelativeTransform.ContainsNaN())
+    {
+        OutError = TEXT("RelativeTransform must contain only finite values.");
+        return false;
+    }
+
+    UPackage* Package = SkeletalMesh->GetOutermost();
+    if (Package == nullptr
+        || Package == GetTransientPackage()
+        || !FPackageName::IsValidLongPackageName(Package->GetName()))
+    {
+        OutError = TEXT("SkeletalMesh must belong to a valid persistent content package.");
+        return false;
+    }
+
+    SkeletalMesh->Modify();
+    TArray<USkeletalMeshSocket*>& MeshSockets = SkeletalMesh->GetMeshOnlySocketList();
+    USkeletalMeshSocket* Socket = nullptr;
+    for (USkeletalMeshSocket* ExistingSocket : MeshSockets)
+    {
+        if (ExistingSocket != nullptr && ExistingSocket->SocketName == SocketName)
+        {
+            Socket = ExistingSocket;
+            break;
+        }
+    }
+    if (Socket == nullptr)
+    {
+        Socket = NewObject<USkeletalMeshSocket>(SkeletalMesh, NAME_None, RF_Transactional);
+        if (Socket == nullptr)
+        {
+            OutError = TEXT("Failed to allocate a mesh Socket object.");
+            return false;
+        }
+        MeshSockets.Add(Socket);
+    }
+    else
+    {
+        Socket->Modify();
+    }
+
+    Socket->SocketName = SocketName;
+    Socket->BoneName = BoneName;
+    Socket->RelativeLocation = RelativeTransform.GetLocation();
+    Socket->RelativeRotation = RelativeTransform.Rotator();
+    Socket->RelativeScale = RelativeTransform.GetScale3D();
+    SkeletalMesh->RebuildSocketMap();
+    SkeletalMesh->PostEditChange();
+    Package->MarkPackageDirty();
+
+    const FString Filename = FPackageName::LongPackageNameToFilename(
+        Package->GetName(),
+        FPackageName::GetAssetPackageExtension());
+    FSavePackageArgs SaveArgs;
+    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+    SaveArgs.SaveFlags = SAVE_NoError;
+    if (!UPackage::SavePackage(Package, SkeletalMesh, *Filename, SaveArgs))
+    {
+        OutError = FString::Printf(
+            TEXT("Failed to save SkeletalMesh package '%s'."),
+            *Filename);
+        return false;
+    }
+
+    return true;
 }
 
 /**

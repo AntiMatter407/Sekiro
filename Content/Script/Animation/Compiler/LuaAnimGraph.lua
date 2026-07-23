@@ -16,6 +16,7 @@ local LuaOrientationWarpingNode = require("Animation.Compiler.LuaOrientationWarp
 local LuaSaveCachedPoseNode = require("Animation.Compiler.LuaSaveCachedPoseNode")
 local LuaSequencePlayerNode = require("Animation.Compiler.LuaSequencePlayerNode")
 local LuaSlotNode = require("Animation.Compiler.LuaSlotNode")
+local LuaTwoBoneIKNode = require("Animation.Compiler.LuaTwoBoneIKNode")
 local LuaUseCachedPoseNode = require("Animation.Compiler.LuaUseCachedPoseNode")
 local LuaPropertyGetterNode = require("Animation.Compiler.LuaPropertyGetterNode")
 local LuaBlendListByBoolNode = require("Animation.Compiler.LuaBlendListByBoolNode")
@@ -295,6 +296,20 @@ end
 function LuaAnimGraph:LegIK(name)
     ---@type LuaLegIKNode
     local node = LuaLegIKNode:New({
+        Graph = self,
+        Name = name,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    self:AddNode(node)
+    return node
+end
+
+---创建原生 Two Bone IK 节点，根据 Effector 和关节方向目标求解一条双骨骼链。
+---@param name string Graph 内节点语义名。
+---@return LuaTwoBoneIKNode node 提供组件空间姿势输入、强度输入和姿势输出的节点。
+function LuaAnimGraph:TwoBoneIK(name)
+    ---@type LuaTwoBoneIKNode
+    local node = LuaTwoBoneIKNode:New({
         Graph = self,
         Name = name,
         SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
