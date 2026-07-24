@@ -94,7 +94,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 /**
- * 验证新 Snapshot 调用替换旧 Session、间隔生效、立即写入一帧 JSONL，以及 Stop 安全关闭。
+ * 验证有秒参数时启用定时采样、无参数时仅采样状态变化，以及新 Session 替换和 Stop 关闭。
  * 文件仅写入 Saved/Automation/LuaAnimDebug 并在测试结束删除。
  */
 bool FSekiroLuaAnimSnapshotSessionTest::RunTest(const FString& Parameters)
@@ -106,17 +106,31 @@ bool FSekiroLuaAnimSnapshotSessionTest::RunTest(const FString& Parameters)
     const FString FirstPath = FPaths::Combine(Directory, TEXT("First.jsonl"));
     const FString SecondPath = FPaths::Combine(Directory, TEXT("Second.jsonl"));
 
-    TestTrue(TEXT("First session starts"), FSekiroLuaAnimDebugRuntime::StartSnapshotForTesting(0.2f, FirstPath));
+    TestTrue(
+        TEXT("Explicit interval session starts"),
+        FSekiroLuaAnimDebugRuntime::ApplySnapshotArgumentsForTesting(
+            { TEXT("0.2") },
+            FirstPath));
     TestTrue(TEXT("Snapshot is active"), FSekiroLuaAnimDebugRuntime::IsSnapshotActiveForTesting());
     TestEqual(TEXT("First interval is applied"), FSekiroLuaAnimDebugRuntime::GetSnapshotIntervalForTesting(), 0.2f);
-    TestTrue(TEXT("Second session replaces first"), FSekiroLuaAnimDebugRuntime::StartSnapshotForTesting(0.05f, SecondPath));
+    TestTrue(
+        TEXT("Explicit interval enables timed sampling"),
+        FSekiroLuaAnimDebugRuntime::IsSnapshotIntervalSamplingEnabledForTesting());
+    TestTrue(
+        TEXT("No-argument session replaces first"),
+        FSekiroLuaAnimDebugRuntime::ApplySnapshotArgumentsForTesting(
+            TArray<FString>(),
+            SecondPath));
+    TestFalse(
+        TEXT("No arguments disable timed sampling"),
+        FSekiroLuaAnimDebugRuntime::IsSnapshotIntervalSamplingEnabledForTesting());
     TestEqual(TEXT("Only latest path is current"), FSekiroLuaAnimDebugRuntime::GetSnapshotSessionPath(), SecondPath);
 
     FString FirstJsonLine;
     TestTrue(TEXT("Replacing session flushes first file"), FFileHelper::LoadFileToString(FirstJsonLine, *FirstPath));
     TestTrue(TEXT("First session contains its own Start frame"), FirstJsonLine.Contains(TEXT("\"FrameIndex\":0")));
 
-    FSekiroLuaAnimDebugRuntime::StopSnapshotForTesting();
+    FSekiroLuaAnimDebugRuntime::StopSnapshotSession();
     TestFalse(TEXT("Stop closes current session"), FSekiroLuaAnimDebugRuntime::IsSnapshotActiveForTesting());
     FString JsonLine;
     TestTrue(TEXT("Start capture was flushed"), FFileHelper::LoadFileToString(JsonLine, *SecondPath));

@@ -41,6 +41,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `CanEnterLoop` | 使用中 | `int bool` | Start 或锁定 Jump InAir 过渡段已进入可衔接循环姿势的窗口 | Locomotion Start、非锁定/原地 Jump Start、锁定 Jump InAir Sequence | Lua GroundLocomotion 的 Start 到 Cycle；Jump Start/InAir 到 Loop |
 | `CanEnterStop` | 使用中 | `int bool` | 当前 Start/Loop 帧可进入匹配的 Stop | Start Sequence、BlendSpace 使用的 Loop 样本 Sequence | Lua GroundLocomotion 的 Start/Cycle 到 Stop |
 | `CanEnterIdle` | 使用中 | `int bool` | Stop 已进入可回 Idle 或退出外层 Sprint 的窗口 | Walk/Run/Sprint Stop Sequence | Stop 到 Idle；外层 Sprint 到 Standing/Crouching |
+| `WeaponHandIK` | 使用中 | `float` | 收拔刀换挂点附近约束右手到刀柄目标的权重，动作前段和换挂完成后为 0 | `Anim_Sekiro_a000_700500_Additive`、`Anim_Sekiro_a000_700510_Additive` | `ABP_Sekiro` 的 `WeaponHandIK` TwoBoneIK |
 | `CanExitStep` | 使用中 | `int bool` | Step 已进入可返回普通地面移动的尾部窗口 | 四方向 Step Sequence | 外层 Step 到 Standing/Crouching |
 | `CanExitTurn` | 使用中 | `int bool` | 原地 Turn 已进入可返回 Idle 的尾部窗口 | 站立/蹲姿左右 Idle Turn Sequence | Lua GroundLocomotion 的 Turn 到 Idle |
 | `CanEnterInAir` | 使用中 | `int bool` | 锁定八方向 Jump Start 已进入可衔接方向 InAir 过渡段的窗口 | 锁定八方向 Jump Start Sequence | Jump Start 到 DirectionalInAir |
@@ -51,6 +52,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `CanAcceptHeavyAttack` | 使用中 | `int bool` | 当前攻击动作允许缓存蓄力攻击 | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
 | `CanCancelToGuard` | 使用中 | `int bool` | 当前全身动作允许防御输入取消 | 支持防御取消的战斗 Sequence | Lua 战斗动作状态机 |
 | `CanCancelToDodge` | 已登记 | `int bool` | 当前全身动作允许闪避输入取消 | 支持闪避取消的战斗 Sequence | 后续闪避动作接入时启用 |
+| `CanCancelToJump` | 使用中 | `int bool` | 当前地面攻击允许取消到物理 Jump | Ground/Land 战斗 Sequence | InputManager 在 Jump Started 时交给 Combat Lua 采样 |
 | `FootPlant` | 已生成 | `int enum` | 当前稳定触地脚 | 需要脚步分析的 Locomotion Sequence | 自动标注、调试和相位校验；GroundLocomotion 暂未直接消费 |
 | `MovePhase` | 已生成 | `float` | 一个步态周期中的循环相位 | Start 与周期 Loop | 自动标注、调试和后续精确相位匹配；当前 GroundLocomotion 未直接消费 |
 | `FrameFlags` | 保留 | `int flags` | TAE 帧级行为标志 | 有对应 TAE 事件的动作动画 | 当前无正式运行时消费者 |
@@ -206,6 +208,10 @@ end
 
 曲线名集中声明在 `Animation.Sekiro.Shared.CurveNames`。`CanEnterLoop/Stop/Idle`、`CanExitStep`、`CanExitTurn`、`CanEnterInAir`、`CanResumeMovement` 和 `CanExitLand` 已有正式 Transition 消费者；`FootPlant` 和 `MovePhase` 继续用于标注、调试和后续相位匹配。
 
+战斗动作曲线由 `USKCombatComponent` 直接采样活动 Sequence。空中攻击 `308000/308010/308020` 在第 9 帧开启 `CanAcceptLightAttack`、第 12 帧开启 `CanCancelToGuard`，并保持到实际第 29 帧；落地攻击 `308050/308060/308070` 使用相同开启帧并保持到实际第 50 帧。两组首版均不写 `CanAcceptHeavyAttack` 和 `AttackSide`，因此长按按轻攻击处理且刀侧沿用进入动作时的锁存值。
+
+`CanCancelToJump` 按原始 TAE JT119 写入七条地面攻击与三条 Land 攻击。原始数据缺少首段窗口的 `Left`、`Combo_01` 和 Land 三段额外补 `0.00~0.10s`；Air 攻击不写该曲线并由状态仲裁拒绝二次 Jump。
+
 ### 历史相位匹配实现
 
 旧动态 Pose Graph 曾把 `MovePhase` 映射到单位圆进行混合，并反查目标 Sequence/BlendSpace 的 `NormalizedStartPosition`。该运行时消费者已经随旧 Host/快照架构删除。
@@ -287,10 +293,52 @@ TAE 曲线入口：
 
 | 曲线 | 值域 | 作者规则 | 缺失行为 |
 |---|---:|---|---|
-| `AttackSide` | `-1 / 0 / 1` | 命中动作结束后、输入窗口开始前提交一次下一攻击侧；`-1=Left`、`0=Keep`、`1=Right`，动作末尾回零 | 保持当前侧别 |
+| `AttackSide` | `-1 / 0 / 1` | 不可打断区间结束后提交一次下一攻击侧；`-1=Left`、`0=Keep`、`1=Right`。只更新下一侧，当前攻击侧保持不变 | 保持当前侧别 |
 | `CanAcceptLightAttack` | `0 / 1` | 可接受下一次短按攻击的时间范围 | 不接受轻攻击续段 |
 | `CanAcceptHeavyAttack` | `0 / 1` | 可接受并等待本次按键释放判定长按的时间范围 | 不接受重攻击续段 |
 | `CanCancelToGuard` | `0 / 1` | 当前动作允许防御键取消的时间范围 | 不允许防御取消 |
 | `CanCancelToDodge` | `0 / 1` | 当前动作允许闪避取消的时间范围 | 不允许闪避取消 |
+| `CanCancelToJump` | `0 / 1` | 当前地面攻击允许跳跃取消的时间范围 | 不允许跳跃取消 |
 
-这些曲线只控制动作衔接。当前阶段不读取 `AttackHitbox`，也不启用碰撞、伤害、生命或躯干值逻辑。
+这些曲线只控制动作衔接。当前阶段不读取 `AttackHitbox`，也不启用碰撞、伤害、生命或躯干值逻辑。动画结束时由 Lua 清理下一侧和连段状态，不依赖动画后的计时宽限。
+
+### 10.1 首版攻击曲线来源
+
+曲线使用 `Extracted/Sekiro_TAE_Logic.json` 中对应 AnimID 的原始 JumpTable 帧区间，采样率为 30 FPS：
+
+- JT 115（R1）生成 `CanAcceptLightAttack`。
+- JT 117（L1）生成 `CanCancelToGuard`。
+- `CanAcceptHeavyAttack` 只写入 Right、Left 和左右重击；Combo 动作失败关闭。
+- Right 在恢复窗口开始的第 15 帧写入 `AttackSide=-1`，Left 在第 12 帧写入 `AttackSide=1`。
+- 重击和 Combo 不推测未知刀侧，不写 `AttackSide`；缺失时保持动作开始时的下一侧。
+- Combo_03 是当前固定链终点，不写 `CanAcceptLightAttack`，即使原始 TAE 仍存在通用 R1 取消窗口。
+
+| 动画 | 轻攻击窗口 | 重攻击窗口 | Guard 窗口 | AttackSide |
+|---|---|---|---|---|
+| `300100` Right | 15–49 | 15–49 | 0–3、15–49 | 第 15 帧提交 Left |
+| `300110` Left | 9–46 | 12–46 | 12–46 | 第 12 帧提交 Right |
+| `300000/300001` 重击 | 33–65 | 33–65 | 3–15、33–65 | 保持 |
+| `300020` Combo_01 | 21–58 | 无 | 21–58 | 保持 |
+| `300030` Combo_02 | 15–58 | 无 | 0–6、18–58 | 保持 |
+| `300040` Combo_03 | 无 | 无 | 0–3、21–56 | 保持 |
+
+写入使用 AIBridge `anim_blueprint add_curve --type int`，运行后通过 `AnimationLibrary.get_float_keys` 审计关键帧和值域。所有窗口都位于 Sequence 时长内，动画结束后不存在额外曲线窗口。
+
+## 十一、收拔刀右手 IK 曲线
+
+### WeaponHandIK
+
+- 状态：使用中
+- 类型：`float`
+- 值域与插值：`0..1`，线性插值；在换挂点前四帧使用平滑采样值逐步升高，在换挂点后两帧回到 0
+- 精确定义：`0` 表示完全保留收拔刀原动画的右臂姿势，`1` 表示在刀身合并或分离的边界帧把 `R_Hand` 完整约束到 `WeaponHandIKTarget`
+- 适用动画：`Anim_Sekiro_a000_700500_Additive`、`Anim_Sekiro_a000_700510_Additive`
+- 禁止写入的动画：普通 Locomotion、攻击、防御以及不执行武器换挂的动画
+- 源数据：`WeaponConfig.lua` 中来自原版 TAE Type 715 的 `SwitchFrame`；收刀为第 14 帧，拔刀为第 7 帧，采样率为 30 FPS
+- 生成器与报告路径：通过 AIBridge `anim_blueprint add_curve` 写入；关键帧按 `SwitchFrame - 4 .. SwitchFrame + 2` 生成，写入后使用 UE Python `AnimationLibrary.get_float_keys` 审计
+- Lua/C++ 消费者：`Animation.Sekiro.ABP_Sekiro` 将 TwoBoneIK 的 `AlphaInputType` 设为 `Curve`，并直接读取本曲线；WeaponManager 不再逐帧发布 IK 权重
+- Sequence 读取方式：由原生 TwoBoneIK 节点的 Curve Alpha 输入读取当前 Montage Pose 曲线
+- BlendSpace 读取方式：不适用；曲线只存在于收拔刀 Additive Sequence
+- 缺失时行为：曲线值为 0，右手完全使用原动画，不会在动作开始时被拉向刀鞘
+- 验证方法：快照中确认 Slot 开始混入时 TwoBoneIK Alpha 为 0，接近第 14/7 帧时平滑升至 1，并在换挂后两帧回到 0
+- 替代或废弃的旧曲线：替代 AnimInstance 变量 `WeaponHandIKAlpha` 及 WeaponManager 起播前写入 1、Notify 后写入 0 的逻辑

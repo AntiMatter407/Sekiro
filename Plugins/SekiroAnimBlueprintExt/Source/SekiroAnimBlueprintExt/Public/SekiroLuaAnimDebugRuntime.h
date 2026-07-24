@@ -82,13 +82,19 @@ public:
         bool bIsFinal);
     static bool GetLatestFrame(FSekiroLuaAnimDebugFrame& OutFrame);
     static FString GetSnapshotSessionPath();
+    /** Flush 并关闭当前快照 Session，保留最后文件路径。 */
+    static void StopSnapshotSession();
 
 #if WITH_DEV_AUTOMATION_TESTS
     static void ApplyDebugArgumentsForTesting(const TArray<FString>& Arguments);
     static bool StartSnapshotForTesting(float IntervalSeconds, const FString& OutputPath);
+    static bool ApplySnapshotArgumentsForTesting(
+        const TArray<FString>& Arguments,
+        const FString& OutputPath);
     static void StopSnapshotForTesting();
     static bool IsDebugEnabledForTesting();
     static bool IsSnapshotActiveForTesting();
+    static bool IsSnapshotIntervalSamplingEnabledForTesting();
     static float GetSnapshotIntervalForTesting();
     static FSekiroLuaAnimDebugNode ParseDebugLineForTesting(const FString& DebugLine);
     static FString BuildRealtimeTextForTesting(const FSekiroLuaAnimDebugFrame& Frame);

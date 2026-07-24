@@ -1,15 +1,17 @@
 # 角色攻击防御系统技术设计
 
-> **状态**：草案
+> **状态**：动画动作原型已实现，碰撞与伤害阶段待设计
 > **创建日期**：2026-07-22
 > **需求文档**：[角色攻击防御系统需求](../gdd/sekiro-attack-defense-system.md)
 > **关联资产表**：`Content/Script/Animation/Sekiro/AnimAssets.lua`
 
-> **当前实施边界**：先实现玩家攻击、防御和弹反动画动作。AI、武器碰撞、真实命中、伤害、架势、Block 和攻击方回弹延后；本阶段以可注入的模拟来袭上下文验证弹反。
+> **当前实施边界**：已实现玩家攻击、防御和弹反动画动作。AI、武器碰撞、真实命中、伤害、架势、Block 和攻击方回弹延后；本阶段以可注入的模拟来袭上下文验证弹反。
+
+> **原型规则优先级**：当前攻击曲线已经依据 `Extracted/Sekiro_TAE_Logic.json` 的原始 JumpTable 帧区间写入攻击 `UAnimSequence`。活动 Sequence 曲线是刀侧提交、连段输入和普通防御取消的时间真源。
 
 ## 一、设计结论
 
-当前阶段采用“通用 C++ 动作宿主 + Lua 动作状态机 + 动画曲线时间真源 + 模拟来袭测试入口”的结构：
+当前阶段采用“通用 C++ 动作宿主 + Lua 动作状态机 + 活动 Sequence 曲线 + 模拟来袭测试入口”的结构：
 
 ```text
 SKInputManager Started/Completed Events
@@ -25,17 +27,30 @@ CombatFullBodySlot / Guard StateMachine
         |
         v
 Active Sequence Curves
-  AttackSide / Input Windows
+  AttackSide / Input / Guard Cancel
 ```
 
 核心约束如下：
 
-1. 动画曲线决定当前帧允许的行为，Lua 决定是否执行玩家输入意图；AI 后续通过相同事件契约接入。
-2. 当前攻击侧和下一攻击侧分离，避免动画中途切侧污染当前命中方向。
+1. `CanAcceptLightAttack`、`CanAcceptHeavyAttack` 和 `CanCancelToGuard` 决定动画内有效窗口；动画结束后不保留额外宽限。
+2. `CommittedAttackSide` 和 `NextAttackSide` 分离；不可打断区间锁定当前侧，`AttackSide` 只在恢复阶段提交下一侧。
 3. 每段离散动作拥有独立动作序列号，所有输入、曲线、Montage 结束和来袭上下文回调必须携带并校验该编号。
 4. 弹反不是普通 Guard 动画分支；只有有效来袭时间内的新 Guard Started 边沿才能触发。
 5. 来袭攻击类型到 Deflect Type、连续弹反阶段到 Stage 的选择全部由 Lua 配置决定，C++ 不引用具体资产名。
 6. 后续碰撞系统只负责生产与模拟接口相同的来袭上下文，不改变当前阶段验证后的弹反输入语义。
+
+### 1.1 当前已实现的动作规则
+
+1. 轻攻击固定按 `Right -> Left -> Combo_01 -> Combo_02 -> Combo_03` 推进。
+2. Right 在第 15 帧提交下一侧 Left；Left 在第 12 帧提交下一侧 Right。提交只更新下一动作，不修改当前攻击侧。
+3. 输入只在活动 Sequence 的曲线窗口内生效；轻重判定完成后立即停止旧 Montage，并通过配置的淡入淡出混合到下一攻击。
+4. 没有在窗口内触发续段时，动画自然结束并立即清空连段、恢复默认 Right。
+5. 重攻击不写 `AttackSide`，因此在动画内保持输入时锁存的下一侧；动画结束后没有额外宽限。
+6. 普通 Guard 使用 `CanCancelToGuard`；曲线为零的攻击中段不可打断，命中有效来袭上下文的 Deflect 始终优先。
+7. Guard 和当前阶段 Deflect 统一使用 Left；Guard Lower 完整结束或 Deflect 退出后恢复默认 Right。
+8. Falling 时的首段攻击进入 `Air_Combo_01`；活动空中攻击落地后按编号切换到对应 `Land_Combo`。
+9. 空中链和落地链均为三段轻攻击链，长按不升级重攻击；第三段自然结束。
+10. 地面攻击只在独立 `CanCancelToJump` 窗口内允许 Jump；普通防御始终允许 Jump，并在 Guard Held 时续接空中防御。
 
 ## 二、现有基础与缺口
 
@@ -104,6 +119,8 @@ Lua 运行时负责：
 - 消费玩家输入事件；AI 动作请求在后续阶段接入同一入口。
 - 管理轻重攻击候选和长按分类。
 - 根据动作表和下一攻击侧选择后续动作。
+- 读取 Owner 的 Falling 状态，选择 Ground/Air 动作域并处理 Air 到 Land 的配对切换。
+- 裁决 Jump Started、清理被取消的攻击/防御动作，并选择地面或空中 Guard 动画。
 - 处理主动 Guard/Dodge 取消。
 - 根据曲线提交 `NextAttackSide`。
 - 处理模拟来袭上下文与 Guard Started 的时间匹配。
@@ -370,6 +387,7 @@ local DeflectByIncomingAttackType = {
 | `CanAcceptLightAttack` | int bool | `0/1` | 不允许轻攻击续段。 |
 | `CanAcceptHeavyAttack` | int bool | `0/1` | 不允许重攻击续段。 |
 | `CanCancelToGuard` | int bool | `0/1` | 不允许主动防御取消。 |
+| `CanCancelToJump` | int bool | `0/1` | 不允许攻击取消到 Jump。 |
 | `CanCancelToDodge` | int bool | `0/1` | 不允许主动闪避取消。 |
 
 禁止使用单值 `CancelActions` 同时表达多个取消条件。轻攻击、重攻击、防御和闪避窗口可能重叠，必须使用独立布尔曲线。
@@ -579,6 +597,41 @@ end
 4. 目标动作存在。
 5. Heavy 目标侧与 `SideSnapshot` 一致。
 
+### 8.4 空中与落地攻击域
+
+Lua 候选额外保存 `AttackDomain`，取值为 `Ground`、`Air` 或 `Land`。Neutral 收到 Attack Started 时通过 `USKCombatComponent::IsOwnerFalling()` 选择首段：
+
+```text
+Neutral + Grounded -> Ground / Right
+Neutral + Falling  -> Air / Air_Combo_01
+```
+
+空中和落地动作表固定为：
+
+```text
+Air_Combo_01 -> Air_Combo_02 -> Air_Combo_03 -> End
+Land_Combo_01 -> Land_Combo_02 -> Land_Combo_03 -> End
+```
+
+活动 Air 动作检测到 `IsOwnerFalling() == false` 时，清除该动作尚未 Completed 的攻击候选，并立即按 `AirToLand` 配置切换到同编号 Land 动作。非攻击状态不执行该检测，因此普通跳跃落地继续由 Airborne 动画层处理。
+
+Air/Land 配置的 `bAllowHeavy` 固定为 false。其 `CanAcceptLightAttack` 从原始 TAE JT115 第 9 帧开始，`CanCancelToGuard` 从 JT117 第 12 帧开始并保持到实际 Sequence 末帧；首版不写 `CanAcceptHeavyAttack` 和 `AttackSide`。
+
+### 8.5 Jump 仲裁与空中防御
+
+`SKInputManager.OnJumpStarted` 在写 Jump 标记和调用 `JumpOwner()` 前，先调用战斗 Lua 的 `TryPrepareJump(EventTime)`：
+
+```text
+Neutral                         -> Allow
+Ground/Land Attack + JumpCurve  -> Cancel Action -> Allow
+GuardRaise/Guarding/GuardLower  -> Cancel Guard  -> Allow
+Air Attack/Pending/Deflect/Dodge -> Reject
+```
+
+攻击取消使用独立 `CanCancelToJump`，数据来自原始 TAE JT119；`Left`、`Combo_01` 和 Land 三段缺失的首段窗口统一补为 `0.00~0.10s`。合法取消必须停止 Montage、失效旧 ActionSerial、清除 PendingAttack，并在物理 Jump 前切回 Neutral。
+
+防御跳跃额外返回 `resume_air_guard`。输入层先完成 Root Motion 交接和 `JumpOwner()`，只有防御键仍按住时才播放 `Guard.Air_Raise`。Raise 完成进入 Guarding 后，Guard Pose 根据 `bIsInAir` 在地面 Idle/Move 和 `Guard.Air_Idle` 之间选择；空中释放防御使用 `Guard.Air_Lower`。
+
 ## 九、动作转换表
 
 | 当前动作 | 当前侧 | 曲线提交侧 | Light | Heavy |
@@ -590,6 +643,12 @@ end
 | `Combo_01` | 待核验 | 待核验 | `Combo_02` | 不允许 |
 | `Combo_02` | 待核验 | 待核验 | `Combo_03` | 不允许 |
 | `Combo_03` | 待核验 | 无 | 结束 | 不允许 |
+| `Air_Combo_01` | 沿用进入侧 | 无 | `Air_Combo_02` | 不允许 |
+| `Air_Combo_02` | 沿用进入侧 | 无 | `Air_Combo_03` | 不允许 |
+| `Air_Combo_03` | 沿用进入侧 | 无 | 结束 | 不允许 |
+| `Land_Combo_01` | 沿用空中侧 | 无 | `Land_Combo_02` | 不允许 |
+| `Land_Combo_02` | 沿用空中侧 | 无 | `Land_Combo_03` | 不允许 |
+| `Land_Combo_03` | 沿用空中侧 | 无 | 结束 | 不允许 |
 
 Light 转换使用固定动作链；SideSnapshot 用于验证目标动作侧、选择 Heavy 资产以及命中方向，不允许仅凭 SideSnapshot 跳过固定 Combo 节点。
 
@@ -627,6 +686,7 @@ Raise -> GuardIdle/GuardMove -> Lower
 - Guard Idle/Move：按资产实际情况核验，禁止同时由 Root Motion 和 MovementComponent 重复位移。
 - Deflect：默认禁用位移型 Root Motion，只保留姿势；最终以资产核验结果为准。
 - 空中攻击：空中轨迹继续由 CharacterMovement 驱动，忽略水平 Root Motion。
+- 落地攻击：允许使用资产 Root Motion，由 `CombatFullBodySlot` 覆盖普通 Jump Land。
 
 ## 十一、攻击盒和命中（后续阶段）
 
@@ -752,12 +812,14 @@ end
 2. 更新或清理模拟来袭上下文
 3. 校验 ActionSerial、InputSerial 和 ContextSerial
 4. 按输入事件时间采样活动 Sequence 的窗口
-5. 先处理 Guard Started 与来袭上下文，决定是否进入 Deflect
-6. 未触发 Deflect 时处理普通 Guard 和 Guard 释放
-7. 处理 AttackSide 提交
-8. 创建或更新攻击输入候选
-9. 解析 Light/Heavy 后续动作
-10. 输出 AnimBP 状态和调试信息
+5. 活动 Air 攻击已经落地时，先切换到同编号 Land 动作
+6. Jump Started 先采样 CanCancelToJump 或取消普通防御，再决定是否调用 JumpOwner
+7. 先处理 Guard Started 与来袭上下文，决定是否进入 Deflect
+8. 未触发 Deflect 时处理普通 Guard 和 Guard 释放
+9. 处理 AttackSide 提交
+10. 创建或更新攻击输入候选
+11. 解析 Light/Heavy 后续动作
+12. 输出 AnimBP 状态和调试信息
 ```
 
 Deflect 必须在执行攻击续段前处理，确保同帧 Guard Started 可以作废已排队攻击。组件 Tick 需显式晚于输入事件发布、早于 AnimInstance 数据采集；不得依赖同一 TickGroup 内的组件注册顺序。
@@ -845,6 +907,10 @@ DeflectChain=Type_02 Stage=2
 11. 在低帧率模式验证曲线、输入时间和来袭时间边界不漂移。
 12. 在 Montage 淡入淡出期间验证 AttackSide 不重复提交。
 13. 连续中断一百次，验证没有残留候选、旧 Serial 和旧上下文。
+14. Falling 时按攻击，验证从 `Air_Combo_01` 开始并在窗口内完成空中三连。
+15. 在三个 Air 动作中分别落地，验证立即进入同编号 Land 动作。
+16. 在 Air/Land 窗口内长按，验证只推进轻攻击且不进入重攻击。
+17. 不攻击直接落地，验证仍播放原有 Jump Land。
 
 ## 十八、实施顺序
 
@@ -869,6 +935,7 @@ DeflectChain=Type_02 Stage=2
 2. 实现窗口内按下候选和长按分类。
 3. 实现 AttackSide 曲线提交和 SideSnapshot。
 4. 跑通左右重攻击循环和重转轻。
+5. 实现 Air/Land 动作域、空中三连和同编号落地切换。
 
 ### 阶段 3：Guard 与模拟弹反
 
@@ -887,8 +954,7 @@ DeflectChain=Type_02 Stage=2
 ### 阶段 5：表现和扩展
 
 1. 命中停顿、VFX、SFX 和镜头反馈。
-2. 空中攻击和落地攻击。
-3. 专用攻击回弹、普通受击和架势崩坏动画。
+2. 专用攻击回弹、普通受击和架势崩坏动画。
 
 ## 十九、风险与待确认项
 

@@ -11,6 +11,7 @@
 #include "IDirectoryWatcher.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "SekiroLuaAnimDebugRuntime.h"
 #include "SekiroLuaAnimSnapshotViewer.h"
 #include "SekiroLuaAnimBlueprintEditorBinding.h"
 #include "SekiroLuaAnimBlueprintAutoCompileScheduler.h"
@@ -40,6 +41,7 @@ private:
     void UnregisterScriptWatcher();
     void HandleDirectoryChanged(const TArray<FFileChangeData>& FileChanges);
     void HandlePreBeginPIE(bool bIsSimulatingInEditor);
+    void HandleEndPIE(bool bIsSimulatingInEditor);
     TSharedRef<FExtender> ExtendAnimationBlueprintToolbar(
         const TSharedRef<FUICommandList> CommandList,
         TSharedRef<IAnimationBlueprintEditor> Editor);
@@ -53,6 +55,7 @@ private:
     FString WatchedAnimationScriptRoot; // 注册和注销使用的 ScriptRoot/Animation 目录
     FDelegateHandle DirectoryWatcherHandle; // DirectoryWatcher 回调句柄
     FDelegateHandle PreBeginPIEHandle; // PIE 前同步编译委托句柄
+    FDelegateHandle EndPIEHandle; // PIE 结束自动关闭快照委托句柄
     FDelegateHandle ToolbarExtenderHandle; // 官方动画蓝图编辑器工具栏扩展句柄
     TArray<TSharedPtr<FSekiroLuaAnimBlueprintEditorBinding>> EditorBindings; // 每个命令列表唯一的安全绑定
     TAtomic<bool> bShuttingDown = false; // 阻止关闭阶段继续接收变化
@@ -106,6 +109,9 @@ void FSekiroAnimBlueprintExtEditorModule::StartupModule()
     PreBeginPIEHandle = FEditorDelegates::PreBeginPIE.AddRaw(
         this,
         &FSekiroAnimBlueprintExtEditorModule::HandlePreBeginPIE);
+    EndPIEHandle = FEditorDelegates::EndPIE.AddRaw(
+        this,
+        &FSekiroAnimBlueprintExtEditorModule::HandleEndPIE);
 
     IAnimationBlueprintEditorModule& AnimationBlueprintEditorModule =
         FModuleManager::LoadModuleChecked<IAnimationBlueprintEditorModule>(
@@ -120,7 +126,7 @@ void FSekiroAnimBlueprintExtEditorModule::StartupModule()
 }
 
 /**
- * 停止接收 Lua 文件变化，并注销 watcher 与 PreBeginPIE 委托。
+ * 停止接收 Lua 文件变化，并注销 watcher 与 PIE 生命周期委托。
  * 同时恢复所有编辑器原始 Compile 动作并移除工具栏扩展；已排队任务通过弱引用失效。
  */
 void FSekiroAnimBlueprintExtEditorModule::ShutdownModule()
@@ -138,6 +144,11 @@ void FSekiroAnimBlueprintExtEditorModule::ShutdownModule()
     {
         FEditorDelegates::PreBeginPIE.Remove(PreBeginPIEHandle);
         PreBeginPIEHandle.Reset();
+    }
+    if (EndPIEHandle.IsValid())
+    {
+        FEditorDelegates::EndPIE.Remove(EndPIEHandle);
+        EndPIEHandle.Reset();
     }
     if (ToolbarExtenderHandle.IsValid()
         && FModuleManager::Get().IsModuleLoaded(TEXT("AnimationBlueprintEditor")))
@@ -355,6 +366,20 @@ void FSekiroAnimBlueprintExtEditorModule::HandlePreBeginPIE(
             Error,
             TEXT("One or more dirty Lua AnimBlueprints failed to compile before PIE; previous generated classes remain active."));
     }
+}
+
+/**
+ * 在 PIE/SIE 完全结束时 Flush 并关闭活动快照 Session，确保 JSONL 文件不再被编辑器进程占用。
+ * 只能由 FEditorDelegates::EndPIE 在游戏线程调用；参数仅标识 SIE/PIE，两种模式采用相同行为。
+ * 本回调不关闭实时层级 Debug，也不清除最后快照路径。
+ *
+ * @param bIsSimulatingInEditor true 表示刚结束 SIE，false 表示刚结束 PIE。
+ */
+void FSekiroAnimBlueprintExtEditorModule::HandleEndPIE(
+    const bool bIsSimulatingInEditor)
+{
+    static_cast<void>(bIsSimulatingInEditor);
+    FSekiroLuaAnimDebugRuntime::StopSnapshotSession();
 }
 
 /**

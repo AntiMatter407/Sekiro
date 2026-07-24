@@ -10,6 +10,7 @@
 #include "Styling/AppStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
+#include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SSeparator.h"
@@ -89,6 +90,125 @@ void AppendNumberMap(
     {
         OutText += FString::Printf(TEXT("  %s = %.4f\n"), *Key, Values[Key]);
     }
+}
+
+/**
+ * 递归判断动画节点及其子节点是否包含搜索词，覆盖类型、状态、动画名、输入和输出推导。
+ * 仅在游戏线程的列表过滤阶段调用；Node 可为空，SearchText 必须是已裁剪的非空文本。
+ *
+ * @param Node 当前节点，只读且可为空。
+ * @param SearchText 不区分大小写的搜索词。
+ * @return 当前子树任一可见字段命中时返回 true。
+ */
+bool DoesNodeMatchSearch(
+    const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Node,
+    const FString& SearchText)
+{
+    if (!Node.IsValid()) return false;
+    if (Node->NodeType.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->MachineName.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->CurrentState.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->PreviousState.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->NativeAssetName.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->ResolvedAnimationName.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->PoseAlias.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->OutputKind.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->OutputDerivation.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Node->RawDebugLine.Contains(SearchText, ESearchCase::IgnoreCase))
+    {
+        return true;
+    }
+    for (const TPair<FString, FString>& Input : Node->Inputs)
+    {
+        if (Input.Key.Contains(SearchText, ESearchCase::IgnoreCase)
+            || Input.Value.Contains(SearchText, ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    for (const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Child : Node->Children)
+    {
+        if (DoesNodeMatchSearch(Child, SearchText)) return true;
+    }
+    return false;
+}
+
+/**
+ * 判断一帧的时间、原因、变化描述、动画数据、变量、曲线或 Transition 是否包含搜索词。
+ * 仅在游戏线程的列表过滤阶段调用；Frame 可为空，搜索不改变时间轴和文档原始顺序。
+ *
+ * @param Frame 待匹配快照，只读且可为空。
+ * @param SearchText 已裁剪搜索词；空字符串匹配所有快照。
+ * @return 任一快照字段不区分大小写命中时返回 true。
+ */
+bool DoesFrameMatchSearch(
+    const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Frame,
+    const FString& SearchText)
+{
+    if (!Frame.IsValid()) return false;
+    if (SearchText.IsEmpty()) return true;
+
+    const FString BasicText = FString::Printf(
+        TEXT("%lld %.3f %s %s %s %s %s"),
+        Frame->FrameIndex,
+        Frame->SessionElapsedSeconds,
+        *Frame->UtcTimestamp,
+        *Frame->CaptureReason,
+        *GetReasonLabel(Frame->CaptureReason),
+        *Frame->AnimInstancePath,
+        *Frame->LuaModuleName);
+    if (BasicText.Contains(SearchText, ESearchCase::IgnoreCase)
+        || Frame->ChangeTitle.Contains(
+            SearchText,
+            ESearchCase::IgnoreCase)
+        || Frame->ChangeDescription.Contains(
+            SearchText,
+            ESearchCase::IgnoreCase)
+        || Frame->ChangeDetails.Contains(
+            SearchText,
+            ESearchCase::IgnoreCase))
+    {
+        return true;
+    }
+
+    for (const TPair<FString, FString>& Variable : Frame->Variables)
+    {
+        if (Variable.Key.Contains(SearchText, ESearchCase::IgnoreCase)
+            || Variable.Value.Contains(SearchText, ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    for (const TPair<FString, double>& Curve : Frame->Curves)
+    {
+        if (Curve.Key.Contains(SearchText, ESearchCase::IgnoreCase)
+            || FString::SanitizeFloat(Curve.Value).Contains(
+                SearchText,
+                ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    for (const FSekiroLuaAnimTransitionSample& Transition : Frame->Transitions)
+    {
+        const FString TransitionText = FString::Printf(
+            TEXT("%s %s %s %s %s %s"),
+            *Transition.TransitionId,
+            *Transition.ExpressionLabel,
+            *Transition.ParameterName,
+            *Transition.ParameterValue,
+            Transition.bExpressionResult ? TEXT("true 通过") : TEXT("false 未通过"),
+            Transition.bRuleResult ? TEXT("true 通过") : TEXT("false 未通过"));
+        if (TransitionText.Contains(SearchText, ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    for (const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Root : Frame->Roots)
+    {
+        if (DoesNodeMatchSearch(Root, SearchText)) return true;
+    }
+    return false;
 }
 }
 
@@ -206,14 +326,25 @@ void SSekiroLuaAnimSnapshotViewer::Construct(const FArguments& InArgs)
                     .Padding(2.0f)
                     [
                         SNew(STextBlock)
-                        .Text(FText::FromString(TEXT("快照表（辅助选择）")))
+                        .Text(FText::FromString(TEXT("快照与变化")))
                         .Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+                    ]
+                    + SVerticalBox::Slot()
+                    .AutoHeight()
+                    .Padding(2.0f, 2.0f, 2.0f, 4.0f)
+                    [
+                        SNew(SSearchBox)
+                        .HintText(FText::FromString(
+                            TEXT("搜索时间、状态、动画、变量或 Transition")))
+                        .OnTextChanged(
+                            this,
+                            &SSekiroLuaAnimSnapshotViewer::HandleFrameSearchChanged)
                     ]
                     + SVerticalBox::Slot()
                     .FillHeight(1.0f)
                     [
                         SAssignNew(FrameList, SListView<TSharedPtr<FSekiroLuaAnimSnapshotFrame>>)
-                        .ListItemsSource(&Document.Frames)
+                        .ListItemsSource(&FilteredFrames)
                         .SelectionMode(ESelectionMode::Single)
                         .OnGenerateRow(this, &SSekiroLuaAnimSnapshotViewer::GenerateFrameRow)
                         .OnSelectionChanged(
@@ -237,7 +368,7 @@ void SSekiroLuaAnimSnapshotViewer::Construct(const FArguments& InArgs)
                     .FillHeight(1.0f)
                     [
                         SAssignNew(NodeTree, STreeView<TSharedPtr<FSekiroLuaAnimSnapshotNode>>)
-                        .TreeItemsSource(nullptr)
+                        .TreeItemsSource(&NodeTreeRoots)
                         .SelectionMode(ESelectionMode::Single)
                         .OnGenerateRow(this, &SSekiroLuaAnimSnapshotViewer::GenerateNodeRow)
                         .OnGetChildren(this, &SSekiroLuaAnimSnapshotViewer::GetNodeChildren)
@@ -327,6 +458,25 @@ void SSekiroLuaAnimSnapshotViewer::Construct(const FArguments& InArgs)
     }
 }
 
+#if WITH_DEV_AUTOMATION_TESTS
+/**
+ * 测试专用：调用左侧快照列表的真实搜索匹配逻辑，不创建 Slate 控件。
+ * 可在自动化测试线程入口调用；Frame 只读且可为空，SearchText 为空时匹配有效帧。
+ *
+ * @param Frame 待匹配快照。
+ * @param SearchText 不区分大小写的搜索词。
+ * @return 与实际查看器过滤规则相同的匹配结果。
+ */
+bool SSekiroLuaAnimSnapshotViewer::DoesFrameMatchSearchForTesting(
+    const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Frame,
+    const FString& SearchText)
+{
+    return SekiroLuaAnimSnapshotViewerPrivate::DoesFrameMatchSearch(
+        Frame,
+        SearchText.TrimStartAndEnd());
+}
+#endif
+
 /**
  * 打开原生文件选择器并加载用户选中的 JSONL 文件。
  * 必须在游戏线程调用；取消选择不会改变当前文档。返回已处理的 Slate 回复。
@@ -377,9 +527,14 @@ FReply SSekiroLuaAnimSnapshotViewer::HandleLoadLatest()
         Document = FSekiroLuaAnimSnapshotDocument();
         SelectedFrameArrayIndex = INDEX_NONE;
         SelectedNode.Reset();
+        NodeTreeRoots.Reset();
         if (Timeline.IsValid()) Timeline->SetFrames(&Document.Frames);
-        if (FrameList.IsValid()) FrameList->RequestListRefresh();
-        if (NodeTree.IsValid()) NodeTree->SetTreeItemsSource(nullptr);
+        RefreshFrameFilter();
+        if (NodeTree.IsValid())
+        {
+            NodeTree->ClearSelection();
+            NodeTree->RequestTreeRefresh();
+        }
         UpdateStatus();
         UpdateDetails();
         return FReply::Handled();
@@ -403,6 +558,20 @@ FReply SSekiroLuaAnimSnapshotViewer::HandleResetView()
 }
 
 /**
+ * 更新左侧快照搜索词并立即刷新过滤结果；搜索不改变时间轴、当前快照或文件内容。
+ * 只能由 Slate 搜索框在游戏线程调用；SearchText 可为空，空值恢复全部快照。
+ *
+ * @param SearchText 搜索框当前完整文本。
+ */
+void SSekiroLuaAnimSnapshotViewer::HandleFrameSearchChanged(
+    const FText& SearchText)
+{
+    FrameSearchText = SearchText.ToString().TrimStartAndEnd();
+    RefreshFrameFilter();
+    UpdateStatus();
+}
+
+/**
  * 容错加载指定文件并同步刷新时间轴、辅助表、树与详情。
  * 必须在游戏线程调用；FilePath 只读，解析失败会保留中文警告且不会抛弃其他有效行。
  */
@@ -411,12 +580,49 @@ void SSekiroLuaAnimSnapshotViewer::LoadFile(const FString& FilePath)
     FSekiroLuaAnimSnapshotLoader::LoadFile(FilePath, Document);
     SelectedFrameArrayIndex = INDEX_NONE;
     SelectedNode.Reset();
+    NodeTreeRoots.Reset();
     if (Timeline.IsValid()) Timeline->SetFrames(&Document.Frames);
-    if (FrameList.IsValid()) FrameList->RequestListRefresh();
-    if (NodeTree.IsValid()) NodeTree->SetTreeItemsSource(nullptr);
+    RefreshFrameFilter();
+    if (NodeTree.IsValid())
+    {
+        NodeTree->ClearSelection();
+        NodeTree->RequestTreeRefresh();
+    }
     UpdateStatus();
     if (!Document.Frames.IsEmpty()) SelectFrameByArrayIndex(0);
     else UpdateDetails();
+}
+
+/**
+ * 使用当前搜索词重建左侧引用数组，并在仍命中时恢复当前帧的列表选择。
+ * 只能在游戏线程调用；不会复制快照内容，也不会改变 Document.Frames 或时间轴下标。
+ */
+void SSekiroLuaAnimSnapshotViewer::RefreshFrameFilter()
+{
+    FilteredFrames.Reset();
+    for (const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Frame : Document.Frames)
+    {
+        if (SekiroLuaAnimSnapshotViewerPrivate::DoesFrameMatchSearch(
+            Frame,
+            FrameSearchText))
+        {
+            FilteredFrames.Add(Frame);
+        }
+    }
+    if (!FrameList.IsValid()) return;
+
+    FrameList->ClearSelection();
+    FrameList->RequestListRefresh();
+    if (Document.Frames.IsValidIndex(SelectedFrameArrayIndex))
+    {
+        const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& SelectedFrame =
+            Document.Frames[SelectedFrameArrayIndex];
+        if (FilteredFrames.Contains(SelectedFrame))
+        {
+            FrameList->SetSelection(SelectedFrame, ESelectInfo::Direct);
+            FrameList->RequestScrollIntoView(SelectedFrame);
+        }
+    }
 }
 
 /**
@@ -456,8 +662,13 @@ void SSekiroLuaAnimSnapshotViewer::SelectFrameByArrayIndex(const int32 FrameArra
     {
         SelectedFrameArrayIndex = INDEX_NONE;
         SelectedNode.Reset();
+        NodeTreeRoots.Reset();
         if (Timeline.IsValid()) Timeline->SetSelectedFrameIndex(INDEX_NONE);
-        if (NodeTree.IsValid()) NodeTree->SetTreeItemsSource(nullptr);
+        if (NodeTree.IsValid())
+        {
+            NodeTree->ClearSelection();
+            NodeTree->RequestTreeRefresh();
+        }
         UpdateDetails();
         return;
     }
@@ -467,16 +678,21 @@ void SSekiroLuaAnimSnapshotViewer::SelectFrameByArrayIndex(const int32 FrameArra
     if (Timeline.IsValid()) Timeline->SetSelectedFrameIndex(FrameArrayIndex);
     if (FrameList.IsValid())
     {
-        FrameList->SetSelection(Document.Frames[FrameArrayIndex], ESelectInfo::Direct);
-        FrameList->RequestScrollIntoView(Document.Frames[FrameArrayIndex]);
+        const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Frame =
+            Document.Frames[FrameArrayIndex];
+        if (FilteredFrames.Contains(Frame))
+        {
+            FrameList->SetSelection(Frame, ESelectInfo::Direct);
+            FrameList->RequestScrollIntoView(Frame);
+        }
+        else FrameList->ClearSelection();
     }
     if (NodeTree.IsValid())
     {
         NodeTree->ClearSelection();
-        NodeTree->SetTreeItemsSource(&Document.Frames[FrameArrayIndex]->Roots);
+        NodeTreeRoots = Document.Frames[FrameArrayIndex]->Roots;
         NodeTree->RequestTreeRefresh();
-        for (const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Root :
-            Document.Frames[FrameArrayIndex]->Roots)
+        for (const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Root : NodeTreeRoots)
         {
             ExpandNodeRecursively(Root);
         }
@@ -519,26 +735,91 @@ void SSekiroLuaAnimSnapshotViewer::HandleNodeSelectionChanged(
 }
 
 /**
- * 为辅助快照表生成包含帧号、相对秒、UTC 和原因的一行。
+ * 为左侧快照表生成独立卡片，以原因色、帧号、单句变化摘要和 UTC 明确分隔记录。
  * 由 Slate 游戏线程按需调用；OwnerTable 拥有返回行。返回始终有效的表格行。
  */
 TSharedRef<ITableRow> SSekiroLuaAnimSnapshotViewer::GenerateFrameRow(
     TSharedPtr<FSekiroLuaAnimSnapshotFrame> Frame,
     const TSharedRef<STableViewBase>& OwnerTable) const
 {
-    const FString RowText = Frame.IsValid()
-        ? FString::Printf(
-            TEXT("#%lld  %.3fs  %s\n%s"),
+    FString HeaderText(TEXT("无效快照"));
+    FString DescriptionText(TEXT("无法读取这条快照。"));
+    FString TimestampText;
+    FString ToolTipText = DescriptionText;
+    FLinearColor AccentColor(0.55f, 0.55f, 0.55f, 1.0f);
+    FLinearColor CardColor(0.12f, 0.12f, 0.12f, 0.92f);
+    if (Frame.IsValid())
+    {
+        HeaderText = FString::Printf(
+            TEXT("#%lld    %.3f 秒    %s"),
             Frame->FrameIndex,
             Frame->SessionElapsedSeconds,
+            *Frame->ChangeTitle);
+        DescriptionText = Frame->ChangeDescription;
+        TimestampText = Frame->UtcTimestamp;
+        if (Frame->CaptureReason.Equals(
+            TEXT("Start"),
+            ESearchCase::IgnoreCase))
+        {
+            AccentColor = FLinearColor(0.25f, 0.80f, 0.35f, 1.0f);
+        }
+        else if (Frame->CaptureReason.Equals(
+            TEXT("StateChanged"),
+            ESearchCase::IgnoreCase))
+        {
+            AccentColor = FLinearColor(1.0f, 0.55f, 0.15f, 1.0f);
+        }
+        else if (Frame->CaptureReason.Equals(
+            TEXT("Interval"),
+            ESearchCase::IgnoreCase))
+        {
+            AccentColor = FLinearColor(0.25f, 0.55f, 1.0f, 1.0f);
+        }
+        CardColor = Frame->FrameIndex % 2 == 0
+            ? FLinearColor(0.10f, 0.10f, 0.10f, 0.94f)
+            : FLinearColor(0.16f, 0.16f, 0.16f, 0.94f);
+        ToolTipText = FString::Printf(
+            TEXT("#%lld  %.3fs  %s\n%s\n采样原因：%s\n%s"),
+            Frame->FrameIndex,
+            Frame->SessionElapsedSeconds,
+            *Frame->ChangeTitle,
+            *Frame->ChangeDetails,
             *SekiroLuaAnimSnapshotViewerPrivate::GetReasonLabel(Frame->CaptureReason),
-            *Frame->UtcTimestamp)
-        : TEXT("无效快照");
+            *Frame->UtcTimestamp);
+    }
     return SNew(STableRow<TSharedPtr<FSekiroLuaAnimSnapshotFrame>>, OwnerTable)
     [
-        SNew(STextBlock)
-        .Text(FText::FromString(RowText))
-        .AutoWrapText(true)
+        SNew(SBorder)
+        .BorderImage(FAppStyle::GetBrush(TEXT("ToolPanel.GroupBorder")))
+        .BorderBackgroundColor(CardColor)
+        .Padding(FMargin(8.0f, 6.0f))
+        .ToolTipText(FText::FromString(ToolTipText))
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(HeaderText))
+                .ColorAndOpacity(AccentColor)
+                .Font(FAppStyle::GetFontStyle(TEXT("HeadingExtraSmall")))
+            ]
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0.0f, 3.0f, 0.0f, 2.0f)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(DescriptionText))
+                .AutoWrapText(true)
+            ]
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TimestampText))
+                .ColorAndOpacity(FSlateColor::UseSubduedForeground())
+            ]
+        ]
     ];
 }
 
@@ -638,6 +919,12 @@ void SSekiroLuaAnimSnapshotViewer::UpdateStatus()
     else
     {
         Status = FString::Printf(TEXT("已加载 %d 个快照。"), Document.Frames.Num());
+        if (!FrameSearchText.IsEmpty())
+        {
+            Status += FString::Printf(
+                TEXT("  搜索结果：%d 个。"),
+                FilteredFrames.Num());
+        }
     }
     if (!Document.Warnings.IsEmpty())
     {

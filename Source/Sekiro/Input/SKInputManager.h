@@ -243,6 +243,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	float GetWorldTimeSecondsForScript() const;       // 获取世界时间
 
+	/** 获取同一 Owner 上负责动作仲裁的战斗组件。 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Lua")
+	USKCombatComponent* GetOwnerCombatComponent() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	void SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining); // 写入移动意图；末参数仅为兼容旧接口
 

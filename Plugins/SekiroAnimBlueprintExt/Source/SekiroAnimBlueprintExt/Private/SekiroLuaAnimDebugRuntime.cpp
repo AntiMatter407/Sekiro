@@ -49,6 +49,7 @@ namespace SekiroLuaAnimDebugPrivate
         FSekiroLuaAnimDebugFrame LatestFrame; // 供 Editor 读取的最近帧
         bool bHasLatestFrame = false; // 最近帧是否有效
         bool bSnapshotActive = false; // JSONL Session 是否活动
+        bool bIntervalSamplingEnabled = false; // 是否同时启用定时采样
         float SnapshotInterval = DefaultSnapshotInterval; // 定时间隔秒
         double SessionStartSeconds = 0.0; // Session 平台起点
         double NextCaptureSeconds = 0.0; // 下次定时采样时间
@@ -706,11 +707,23 @@ namespace SekiroLuaAnimDebugPrivate
         if (RuntimeState.SnapshotFile.IsValid()) RuntimeState.SnapshotFile->Flush();
         RuntimeState.SnapshotFile.Reset();
         RuntimeState.bSnapshotActive = false;
+        RuntimeState.bIntervalSamplingEnabled = false;
         RuntimeState.PreviousStateSignature.Reset();
     }
 
-    /** 开始替换式新 Session；OutputPath 为空时写 Saved/LuaAnimSnapshots。 */
-    bool StartSnapshot(const float IntervalSeconds, const FString& OutputPath)
+    /**
+     * 开始替换式新 Session 并立即写入 Start 基线帧；OutputPath 为空时写 Saved/LuaAnimSnapshots。
+     * 只能在游戏线程调用；状态变化采样始终开启，bEnableIntervalSampling 只控制额外的定时采样。
+     *
+     * @param IntervalSeconds 定时采样间隔秒，最小按 0.01 秒处理；禁用定时采样时仅保留配置值。
+     * @param bEnableIntervalSampling true 同时按时间采样，false 仅在状态签名变化时采样。
+     * @param OutputPath 输出 JSONL 路径；为空时自动生成 Session 文件。
+     * @return 文件创建且 Start 帧写入成功时返回 true，否则返回 false。
+     */
+    bool StartSnapshot(
+        const float IntervalSeconds,
+        const bool bEnableIntervalSampling,
+        const FString& OutputPath)
     {
         StopSnapshot();
         RuntimeState.SnapshotInterval = FMath::Max(0.01f, IntervalSeconds);
@@ -732,6 +745,7 @@ namespace SekiroLuaAnimDebugPrivate
         if (!RuntimeState.SnapshotFile.IsValid()) return false;
 
         RuntimeState.bSnapshotActive = true;
+        RuntimeState.bIntervalSamplingEnabled = bEnableIntervalSampling;
         RuntimeState.SessionStartSeconds = FPlatformTime::Seconds();
         RuntimeState.NextFrameIndex = 0;
         UAnimInstance* Target = nullptr;
@@ -852,12 +866,30 @@ namespace SekiroLuaAnimDebugPrivate
         else RuntimeState.DebugView = EDebugView::Help;
     }
 
-    /** Snapshot 命令：解析可选秒间隔并替换当前 Session。 */
-    void HandleSnapshotCommand(const TArray<FString>& Arguments)
+    /**
+     * 按控制台参数启动快照：无参数仅采样状态变化，有参数则按正数秒间隔追加定时采样。
+     * 参数解析失败或非正数时回退 0.15 秒；OutputPath 为空时使用默认 Session 目录。
+     *
+     * @param Arguments 控制台参数；仅首个参数作为秒间隔。
+     * @param OutputPath 可选显式输出路径，生产命令传空，自动化测试传临时文件。
+     * @return Session 创建及 Start 帧写入是否成功。
+     */
+    bool StartSnapshotFromArguments(
+        const TArray<FString>& Arguments,
+        const FString& OutputPath)
     {
         float Interval = DefaultSnapshotInterval;
         if (!Arguments.IsEmpty()) Interval = FCString::Atof(*Arguments[0]);
-        StartSnapshot(Interval > 0.0f ? Interval : DefaultSnapshotInterval, FString());
+        return StartSnapshot(
+            Interval > 0.0f ? Interval : DefaultSnapshotInterval,
+            !Arguments.IsEmpty(),
+            OutputPath);
+    }
+
+    /** Snapshot 命令：无参仅采样状态变化，有秒参数时替换为定时采样 Session。 */
+    void HandleSnapshotCommand(const TArray<FString>& Arguments)
+    {
+        StartSnapshotFromArguments(Arguments, FString());
     }
 
     /** Snapshot.Stop 命令：安全 Flush 并停止。 */
@@ -875,7 +907,7 @@ namespace SekiroLuaAnimDebugPrivate
         {
             RemoveScreenMessage();
             if (GEngine != nullptr) GEngine->AddOnScreenDebugMessage(DebugMessageKey, 0.1f, FColor::Cyan,
-                TEXT("Usage:\nSekiro.LuaAnim.Debug [Off]\nSekiro.LuaAnim.Snapshot [IntervalSeconds]\nSekiro.LuaAnim.Snapshot.Stop"), false);
+                TEXT("Usage:\nSekiro.LuaAnim.Debug [Off]\nSekiro.LuaAnim.Snapshot [IntervalSeconds]\n  no interval: state changes only\nSekiro.LuaAnim.Snapshot.Stop"), false);
             return true;
         }
 
@@ -889,7 +921,9 @@ namespace SekiroLuaAnimDebugPrivate
         if (RuntimeState.bSnapshotActive)
         {
             const bool bStateChanged = !RuntimeState.PreviousStateSignature.IsEmpty() && StateSignature != RuntimeState.PreviousStateSignature;
-            const bool bIntervalDue = Now >= RuntimeState.NextCaptureSeconds;
+            const bool bIntervalDue =
+                RuntimeState.bIntervalSamplingEnabled
+                && Now >= RuntimeState.NextCaptureSeconds;
             if (bStateChanged || bIntervalDue)
             {
                 Frame.FrameIndex = RuntimeState.NextFrameIndex++;
@@ -922,7 +956,8 @@ void FSekiroLuaAnimDebugRuntime::Startup()
         TEXT("Sekiro.LuaAnim.Debug"), TEXT("Sekiro.LuaAnim.Debug [Off]"),
         FConsoleCommandWithArgsDelegate::CreateStatic(&HandleDebugCommand), ECVF_Default);
     RuntimeState.SnapshotCommand = IConsoleManager::Get().RegisterConsoleCommand(
-        TEXT("Sekiro.LuaAnim.Snapshot"), TEXT("Sekiro.LuaAnim.Snapshot [IntervalSeconds]"),
+        TEXT("Sekiro.LuaAnim.Snapshot"),
+        TEXT("Sekiro.LuaAnim.Snapshot [IntervalSeconds]; omit interval to capture state changes only."),
         FConsoleCommandWithArgsDelegate::CreateStatic(&HandleSnapshotCommand), ECVF_Default);
     RuntimeState.SnapshotStopCommand = IConsoleManager::Get().RegisterConsoleCommand(
         TEXT("Sekiro.LuaAnim.Snapshot.Stop"), TEXT("Stop and flush the active Lua animation snapshot session."),
@@ -1016,6 +1051,16 @@ FString FSekiroLuaAnimDebugRuntime::GetSnapshotSessionPath()
     return SekiroLuaAnimDebugPrivate::RuntimeState.SnapshotPath;
 }
 
+/**
+ * Flush 并关闭当前快照 Session，立即释放 JSONL 文件句柄，同时保留最后文件路径供查看器读取。
+ * 只能在游戏线程调用；无活动 Session 时安全无操作，不影响实时动画层级 Debug。
+ */
+void FSekiroLuaAnimDebugRuntime::StopSnapshotSession()
+{
+    check(IsInGameThread());
+    SekiroLuaAnimDebugPrivate::StopSnapshot();
+}
+
 #if WITH_DEV_AUTOMATION_TESTS
 /** 测试专用：应用真实 Debug 命令参数替换逻辑。 */
 void FSekiroLuaAnimDebugRuntime::ApplyDebugArgumentsForTesting(const TArray<FString>& Arguments)
@@ -1026,7 +1071,20 @@ void FSekiroLuaAnimDebugRuntime::ApplyDebugArgumentsForTesting(const TArray<FStr
 /** 测试专用：用显式临时路径开始替换式 Session。 */
 bool FSekiroLuaAnimDebugRuntime::StartSnapshotForTesting(const float IntervalSeconds, const FString& OutputPath)
 {
-    return SekiroLuaAnimDebugPrivate::StartSnapshot(IntervalSeconds, OutputPath);
+    return SekiroLuaAnimDebugPrivate::StartSnapshot(
+        IntervalSeconds,
+        true,
+        OutputPath);
+}
+
+/** 测试专用：用显式临时路径应用真实 Snapshot 控制台参数。 */
+bool FSekiroLuaAnimDebugRuntime::ApplySnapshotArgumentsForTesting(
+    const TArray<FString>& Arguments,
+    const FString& OutputPath)
+{
+    return SekiroLuaAnimDebugPrivate::StartSnapshotFromArguments(
+        Arguments,
+        OutputPath);
 }
 
 /** 测试专用：安全停止并 Flush Session。 */
@@ -1045,6 +1103,12 @@ bool FSekiroLuaAnimDebugRuntime::IsDebugEnabledForTesting()
 bool FSekiroLuaAnimDebugRuntime::IsSnapshotActiveForTesting()
 {
     return SekiroLuaAnimDebugPrivate::RuntimeState.bSnapshotActive;
+}
+
+/** 测试专用：查询当前 Session 是否启用额外定时采样。 */
+bool FSekiroLuaAnimDebugRuntime::IsSnapshotIntervalSamplingEnabledForTesting()
+{
+    return SekiroLuaAnimDebugPrivate::RuntimeState.bIntervalSamplingEnabled;
 }
 
 /** 测试专用：读取经下限修正后的采样间隔秒数。 */

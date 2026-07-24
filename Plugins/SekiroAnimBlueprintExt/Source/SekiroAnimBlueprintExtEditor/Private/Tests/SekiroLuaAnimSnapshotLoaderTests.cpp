@@ -2,6 +2,7 @@
 
 #include "Misc/AutomationTest.h"
 #include "SekiroLuaAnimSnapshotLoader.h"
+#include "SekiroLuaAnimSnapshotViewer.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FSekiroLuaAnimSnapshotLoaderTest,
@@ -31,7 +32,57 @@ bool FSekiroLuaAnimSnapshotLoaderTest::RunTest(const FString& Parameters)
     if (Document.Frames.Num() != 2) return false;
 
     TestEqual(TEXT("帧按相对秒排序"), Document.Frames[0]->FrameIndex, static_cast<int64>(1));
+    TestTrue(
+        TEXT("首帧描述为开始记录"),
+        Document.Frames[0]->ChangeDescription.Contains(TEXT("开始记录")));
+    TestFalse(
+        TEXT("首帧摘要保持一句话"),
+        Document.Frames[0]->ChangeDescription.Contains(TEXT("；")));
     const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& DetailedFrame = Document.Frames[1];
+    TestTrue(
+        TEXT("变化描述包含状态机变化"),
+        DetailedFrame->ChangeDetails.Contains(TEXT("状态 Locomotion [7]: <无> → Run")));
+    TestTrue(
+        TEXT("关键变化标题使用具体节点变化"),
+        DetailedFrame->ChangeTitle.Contains(TEXT("Locomotion")));
+    TestTrue(
+        TEXT("变化描述包含 Lua 动画开始"),
+        DetailedFrame->ChangeDetails.Contains(TEXT("动画开始 Run_Fwd")));
+    TestTrue(
+        TEXT("变化描述包含变量变化"),
+        DetailedFrame->ChangeDetails.Contains(TEXT("变量 CombatActionState = LightAttack")));
+    TestTrue(
+        TEXT("变化描述包含曲线变化"),
+        DetailedFrame->ChangeDetails.Contains(TEXT("曲线 Attribute.CanCancelToGuard = 1.0000")));
+    TestTrue(
+        TEXT("变化描述包含 Transition 结果"),
+        DetailedFrame->ChangeDetails.Contains(TEXT("Transition Idle_Run: <无> → 通过")));
+    TestFalse(
+        TEXT("左侧摘要保持一句话"),
+        DetailedFrame->ChangeDescription.Contains(TEXT("；")));
+    TestTrue(
+        TEXT("左侧摘要概括其余变化"),
+        DetailedFrame->ChangeDescription.Contains(TEXT("另有")));
+    TestTrue(
+        TEXT("搜索可命中 Lua 动画名"),
+        SSekiroLuaAnimSnapshotViewer::DoesFrameMatchSearchForTesting(
+            DetailedFrame,
+            TEXT("run_fwd")));
+    TestTrue(
+        TEXT("搜索可命中变量名"),
+        SSekiroLuaAnimSnapshotViewer::DoesFrameMatchSearchForTesting(
+            DetailedFrame,
+            TEXT("CombatActionState")));
+    TestTrue(
+        TEXT("搜索可命中 Transition 标识"),
+        SSekiroLuaAnimSnapshotViewer::DoesFrameMatchSearchForTesting(
+            DetailedFrame,
+            TEXT("Idle_Run")));
+    TestFalse(
+        TEXT("搜索无关文本不命中"),
+        SSekiroLuaAnimSnapshotViewer::DoesFrameMatchSearchForTesting(
+            DetailedFrame,
+            TEXT("NoSuchSnapshotValue")));
     TestEqual(TEXT("解析全部变量"), DetailedFrame->Variables.Num(), 2);
     TestEqual(
         TEXT("解析战斗状态变量"),
@@ -70,6 +121,26 @@ bool FSekiroLuaAnimSnapshotLoaderTest::RunTest(const FString& Parameters)
         TestTrue(TEXT("Transition 表达式结果"), Sample.bExpressionResult);
         TestTrue(TEXT("Transition 最终结果"), Sample.bRuleResult);
         TestTrue(TEXT("Transition 最终采样标记"), Sample.bIsFinal);
+    }
+
+    const FString RootPriorityJsonLines =
+        TEXT("{\"FrameIndex\":0,\"SessionElapsedSeconds\":0.0,\"CaptureReason\":\"Start\",\"Roots\":[{\"NodeType\":\"Root\",\"Depth\":0,\"ChainId\":1,\"Children\":[{\"NodeType\":\"Slot\",\"Depth\":1,\"ChainId\":2,\"Inputs\":{\"SlotName\":\"FullBodySlot\"},\"Children\":[{\"NodeType\":\"StateMachine\",\"Depth\":3,\"ChainId\":3,\"MachineName\":\"Locomotion\",\"CurrentState\":\"Idle\"}]}]}]}\n")
+        TEXT("{\"FrameIndex\":1,\"SessionElapsedSeconds\":0.1,\"CaptureReason\":\"StateChanged\",\"Roots\":[{\"NodeType\":\"Root\",\"Depth\":0,\"ChainId\":1,\"Children\":[{\"NodeType\":\"Slot\",\"Depth\":1,\"ChainId\":2,\"Inputs\":{\"SlotName\":\"FullBodySlot\"},\"Children\":[{\"NodeType\":\"StateMachine\",\"Depth\":3,\"ChainId\":3,\"MachineName\":\"Locomotion\",\"CurrentState\":\"Run\"},{\"NodeType\":\"Montage\",\"Depth\":2,\"ChainId\":4,\"ResolvedAnimationName\":\"Attack.Light\"}]}]}]}\n");
+    FSekiroLuaAnimSnapshotDocument RootPriorityDocument;
+    FSekiroLuaAnimSnapshotLoader::ParseJsonLines(
+        RootPriorityJsonLines,
+        TEXT("RootPriority.jsonl"),
+        RootPriorityDocument);
+    TestEqual(
+        TEXT("Root 优先级样本包含两帧"),
+        RootPriorityDocument.Frames.Num(),
+        2);
+    if (RootPriorityDocument.Frames.Num() == 2)
+    {
+        TestEqual(
+            TEXT("近 Root 的 Slot Montage 优先于深层 Locomotion 状态变化"),
+            RootPriorityDocument.Frames[1]->ChangeTitle,
+            FString(TEXT("Slot FullBodySlot：Montage 开始 Attack.Light")));
     }
     return true;
 }

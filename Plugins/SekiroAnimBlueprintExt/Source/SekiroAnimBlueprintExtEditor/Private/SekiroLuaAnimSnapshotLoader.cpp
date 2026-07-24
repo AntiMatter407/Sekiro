@@ -275,6 +275,778 @@ TSharedPtr<FSekiroLuaAnimSnapshotFrame> ParseFrame(const TSharedPtr<FJsonObject>
     }
     return Frame;
 }
+
+struct FNodeFact
+{
+    FString NodeType; // 原生节点类型
+    FString DisplayName; // 面向用户的节点名
+    FString CurrentState; // 状态机当前状态
+    FString AnimationName; // Lua 动画名或原生资产名
+    FString ParentSlotName; // 最近所属 Slot 名
+    int32 Depth = MAX_int32; // 节点原始 Root 深度
+    int32 EffectiveDepth = MAX_int32; // Montage 使用所属 Slot 深度
+};
+
+struct FFrameFacts
+{
+    TMap<FString, FString> States; // 状态机稳定名到当前状态
+    TMap<FString, int32> StateDepths; // 状态机到 Root 的节点深度
+    TSet<FString> Animations; // 当前活跃 Lua 动画名
+    TMap<FString, FNodeFact> Nodes; // 稳定节点键到离散节点事实
+    TMap<FString, bool> TransitionResults; // 最终 Transition 结果
+    int32 ActiveNodeCount = 0; // 活跃节点总数
+};
+
+/**
+ * 递归收集一帧中的状态机、Lua 动画和活跃节点数量，用于生成相邻快照差异。
+ * 可在任意线程调用；Node 可为空，OutFacts 会累加当前子树事实且不被清空。
+ *
+ * @param Node 当前节点，只读且可为空。
+ * @param ParentSlotName 当前节点最近的父 Slot 名，可为空。
+ * @param ParentSlotDepth 最近父 Slot 到 Root 的深度，无父 Slot 时为 MAX_int32。
+ * @param OutFacts 接收当前节点及全部子节点的离散事实。
+ */
+void CollectNodeFacts(
+    const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Node,
+    const FString& ParentSlotName,
+    const int32 ParentSlotDepth,
+    FFrameFacts& OutFacts)
+{
+    if (!Node.IsValid()) return;
+    ++OutFacts.ActiveNodeCount;
+
+    const FString SlotName = Node->Inputs.FindRef(TEXT("SlotName"));
+    const bool bIsSlot = Node->NodeType.Contains(
+        TEXT("Slot"),
+        ESearchCase::IgnoreCase);
+    const bool bIsMontage = Node->NodeType.Contains(
+        TEXT("Montage"),
+        ESearchCase::IgnoreCase);
+    const FString CurrentSlotName = bIsSlot
+        ? (SlotName.IsEmpty() ? Node->NodeType : SlotName)
+        : ParentSlotName;
+    const int32 CurrentSlotDepth = bIsSlot
+        ? Node->Depth
+        : ParentSlotDepth;
+
+    if (!Node->CurrentState.IsEmpty())
+    {
+        FString StateLabel = Node->MachineName;
+        if (StateLabel.IsEmpty()) StateLabel = Node->PoseAlias;
+        if (StateLabel.IsEmpty()) StateLabel = Node->NodeType;
+        if (!Node->ChainId.IsEmpty()) StateLabel += TEXT(" [") + Node->ChainId + TEXT("]");
+        const int32* ExistingDepth = OutFacts.StateDepths.Find(StateLabel);
+        if (ExistingDepth == nullptr || Node->Depth < *ExistingDepth)
+        {
+            OutFacts.States.Add(StateLabel, Node->CurrentState);
+            OutFacts.StateDepths.Add(StateLabel, Node->Depth);
+        }
+    }
+
+    const FString AnimationName = Node->ResolvedAnimationName.IsEmpty()
+        ? Node->NativeAssetName
+        : Node->ResolvedAnimationName;
+    if (!AnimationName.IsEmpty()) OutFacts.Animations.Add(AnimationName);
+
+    FNodeFact NodeFact;
+    NodeFact.NodeType = Node->NodeType;
+    NodeFact.CurrentState = Node->CurrentState;
+    NodeFact.AnimationName = AnimationName;
+    NodeFact.ParentSlotName = ParentSlotName;
+    NodeFact.Depth = Node->Depth;
+    NodeFact.EffectiveDepth = bIsMontage
+        && ParentSlotDepth != MAX_int32
+            ? ParentSlotDepth
+            : Node->Depth;
+    if (bIsMontage)
+    {
+        const FString MontageName = Node->Inputs.FindRef(TEXT("MontageName"));
+        NodeFact.DisplayName = AnimationName.IsEmpty()
+            ? (MontageName.IsEmpty() ? TEXT("Montage") : MontageName)
+            : AnimationName;
+    }
+    else if (bIsSlot)
+    {
+        NodeFact.DisplayName = CurrentSlotName;
+    }
+    else if (!Node->MachineName.IsEmpty())
+    {
+        NodeFact.DisplayName = Node->MachineName;
+    }
+    else if (!AnimationName.IsEmpty())
+    {
+        NodeFact.DisplayName = AnimationName;
+    }
+    else if (!Node->PoseAlias.IsEmpty())
+    {
+        NodeFact.DisplayName = Node->PoseAlias;
+    }
+    else
+    {
+        NodeFact.DisplayName = Node->NodeType;
+    }
+
+    FString NodeKey = FString::Printf(
+        TEXT("%s|%d|%s|%s|%s"),
+        *Node->ChainId,
+        Node->Depth,
+        *Node->NodeType,
+        *Node->MachineName,
+        *SlotName);
+    const FString BaseNodeKey = NodeKey;
+    int32 DuplicateIndex = 1;
+    while (OutFacts.Nodes.Contains(NodeKey))
+    {
+        NodeKey = FString::Printf(
+            TEXT("%s|%d"),
+            *BaseNodeKey,
+            DuplicateIndex++);
+    }
+    OutFacts.Nodes.Add(NodeKey, MoveTemp(NodeFact));
+
+    for (const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Child : Node->Children)
+    {
+        CollectNodeFacts(
+            Child,
+            CurrentSlotName,
+            CurrentSlotDepth,
+            OutFacts);
+    }
+}
+
+/**
+ * 从一帧构造用于差异比较的离散事实；Transition 同一标识出现多次时保留最后一个最终结果。
+ * 可在任意线程调用；Frame 可为空。返回值不持有 Frame 的裸指针。
+ *
+ * @param Frame 当前快照，只读且可为空。
+ * @return 状态、动画、Transition 和节点数事实集合。
+ */
+FFrameFacts BuildFrameFacts(const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Frame)
+{
+    FFrameFacts Facts;
+    if (!Frame.IsValid()) return Facts;
+    for (const TSharedPtr<FSekiroLuaAnimSnapshotNode>& Root : Frame->Roots)
+    {
+        CollectNodeFacts(
+            Root,
+            FString(),
+            MAX_int32,
+            Facts);
+    }
+    for (const FSekiroLuaAnimTransitionSample& Transition : Frame->Transitions)
+    {
+        if (Transition.bIsFinal && !Transition.TransitionId.IsEmpty())
+        {
+            Facts.TransitionResults.Add(
+                Transition.TransitionId,
+                Transition.bRuleResult);
+        }
+    }
+    return Facts;
+}
+
+/**
+ * 比较字符串映射并追加新增、移除和修改项；键按字典序输出以保持描述稳定。
+ * 可在任意线程调用；Before/After 只读，OutChanges 追加而不清空。
+ *
+ * @param Label 面向用户的值类别，如“变量”。
+ * @param Before 上一帧映射。
+ * @param After 当前帧映射。
+ * @param OutChanges 接收中文变化描述。
+ */
+void AppendStringMapChanges(
+    const FString& Label,
+    const TMap<FString, FString>& Before,
+    const TMap<FString, FString>& After,
+    TArray<FString>& OutChanges)
+{
+    TArray<FString> Keys;
+    Before.GetKeys(Keys);
+    for (const TPair<FString, FString>& Pair : After)
+    {
+        if (!Before.Contains(Pair.Key)) Keys.Add(Pair.Key);
+    }
+    Keys.Sort();
+
+    for (const FString& Key : Keys)
+    {
+        const FString* BeforeValue = Before.Find(Key);
+        const FString* AfterValue = After.Find(Key);
+        if (BeforeValue == nullptr && AfterValue != nullptr)
+        {
+            OutChanges.Add(FString::Printf(
+                TEXT("%s %s = %s"),
+                *Label,
+                *Key,
+                **AfterValue));
+        }
+        else if (BeforeValue != nullptr && AfterValue == nullptr)
+        {
+            OutChanges.Add(FString::Printf(
+                TEXT("%s %s 已移除（原值 %s）"),
+                *Label,
+                *Key,
+                **BeforeValue));
+        }
+        else if (BeforeValue != nullptr
+            && AfterValue != nullptr
+            && *BeforeValue != *AfterValue)
+        {
+            OutChanges.Add(FString::Printf(
+                TEXT("%s %s: %s → %s"),
+                *Label,
+                *Key,
+                **BeforeValue,
+                **AfterValue));
+        }
+    }
+}
+
+/**
+ * 比较曲线映射并追加新增、移除和数值变化项；小于 KINDA_SMALL_NUMBER 的抖动忽略。
+ * 可在任意线程调用；Before/After 只读，OutChanges 追加而不清空。
+ *
+ * @param Before 上一帧曲线。
+ * @param After 当前帧曲线。
+ * @param OutChanges 接收中文变化描述。
+ */
+void AppendCurveChanges(
+    const TMap<FString, double>& Before,
+    const TMap<FString, double>& After,
+    TArray<FString>& OutChanges)
+{
+    TArray<FString> Keys;
+    Before.GetKeys(Keys);
+    for (const TPair<FString, double>& Pair : After)
+    {
+        if (!Before.Contains(Pair.Key)) Keys.Add(Pair.Key);
+    }
+    Keys.Sort();
+
+    for (const FString& Key : Keys)
+    {
+        const double* BeforeValue = Before.Find(Key);
+        const double* AfterValue = After.Find(Key);
+        if (BeforeValue == nullptr && AfterValue != nullptr)
+        {
+            OutChanges.Add(FString::Printf(
+                TEXT("曲线 %s = %.4f"),
+                *Key,
+                *AfterValue));
+        }
+        else if (BeforeValue != nullptr && AfterValue == nullptr)
+        {
+            OutChanges.Add(FString::Printf(
+                TEXT("曲线 %s 已移除（原值 %.4f）"),
+                *Key,
+                *BeforeValue));
+        }
+        else if (BeforeValue != nullptr
+            && AfterValue != nullptr
+            && !FMath::IsNearlyEqual(*BeforeValue, *AfterValue, KINDA_SMALL_NUMBER))
+        {
+            OutChanges.Add(FString::Printf(
+                TEXT("曲线 %s: %.4f → %.4f"),
+                *Key,
+                *BeforeValue,
+                *AfterValue));
+        }
+    }
+}
+
+/**
+ * 生成当前快照相对上一快照的完整中文变化明细，供摘要生成、悬停和搜索。
+ * 可在任意线程调用；Previous 可为空表示首帧，Current 为空时返回“无效快照”。
+ *
+ * @param Previous 排序后的上一帧，可为空。
+ * @param Current 当前帧，可为空。
+ * @return 以中文分号分隔的确定性变化描述。
+ */
+FString BuildChangeDetails(
+    const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Previous,
+    const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Current)
+{
+    if (!Current.IsValid()) return TEXT("无效快照");
+
+    const FFrameFacts CurrentFacts = BuildFrameFacts(Current);
+    TArray<FString> Changes;
+    if (!Previous.IsValid())
+    {
+        Changes.Add(TEXT("开始记录"));
+        TArray<FString> StateNames;
+        CurrentFacts.States.GetKeys(StateNames);
+        StateNames.Sort();
+        for (const FString& StateName : StateNames)
+        {
+            Changes.Add(FString::Printf(
+                TEXT("当前状态 %s = %s"),
+                *StateName,
+                *CurrentFacts.States[StateName]));
+        }
+        TArray<FString> AnimationNames;
+        for (const FString& AnimationName : CurrentFacts.Animations)
+        {
+            AnimationNames.Add(AnimationName);
+        }
+        AnimationNames.Sort();
+        for (const FString& AnimationName : AnimationNames)
+        {
+            Changes.Add(TEXT("当前动画 ") + AnimationName);
+        }
+        return FString::Join(Changes, TEXT("；"));
+    }
+
+    const FFrameFacts PreviousFacts = BuildFrameFacts(Previous);
+    TArray<FString> StateNames;
+    PreviousFacts.States.GetKeys(StateNames);
+    for (const TPair<FString, FString>& Pair : CurrentFacts.States)
+    {
+        if (!PreviousFacts.States.Contains(Pair.Key)) StateNames.Add(Pair.Key);
+    }
+    StateNames.Sort();
+    for (const FString& StateName : StateNames)
+    {
+        const FString* BeforeState = PreviousFacts.States.Find(StateName);
+        const FString* AfterState = CurrentFacts.States.Find(StateName);
+        if (BeforeState == nullptr && AfterState != nullptr)
+        {
+            Changes.Add(FString::Printf(
+                TEXT("状态 %s: <无> → %s"),
+                *StateName,
+                **AfterState));
+        }
+        else if (BeforeState != nullptr && AfterState == nullptr)
+        {
+            Changes.Add(FString::Printf(
+                TEXT("状态 %s: %s → <无>"),
+                *StateName,
+                **BeforeState));
+        }
+        else if (BeforeState != nullptr
+            && AfterState != nullptr
+            && *BeforeState != *AfterState)
+        {
+            Changes.Add(FString::Printf(
+                TEXT("状态 %s: %s → %s"),
+                *StateName,
+                **BeforeState,
+                **AfterState));
+        }
+    }
+
+    TArray<FString> AnimationNames;
+    for (const FString& AnimationName : CurrentFacts.Animations)
+    {
+        if (!PreviousFacts.Animations.Contains(AnimationName))
+        {
+            AnimationNames.Add(AnimationName);
+        }
+    }
+    AnimationNames.Sort();
+    for (const FString& AnimationName : AnimationNames)
+    {
+        Changes.Add(TEXT("动画开始 ") + AnimationName);
+    }
+    AnimationNames.Reset();
+    for (const FString& AnimationName : PreviousFacts.Animations)
+    {
+        if (!CurrentFacts.Animations.Contains(AnimationName))
+        {
+            AnimationNames.Add(AnimationName);
+        }
+    }
+    AnimationNames.Sort();
+    for (const FString& AnimationName : AnimationNames)
+    {
+        Changes.Add(TEXT("动画结束 ") + AnimationName);
+    }
+
+    if (PreviousFacts.ActiveNodeCount != CurrentFacts.ActiveNodeCount)
+    {
+        Changes.Add(FString::Printf(
+            TEXT("活跃节点 %d → %d"),
+            PreviousFacts.ActiveNodeCount,
+            CurrentFacts.ActiveNodeCount));
+    }
+    AppendStringMapChanges(
+        TEXT("变量"),
+        Previous->Variables,
+        Current->Variables,
+        Changes);
+    AppendCurveChanges(
+        Previous->Curves,
+        Current->Curves,
+        Changes);
+
+    TArray<FString> TransitionIds;
+    PreviousFacts.TransitionResults.GetKeys(TransitionIds);
+    for (const TPair<FString, bool>& Pair : CurrentFacts.TransitionResults)
+    {
+        if (!PreviousFacts.TransitionResults.Contains(Pair.Key))
+        {
+            TransitionIds.Add(Pair.Key);
+        }
+    }
+    TransitionIds.Sort();
+    for (const FString& TransitionId : TransitionIds)
+    {
+        const bool* BeforeResult =
+            PreviousFacts.TransitionResults.Find(TransitionId);
+        const bool* AfterResult =
+            CurrentFacts.TransitionResults.Find(TransitionId);
+        if (AfterResult == nullptr) continue;
+        if (BeforeResult == nullptr || *BeforeResult != *AfterResult)
+        {
+            Changes.Add(FString::Printf(
+                TEXT("Transition %s: %s → %s"),
+                *TransitionId,
+                BeforeResult == nullptr
+                    ? TEXT("<无>")
+                    : (*BeforeResult ? TEXT("通过") : TEXT("未通过")),
+                *AfterResult ? TEXT("通过") : TEXT("未通过")));
+        }
+    }
+
+    return Changes.IsEmpty()
+        ? TEXT("与上一快照相比无可见变化")
+        : FString::Join(Changes, TEXT("；"));
+}
+
+struct FChangeTitleCandidate
+{
+    FString Title; // 面向用户的具体变化
+    int32 EffectiveDepth = MAX_int32; // 到 Root 的有效深度
+    int32 SemanticPriority = MAX_int32; // 同深度时的语义优先级
+};
+
+/** 返回节点是否只是最终 Root 容器；Root 自身不作为变化标题。 */
+bool IsRootContainer(const FNodeFact& NodeFact)
+{
+    return NodeFact.NodeType.Contains(
+        TEXT("Root"),
+        ESearchCase::IgnoreCase);
+}
+
+/**
+ * 用更靠近 Root、同深度语义更明确的候选替换当前标题。
+ * 可在任意线程调用；Title 为空的候选被忽略，OutCandidate 原地更新。
+ *
+ * @param Title 具体变化标题。
+ * @param EffectiveDepth 变化影响到 Root 的最短节点深度，越小越重要。
+ * @param SemanticPriority 同深度优先级，Montage/Slot 小于状态机和普通节点。
+ * @param OutCandidate 当前最佳候选。
+ */
+void ConsiderTitleCandidate(
+    const FString& Title,
+    const int32 EffectiveDepth,
+    const int32 SemanticPriority,
+    FChangeTitleCandidate& OutCandidate)
+{
+    if (Title.IsEmpty()) return;
+    const bool bIsBetter =
+        EffectiveDepth < OutCandidate.EffectiveDepth
+        || (EffectiveDepth == OutCandidate.EffectiveDepth
+            && SemanticPriority < OutCandidate.SemanticPriority)
+        || (EffectiveDepth == OutCandidate.EffectiveDepth
+            && SemanticPriority == OutCandidate.SemanticPriority
+            && (OutCandidate.Title.IsEmpty()
+                || Title.Compare(OutCandidate.Title) < 0));
+    if (!bIsBetter) return;
+
+    OutCandidate.Title = Title;
+    OutCandidate.EffectiveDepth = EffectiveDepth;
+    OutCandidate.SemanticPriority = SemanticPriority;
+}
+
+/**
+ * 为节点进入或离开活跃输出层级生成具体标题，Montage 会显示所属 Slot。
+ * 可在任意线程调用；Root 容器返回空字符串。
+ *
+ * @param NodeFact 节点离散事实。
+ * @param bStarted true 表示节点开始参与输出，false 表示结束。
+ * @return 面向用户的具体节点变化标题。
+ */
+FString BuildNodePresenceTitle(
+    const FNodeFact& NodeFact,
+    const bool bStarted)
+{
+    if (IsRootContainer(NodeFact)) return FString();
+    const bool bIsMontage = NodeFact.NodeType.Contains(
+        TEXT("Montage"),
+        ESearchCase::IgnoreCase);
+    const bool bIsSlot = NodeFact.NodeType.Contains(
+        TEXT("Slot"),
+        ESearchCase::IgnoreCase);
+    if (bIsMontage && !NodeFact.ParentSlotName.IsEmpty())
+    {
+        return FString::Printf(
+            TEXT("Slot %s：Montage %s %s"),
+            *NodeFact.ParentSlotName,
+            bStarted ? TEXT("开始") : TEXT("结束"),
+            *NodeFact.DisplayName);
+    }
+    if (bIsMontage)
+    {
+        return FString::Printf(
+            TEXT("Montage %s：%s"),
+            bStarted ? TEXT("开始") : TEXT("结束"),
+            *NodeFact.DisplayName);
+    }
+    if (!NodeFact.CurrentState.IsEmpty())
+    {
+        return FString::Printf(
+            TEXT("%s：%s %s"),
+            *NodeFact.DisplayName,
+            bStarted ? TEXT("进入") : TEXT("离开"),
+            *NodeFact.CurrentState);
+    }
+    if (!NodeFact.AnimationName.IsEmpty())
+    {
+        return FString::Printf(
+            TEXT("动画%s：%s"),
+            bStarted ? TEXT("开始") : TEXT("结束"),
+            *NodeFact.AnimationName);
+    }
+    if (bIsSlot)
+    {
+        return FString::Printf(
+            TEXT("Slot %s %s参与输出"),
+            *NodeFact.DisplayName,
+            bStarted ? TEXT("开始") : TEXT("结束"));
+    }
+    return FString::Printf(
+        TEXT("%s %s参与输出"),
+        *NodeFact.DisplayName,
+        bStarted ? TEXT("开始") : TEXT("结束"));
+}
+
+/**
+ * 选择当前帧相对上一帧最靠近 Root 的具体节点变化作为卡片标题。
+ * Montage 使用所属 Slot 深度参与比较，因此近 Root 的 Slot/Montage 会优先于深层状态机。
+ * 节点没有离散变化时依次回退 Transition、变量、曲线和采样原因。
+ *
+ * @param Previous 排序后的上一帧，首帧可为空。
+ * @param Current 当前帧，可为空。
+ * @param ChangeDetails 已生成的完整变化明细。
+ * @return 不使用泛化“状态变化”占位的具体标题。
+ */
+FString BuildChangeTitle(
+    const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Previous,
+    const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Current,
+    const FString& ChangeDetails)
+{
+    if (!Current.IsValid()) return TEXT("无效快照");
+
+    const FFrameFacts CurrentFacts = BuildFrameFacts(Current);
+    FChangeTitleCandidate BestCandidate;
+    if (!Previous.IsValid())
+    {
+        for (const TPair<FString, FNodeFact>& Pair : CurrentFacts.Nodes)
+        {
+            const FNodeFact& NodeFact = Pair.Value;
+            const FString PresenceTitle = BuildNodePresenceTitle(
+                NodeFact,
+                true);
+            ConsiderTitleCandidate(
+                PresenceTitle.IsEmpty()
+                    ? FString()
+                    : TEXT("开始记录：") + PresenceTitle,
+                NodeFact.EffectiveDepth,
+                0,
+                BestCandidate);
+        }
+        return BestCandidate.Title.IsEmpty()
+            ? TEXT("开始记录")
+            : BestCandidate.Title;
+    }
+
+    const FFrameFacts PreviousFacts = BuildFrameFacts(Previous);
+    TArray<FString> NodeKeys;
+    PreviousFacts.Nodes.GetKeys(NodeKeys);
+    for (const TPair<FString, FNodeFact>& Pair : CurrentFacts.Nodes)
+    {
+        if (!PreviousFacts.Nodes.Contains(Pair.Key)) NodeKeys.Add(Pair.Key);
+    }
+    NodeKeys.Sort();
+
+    for (const FString& NodeKey : NodeKeys)
+    {
+        const FNodeFact* BeforeNode = PreviousFacts.Nodes.Find(NodeKey);
+        const FNodeFact* AfterNode = CurrentFacts.Nodes.Find(NodeKey);
+        if (BeforeNode == nullptr && AfterNode != nullptr)
+        {
+            const int32 Priority = AfterNode->NodeType.Contains(
+                TEXT("Montage"),
+                ESearchCase::IgnoreCase)
+                    || AfterNode->NodeType.Contains(
+                        TEXT("Slot"),
+                        ESearchCase::IgnoreCase)
+                ? 0
+                : 3;
+            ConsiderTitleCandidate(
+                BuildNodePresenceTitle(*AfterNode, true),
+                AfterNode->EffectiveDepth,
+                Priority,
+                BestCandidate);
+            continue;
+        }
+        if (BeforeNode != nullptr && AfterNode == nullptr)
+        {
+            const int32 Priority = BeforeNode->NodeType.Contains(
+                TEXT("Montage"),
+                ESearchCase::IgnoreCase)
+                    || BeforeNode->NodeType.Contains(
+                        TEXT("Slot"),
+                        ESearchCase::IgnoreCase)
+                ? 0
+                : 3;
+            ConsiderTitleCandidate(
+                BuildNodePresenceTitle(*BeforeNode, false),
+                BeforeNode->EffectiveDepth,
+                Priority,
+                BestCandidate);
+            continue;
+        }
+        if (BeforeNode == nullptr || AfterNode == nullptr) continue;
+
+        if (BeforeNode->CurrentState != AfterNode->CurrentState
+            && (!BeforeNode->CurrentState.IsEmpty()
+                || !AfterNode->CurrentState.IsEmpty()))
+        {
+            ConsiderTitleCandidate(
+                FString::Printf(
+                    TEXT("%s：%s → %s"),
+                    *AfterNode->DisplayName,
+                    BeforeNode->CurrentState.IsEmpty()
+                        ? TEXT("<无>")
+                        : *BeforeNode->CurrentState,
+                    AfterNode->CurrentState.IsEmpty()
+                        ? TEXT("<无>")
+                        : *AfterNode->CurrentState),
+                FMath::Min(
+                    BeforeNode->EffectiveDepth,
+                    AfterNode->EffectiveDepth),
+                1,
+                BestCandidate);
+        }
+        if (BeforeNode->AnimationName != AfterNode->AnimationName
+            && (!BeforeNode->AnimationName.IsEmpty()
+                || !AfterNode->AnimationName.IsEmpty()))
+        {
+            const bool bIsMontage = AfterNode->NodeType.Contains(
+                TEXT("Montage"),
+                ESearchCase::IgnoreCase);
+            const FString TitlePrefix = bIsMontage
+                && !AfterNode->ParentSlotName.IsEmpty()
+                    ? TEXT("Slot ") + AfterNode->ParentSlotName
+                        + TEXT("：Montage")
+                    : TEXT("动画");
+            ConsiderTitleCandidate(
+                FString::Printf(
+                    TEXT("%s：%s → %s"),
+                    *TitlePrefix,
+                    BeforeNode->AnimationName.IsEmpty()
+                        ? TEXT("<无>")
+                        : *BeforeNode->AnimationName,
+                    AfterNode->AnimationName.IsEmpty()
+                        ? TEXT("<无>")
+                        : *AfterNode->AnimationName),
+                FMath::Min(
+                    BeforeNode->EffectiveDepth,
+                    AfterNode->EffectiveDepth),
+                bIsMontage ? 0 : 2,
+                BestCandidate);
+        }
+    }
+    if (!BestCandidate.Title.IsEmpty()) return BestCandidate.Title;
+
+    TArray<FString> Details;
+    ChangeDetails.ParseIntoArray(Details, TEXT("；"), true);
+    const TArray<FString> Prefixes =
+    {
+        TEXT("Transition "),
+        TEXT("变量 "),
+        TEXT("曲线 "),
+        TEXT("活跃节点 "),
+    };
+    for (const FString& Prefix : Prefixes)
+    {
+        for (const FString& Detail : Details)
+        {
+            if (Detail.StartsWith(Prefix)) return Detail;
+        }
+    }
+    return Current->CaptureReason.Equals(
+        TEXT("Interval"),
+        ESearchCase::IgnoreCase)
+            ? TEXT("定时采样：没有关键节点变化")
+            : TEXT("动画输出层级发生变化");
+}
+
+/**
+ * 把完整变化明细压缩为左侧列表的一句中文摘要，优先展示状态和动画，其余用数量概括。
+ * 可在任意线程调用；ChangeDetails 允许为空。返回始终以中文句号结束的非空句子。
+ *
+ * @param ChangeDetails 以中文分号分隔的完整变化明细。
+ * @return 最多展示两个代表变化的一句话摘要。
+ */
+FString BuildChangeDescription(const FString& ChangeDetails)
+{
+    if (ChangeDetails.IsEmpty())
+    {
+        return TEXT("本次记录没有可见变化。");
+    }
+
+    TArray<FString> Details;
+    ChangeDetails.ParseIntoArray(Details, TEXT("；"), true);
+    if (Details.IsEmpty()) return TEXT("本次记录没有可见变化。");
+
+    TArray<FString> SummaryParts;
+    if (Details[0] == TEXT("开始记录"))
+    {
+        SummaryParts.Add(TEXT("开始记录"));
+        for (const FString& Detail : Details)
+        {
+            if (SummaryParts.Num() >= 3) break;
+            if (Detail.StartsWith(TEXT("当前状态 "))
+                || Detail.StartsWith(TEXT("当前动画 ")))
+            {
+                SummaryParts.Add(Detail);
+            }
+        }
+    }
+    else
+    {
+        for (const FString& Detail : Details)
+        {
+            if (Detail.StartsWith(TEXT("状态 "))
+                || Detail.StartsWith(TEXT("动画开始 "))
+                || Detail.StartsWith(TEXT("动画结束 ")))
+            {
+                SummaryParts.Add(Detail);
+                if (SummaryParts.Num() >= 2) break;
+            }
+        }
+        for (const FString& Detail : Details)
+        {
+            if (SummaryParts.Num() >= 2) break;
+            if (!SummaryParts.Contains(Detail)) SummaryParts.Add(Detail);
+        }
+    }
+
+    const int32 HiddenChangeCount = FMath::Max(
+        0,
+        Details.Num() - SummaryParts.Num());
+    FString Summary = FString::Join(SummaryParts, TEXT("，"));
+    if (HiddenChangeCount > 0)
+    {
+        Summary += FString::Printf(
+            TEXT("，另有 %d 项变化"),
+            HiddenChangeCount);
+    }
+    if (!Summary.EndsWith(TEXT("。"))) Summary += TEXT("。");
+    return Summary;
+}
 }
 
 /**
@@ -308,7 +1080,7 @@ bool FSekiroLuaAnimSnapshotLoader::LoadFile(
  *
  * @param JsonLines 完整 JSONL 文本，允许空行以及 LF/CRLF 混用。
  * @param SourceLabel 用于文档来源和警告的可读标签，不要求是有效路径。
- * @param OutDocument 输出文档；调用时会完全重置并按相对秒、UTC、FrameIndex 稳定排序。
+ * @param OutDocument 输出文档；调用时会重置、稳定排序，并生成每帧相对上一帧的变化描述。
  */
 void FSekiroLuaAnimSnapshotLoader::ParseJsonLines(
     const FString& JsonLines,
@@ -353,4 +1125,29 @@ void FSekiroLuaAnimSnapshotLoader::ParseJsonLines(
         if (UtcOrder != 0) return UtcOrder < 0;
         return Left->FrameIndex < Right->FrameIndex;
     });
+
+    for (int32 FrameArrayIndex = 0;
+        FrameArrayIndex < OutDocument.Frames.Num();
+        ++FrameArrayIndex)
+    {
+        const TSharedPtr<FSekiroLuaAnimSnapshotFrame> PreviousFrame =
+            FrameArrayIndex > 0
+                ? OutDocument.Frames[FrameArrayIndex - 1]
+                : nullptr;
+        if (OutDocument.Frames[FrameArrayIndex].IsValid())
+        {
+            OutDocument.Frames[FrameArrayIndex]->ChangeDetails =
+                SekiroLuaAnimSnapshotLoaderPrivate::BuildChangeDetails(
+                    PreviousFrame,
+                    OutDocument.Frames[FrameArrayIndex]);
+            OutDocument.Frames[FrameArrayIndex]->ChangeTitle =
+                SekiroLuaAnimSnapshotLoaderPrivate::BuildChangeTitle(
+                    PreviousFrame,
+                    OutDocument.Frames[FrameArrayIndex],
+                    OutDocument.Frames[FrameArrayIndex]->ChangeDetails);
+            OutDocument.Frames[FrameArrayIndex]->ChangeDescription =
+                SekiroLuaAnimSnapshotLoaderPrivate::BuildChangeDescription(
+                    OutDocument.Frames[FrameArrayIndex]->ChangeDetails);
+        }
+    }
 }

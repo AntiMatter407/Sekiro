@@ -19,14 +19,22 @@ public:
 
     void Construct(const FArguments& InArgs);
 
+#if WITH_DEV_AUTOMATION_TESTS
+    static bool DoesFrameMatchSearchForTesting(
+        const TSharedPtr<FSekiroLuaAnimSnapshotFrame>& Frame,
+        const FString& SearchText);
+#endif
+
 private:
     FReply HandleOpenFile();
     FReply HandleRefresh();
     FReply HandleLoadLatest();
     FReply HandleFitAll();
     FReply HandleResetView();
+    void HandleFrameSearchChanged(const FText& SearchText);
     void LoadFile(const FString& FilePath);
     FString FindLatestSnapshotFile() const;
+    void RefreshFrameFilter();
     void SelectFrameByArrayIndex(int32 FrameArrayIndex);
     void HandleTimelineSelection(int32 FrameArrayIndex);
     void HandleFrameSelectionChanged(
@@ -52,8 +60,11 @@ private:
     FString BuildTransitionDetails() const;
 
     FSekiroLuaAnimSnapshotDocument Document; // 当前文件的全部可用帧与解析警告
+    TArray<TSharedPtr<FSekiroLuaAnimSnapshotFrame>> FilteredFrames; // 左侧搜索后的快照引用
+    FString FrameSearchText; // 当前左侧快照搜索词
     int32 SelectedFrameArrayIndex = INDEX_NONE; // 当前帧在 Document.Frames 中的下标
     TSharedPtr<FSekiroLuaAnimSnapshotNode> SelectedNode; // 当前层级树节点
+    TArray<TSharedPtr<FSekiroLuaAnimSnapshotNode>> NodeTreeRoots; // 当前帧供树控件稳定绑定的根节点
     TSharedPtr<SSekiroLuaAnimSnapshotTimeline> Timeline; // 主选择时间轴
     TSharedPtr<SListView<TSharedPtr<FSekiroLuaAnimSnapshotFrame>>> FrameList; // 无障碍辅助快照表
     TSharedPtr<STreeView<TSharedPtr<FSekiroLuaAnimSnapshotNode>>> NodeTree; // 当前帧节点层级树

@@ -8,6 +8,7 @@
 #include "Animation/Skeleton.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Input/SKInputManager.h"
 #include "UnLua.h"
 #include "UnLuaModule.h"
@@ -124,6 +125,20 @@ void USKCombatComponent::SetNextAttackSide(ESKAttackSide NewSide)
 bool USKCombatComponent::IsGuardHeld() const
 {
     return bGuardHeld;
+}
+
+/**
+ * 查询组件所属 Character 当前是否由 CharacterMovement 判定为 Falling。
+ * 本函数只做游戏线程只读查询，不修改移动模式，也不推断落地事件。
+ *
+ * @return 所属角色及移动组件有效且当前处于 Falling 移动模式时返回 true，否则返回 false。
+ */
+bool USKCombatComponent::IsOwnerFalling() const
+{
+    const ACharacter* Character = Cast<ACharacter>(GetOwner());
+    const UCharacterMovementComponent* MovementComponent =
+        Character ? Character->GetCharacterMovement() : nullptr;
+    return MovementComponent && MovementComponent->IsFalling();
 }
 
 /** 查询当前动作序列号；仅允许游戏线程读取。 */

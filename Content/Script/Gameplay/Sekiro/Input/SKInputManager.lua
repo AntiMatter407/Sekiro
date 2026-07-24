@@ -435,9 +435,21 @@ function SKInputManager:OnLook(input_x, input_y)
     return true
 end
 
----处理跳跃按下：缓存起跳前蹲姿、必要时解除蹲姿，然后请求 Character Jump。
+---处理跳跃按下：先由战斗状态机裁决取消窗口，再缓存起跳姿态并请求 Character Jump。
 ---@return boolean handled 始终返回 true，表示跳跃按下已处理。
 function SKInputManager:OnJumpStarted()
+    local combat = self:GetOwnerCombatComponent()
+    local jump_allowed = true
+    local resume_air_guard = false
+    if combat ~= nil then
+        jump_allowed, resume_air_guard = combat:TryPrepareJump(
+            self:GetWorldTimeSecondsForScript())
+    end
+    if jump_allowed ~= true then
+        self:SetPressedFlag("Jump", false)
+        return true
+    end
+
     self:SetPressedFlag("Jump", true)
     self:AddBufferedInput("Jump", 5, 0.1)
     -- UE 默认禁止蹲姿胶囊直接 Jump；先解除物理蹲伏，AnimInstance 会保留起跳前姿态供 Lua 选择 Crouch_Jump_Start。
@@ -468,6 +480,11 @@ function SKInputManager:OnJumpStarted()
     self:SetOwnerAnimRootMotionIgnored(true)
     self:SetHorizontalVelocityFromScreen(jump_x, jump_y, jump_speed)
     self:JumpOwner()
+    if resume_air_guard == true
+        and combat ~= nil
+        and self:IsGuardHeld() == true then
+        combat:StartGuardRaise(true)
+    end
     return true
 end
 

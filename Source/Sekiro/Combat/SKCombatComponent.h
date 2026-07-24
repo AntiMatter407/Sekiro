@@ -50,6 +50,10 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
     bool IsGuardHeld() const;
 
+    /** 查询所属角色当前是否处于 Falling 移动模式。 */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
+    bool IsOwnerFalling() const;
+
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
     int32 GetActionSerial() const;
 

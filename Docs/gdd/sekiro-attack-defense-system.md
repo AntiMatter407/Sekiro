@@ -1,6 +1,6 @@
 # 角色攻击防御系统需求
 
-> **状态**：草案
+> **状态**：动画动作原型已实现，碰撞与伤害阶段待设计
 > **创建日期**：2026-07-22
 > **当前阶段**：玩家角色动画动作原型；AI、碰撞、伤害和真实命中来源后续接入
 > **技术设计**：[角色攻击防御系统技术设计](../design/sekiro-attack-defense-system.md)
@@ -14,32 +14,52 @@
 - `ASKWeapon` 已具备攻击碰撞开关和单次攻击命中去重能力，但当前动画动作阶段不接入该能力。
 - `ABP_Sekiro.lua` 已支持 Root Motion、移动状态机和上半身武器 Slot。
 
-当前缺少统一的战斗动作状态机、动画曲线消费者、左右攻击侧管理、轻重攻击分流，以及防御键驱动的弹反动画闭环。项目尚未实现可稳定发起攻击的 AI，也暂不接入碰撞和伤害，因此本阶段使用可控的“模拟来袭上下文”代替真实命中来源，先验证玩家攻击、防御和弹反动画行为。
+当前已经接入统一的战斗动作状态机、左右刀侧管理、轻重攻击分流，以及防御键驱动的弹反动画闭环。项目尚未实现可稳定发起攻击的 AI，也暂不接入碰撞和伤害，因此本阶段使用可控的“模拟来袭上下文”代替真实命中来源，先验证玩家攻击、防御和弹反动画行为。
 
 ## 二、目标
 
-1. 使用已有动画资产完成轻攻击、重攻击、防御和弹反的动画动作闭环。
-2. 轻攻击按照固定动作链推进，所有续段均由动画窗口和有效输入共同决定。
-3. 重攻击由攻击键长按触发，具有左右侧，并可在自己的输入窗口内继续重攻击或转回轻攻击连段。
-4. 攻击左右侧由动画曲线提交，运行时保留当前攻击侧和下一攻击侧两个独立状态。
+1. 使用已有动画资产完成地面/空中/落地轻攻击、重攻击、防御和弹反的动画动作闭环。
+2. 轻攻击按照 `Right -> Left -> Combo_01 -> Combo_02 -> Combo_03` 固定动作链推进；续段只能在当前动画的 `CanAcceptLightAttack` 窗口内登记。
+3. 重攻击由攻击键长按触发，当前攻击侧在动画的不可打断区间保持不变；动画结束后不保留额外宽限。
+4. 当前攻击侧与下一攻击侧分离；`AttackSide` 只在 `CanCancelToGuard` 已开放的恢复阶段提交下一侧，不覆盖本动作的当前攻击侧。
 5. 弹反只能由“有效来袭期间的新防御按下边沿”触发；没有来袭时按防御只进入普通防御。
 6. 不同来袭攻击类型通过配置选择不同的弹反 Type，连续弹反阶段选择对应 Stage 动画。
 7. C++ 只提供通用动作宿主、动画采样、输入事件和来袭上下文接口，Lua 负责具体动作编排与弹反动画选择。
+8. Falling 状态从 `Air_Combo_01` 开始空中三连；活动空中攻击落地时立即进入同编号 `Land_Combo`，不影响没有攻击的普通 Jump Land。
+9. 跳跃输入必须经过战斗状态仲裁：地面攻击只在 `CanCancelToJump` 窗口内允许，普通防御可以直接取消并在持续按住时转入空中防御。
 
 ## 三、范围
 
 ### 3.1 本期范围
 
 - 地面轻攻击五段链。
+- 空中轻攻击三段链，以及活动空中攻击落地时的同编号落地攻击。
+- 落地轻攻击三段链。
 - 左右重攻击及重攻击连续衔接。
 - 重攻击转回轻攻击链。
-- 动画曲线驱动的攻击侧切换和输入窗口；`AttackHitbox` 可登记但本阶段不消费。
+- 动画曲线驱动的攻击侧提交、轻重攻击输入窗口和普通防御取消窗口。
 - 攻击输入的短按、长按和窗口内有效性判定。
 - 主动防御、持续防御和防御释放动画。
+- 攻击首尾跳跃取消窗口，以及地面防御跳跃后的空中 Raise/Idle/Lower。
 - 有效来袭期间由防御键新按下触发的弹反动画。
 - 来袭攻击类型到 `AnimAssets.Deflect.Type_*_Stage_*` 的可配置映射。
 - 无 AI、无碰撞条件下可由 PIE/AIBridge 调用的模拟来袭测试接口。
 - 动画自然结束、弹反或主动取消导致的动作中断与状态清理。
+
+### 3.1.1 当前动画原型规则优先级
+
+本节是当前可执行验收基线。战斗曲线来自原始 TAE 帧区间，并直接写入活动 `UAnimSequence`。
+
+- 普通防御只在 `CanCancelToGuard=1` 时打断攻击；曲线为零的中段必须保持当前攻击侧且完整播放。
+- 弹反仍由防御键触发，并且只有成功消费有效来袭上下文时才可以无视上述普通防御打断限制。
+- 下一段攻击只能在动画内的 `CanAcceptLightAttack` 或 `CanAcceptHeavyAttack` 窗口触发；轻重判定完成后立即混合到下一动作，不等待当前动画的恢复段结束。
+- 动画结束后没有连段或刀侧宽限；无已登记续段时立即清空连段并恢复默认右侧。
+- `AttackSide` 只更新下一攻击侧，当前攻击的 `CommittedAttackSide` 在整段动作中不被曲线修改。
+- Guard 和当前阶段 Deflect 的刀侧统一为左侧；Guard Lower 完整结束或 Deflect 退出后恢复默认右侧。
+- 空中和落地连段的长按输入统一按轻攻击处理，不能切换到重攻击；第三段为终结段。
+- 空中/落地动作首版不写 `AttackSide`，沿用动作开始时刀侧；后续视觉核验后再补充侧向曲线。
+- Ground/Land 攻击只有 `CanCancelToJump=1` 时允许起跳；Air 攻击和其他战斗状态禁用跳跃。
+- `GuardRaise/Guarding/GuardLower` 可直接取消到 Jump；防御键持续按住时，Jump 后依次使用 `Air_Raise -> Air_Idle`，释放时使用 `Air_Lower`。
 
 ### 3.2 后续范围
 
@@ -47,7 +67,6 @@
 - 武器碰撞、连续刀刃 Sweep 和真实命中事件。
 - 格挡判定、防御方向、不可防御攻击和闪避裁决。
 - HP、架势、伤害、硬直及攻击方回弹。
-- 空中三连与落地攻击衔接。
 - 危字攻击、识破、踩踏和投技。
 - 忍杀、死亡与回生演出。
 - 战技、义手忍具和道具取消链。
@@ -77,6 +96,8 @@
 | 第一段右侧轻攻击 | `AnimAssets.Attack.Right` |
 | 第二段左侧轻攻击 | `AnimAssets.Attack.Left` |
 | 后续轻攻击 | `AnimAssets.Attack.Combo_01`、`Combo_02`、`Combo_03` |
+| 空中轻攻击 | `AnimAssets.Attack.Air_Combo_01`、`Air_Combo_02`、`Air_Combo_03` |
+| 落地轻攻击 | `AnimAssets.Attack.Land_Combo_01`、`Land_Combo_02`、`Land_Combo_03` |
 | 右侧重攻击 | `AnimAssets.Attack.Charged_Thrust_Right` |
 | 左侧重攻击 | `AnimAssets.Attack.Charged_Thrust_Left` |
 | 防御起手/循环/结束 | `AnimAssets.Guard.Raise`、`Idle`、`Move_*`、`Lower` |
@@ -105,6 +126,16 @@ Right -> Left -> Combo_01 -> Combo_02 -> Combo_03 -> End
 - **REQ-ATK-005**：窗口关闭且没有有效续段输入时，当前动画允许自然收招，本轮连段结束。
 - **REQ-ATK-006**：连段结束后的下一次轻攻击重新从 `Right` 开始，不从上次中断位置恢复。
 - **REQ-ATK-007**：`Combo_03` 不允许继续轻攻击，播放完成后强制结束连段。
+
+### 6.3 空中与落地攻击
+
+- **REQ-AIR-001**：Neutral 且 CharacterMovement 处于 Falling 时，攻击输入必须从 `Air_Combo_01` 开始。
+- **REQ-AIR-002**：空中链固定为 `Air_Combo_01 -> Air_Combo_02 -> Air_Combo_03 -> End`，只在 `CanAcceptLightAttack` 窗口内续段。
+- **REQ-AIR-003**：活动 `Air_Combo_01~03` 检测到落地时，必须立即切换到同编号 `Land_Combo_01~03`。
+- **REQ-AIR-004**：没有活动空中攻击时，落地不得启动战斗 Montage，继续使用原有 Jump Land。
+- **REQ-AIR-005**：落地链固定为 `Land_Combo_01 -> Land_Combo_02 -> Land_Combo_03 -> End`。
+- **REQ-AIR-006**：空中和落地动作均不允许重攻击；长按只要在轻攻击窗口内开始，仍解析为下一段轻攻击。
+- **REQ-AIR-007**：落地转换必须清除尚未释放的空中攻击候选，避免旧输入跨动作执行。
 
 ## 七、重攻击需求
 
@@ -181,6 +212,7 @@ Right -> Left -> Combo_01 -> Combo_02 -> Combo_03 -> End
 | `CanAcceptLightAttack` | int bool | 接受轻攻击续段。 |
 | `CanAcceptHeavyAttack` | int bool | 接受长按重攻击。 |
 | `CanCancelToGuard` | int bool | 允许攻击方主动切入防御。 |
+| `CanCancelToJump` | int bool | 允许地面攻击取消到物理跳跃。 |
 | `CanCancelToDodge` | int bool | 允许攻击方主动切入闪避。 |
 
 - **REQ-WIN-001**：各窗口必须由动画曲线提供，不得使用统一的 `0.5s` 连段超时替代。
@@ -197,6 +229,17 @@ Right -> Left -> Combo_01 -> Combo_02 -> Combo_03 -> End
 - **REQ-DEF-002**：持续按住防御进入 `Guard.Idle` 或四向 `Guard.Move_*`。
 - **REQ-DEF-003**：释放防御播放 `Guard.Lower`，结束机械防御状态。
 - **REQ-DEF-004**：攻击方主动从轻攻击或重攻击切入防御时，必须满足当前动画的 `CanCancelToGuard`。
+- **REQ-DEF-005**：普通防御的 Raise、Guarding 和 Lower 阶段都允许 Jump；执行顺序必须为清理地面防御、请求物理 Jump、按 Held 状态决定是否进入空中防御。
+- **REQ-DEF-006**：防御键在 Jump 后仍按住时播放 `Guard.Air_Raise`，随后使用 `Guard.Air_Idle`；空中释放时播放 `Guard.Air_Lower`。
+- **REQ-DEF-007**：防御键在起跳后已经释放时不得自动进入空中防御。
+
+### 10.2 跳跃取消
+
+- **REQ-JUMP-001**：Neutral 状态保持原有 Jump 行为。
+- **REQ-JUMP-002**：Ground/Land 轻重攻击只在输入事件时间采样到 `CanCancelToJump >= 0.5` 时允许 Jump。
+- **REQ-JUMP-003**：合法 Jump 必须停止当前 Montage、使旧 ActionSerial 失效并清理连段候选。
+- **REQ-JUMP-004**：攻击中段、Air 攻击、PendingAttack、Deflect 和 Dodge 状态必须吞掉 Jump Started。
+- **REQ-JUMP-005**：原始 JT119 缺少首段窗口的 `Left`、`Combo_01` 和 Land 动作统一补前 `0.10s` 跳跃取消窗口。
 
 ### 10.2 当前阶段弹反触发
 

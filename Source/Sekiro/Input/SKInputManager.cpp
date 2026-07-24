@@ -610,6 +610,18 @@ float USKInputManager::GetWorldTimeSecondsForScript() const
 	return GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 }
 
+/**
+ * 查询与输入组件属于同一 Actor 的战斗动作宿主，供 Lua 在执行物理跳跃前完成动作仲裁。
+ * 本函数只在游戏线程执行组件查找，不创建组件、不缓存引用，也不改变战斗状态。
+ *
+ * @return 找到时返回由 Owner 持有的 USKCombatComponent；Owner 或组件不存在时返回 nullptr。
+ */
+USKCombatComponent* USKInputManager::GetOwnerCombatComponent() const
+{
+	AActor* Owner = GetOwner();
+	return Owner ? Owner->FindComponentByClass<USKCombatComponent>() : nullptr;
+}
+
 void USKInputManager::SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining)
 {
 	MoveIntent = FVector2D(InputX, InputY);

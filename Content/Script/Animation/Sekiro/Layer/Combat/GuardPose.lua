@@ -15,7 +15,7 @@ local MoveAssets = {
     Right = Anim.Move_Right,
 }
 
----构建静止/移动防御姿态选择；该层只负责持续 Pose，不播放 Raise、Lower 或 Deflect 一次性动作。
+---构建地面静止/移动与空中持续防御姿态选择；该层不播放 Raise、Lower 或 Deflect 一次性动作。
 ---@param Graph LuaAnimGraph 根动画图。
 ---@return LuaBlendListByBoolNode pose_node 防御持续姿态的最终节点。
 function GuardPose.Build(Graph)
@@ -33,7 +33,15 @@ function GuardPose.Build(Graph)
     selector.FalsePose:Connect(idle.Pose)
     selector.TruePose:Connect(move.Pose)
     selector.ActiveValue:Connect(has_movement_input.Value)
-    return selector
+
+    local air_idle = PoseSelectors.Sequence(Graph, "GuardAirIdle", Anim.Air_Idle, true, nil)
+    local is_in_air = Graph:Property("GuardIsInAir", "bIsInAir")
+    local air_selector = Graph:BlendListByBool("GuardGroundAirSelector")
+    air_selector.BlendTime = Tuning.Combat.GuardPoseBlendDuration
+    air_selector.FalsePose:Connect(selector.Pose)
+    air_selector.TruePose:Connect(air_idle.Pose)
+    air_selector.ActiveValue:Connect(is_in_air.Value)
+    return air_selector
 end
 
 return GuardPose

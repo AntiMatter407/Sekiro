@@ -49,6 +49,9 @@ struct FSekiroLuaAnimSnapshotFrame
     FString UtcTimestamp;
     double SessionElapsedSeconds = 0.0;
     FString CaptureReason;
+    FString ChangeTitle; // 最靠近 Root 的关键变化标题
+    FString ChangeDescription; // 左侧显示的一句话摘要
+    FString ChangeDetails; // 完整变化内容，供搜索和悬停
     FString AnimInstancePath;
     FString LuaModuleName;
     TMap<FString, FString> Variables;

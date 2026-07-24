@@ -7,6 +7,7 @@ local LayoutStyle = require("Animation.Compiler.LayoutStyle")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 local RootLocomotion = require("Animation.Sekiro.Layer.GroundLocomotion.Root")
 local GuardPose = require("Animation.Sekiro.Layer.Combat.GuardPose")
+local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 local Direction = require("Animation.Sekiro.Shared.Direction")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
@@ -101,7 +102,6 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("bJumpStartedCrouchedPose", "Bool", false)
     self:Variable("bWasInAir", "Bool", false)
     self:Variable("FootIKAlpha", "Float", 0.0)
-    self:Variable("WeaponHandIKAlpha", "Float", 0.0)
     self:Variable("bCombatGuardPose", "Bool", false)
     self:Variable("bCombatHasMovementInput", "Bool", false)
 end
@@ -159,8 +159,8 @@ function ABP_Sekiro:AnimGraph(Graph)
     local to_component = Graph:LocalToComponentSpace("SkeletalControlsLocalToComponent")
     to_component.LocalPose:Connect(combat_full_body_slot.Pose)
 
-    -- 挂点与刀身偏移反解得到收拔刀共用目标；WeaponManager 在 Montage 启动前发布权重，
-    -- 避免低帧率跨过窄曲线窗口时换挂帧仍读取到上一帧的零权重。
+    -- 挂点与刀身偏移反解得到收拔刀共用目标；Montage 曲线只在换挂帧附近平滑约束右手，
+    -- 动作前段保持零权重，让原始收拔刀动画完整驱动手臂接近刀柄。
     -- 关节目标引用输入姿势的右肘位置，保留原动画肘部弯曲方向；禁止拉伸以免改变手臂比例。
     local weapon_hand_ik = Graph:TwoBoneIK("WeaponHandIK")
     weapon_hand_ik.IKBone = weapon_ik.IKBone
@@ -170,11 +170,9 @@ function ABP_Sekiro:AnimGraph(Graph)
     weapon_hand_ik.JointTargetBoneName = weapon_ik.JointTargetBone
     weapon_hand_ik.bTakeRotationFromEffectorSpace = true
     weapon_hand_ik.bAllowStretching = false
-    weapon_hand_ik.AlphaInputType = "Float"
+    weapon_hand_ik.AlphaInputType = "Curve"
+    weapon_hand_ik.AlphaCurveName = CurveNames.WeaponHandIK
     weapon_hand_ik.ComponentPose:Connect(to_component.ComponentPose)
-
-    local weapon_hand_ik_alpha = Graph:Property("WeaponHandIKAlpha", "WeaponHandIKAlpha")
-    weapon_hand_ik.Alpha:Connect(weapon_hand_ik_alpha.Value)
 
     local foot_placement = Graph:FootPlacement("FootPlacement")
     foot_placement.IKFootRootBone = foot_ik.IKFootRootBone
@@ -225,7 +223,6 @@ function ABP_Sekiro:AnimGraph(Graph)
     main_flow:Place(combat_full_body_slot, 8, 0)
     main_flow:Place(to_component, 9, 0)
     main_flow:Place(weapon_hand_ik, 10, 0)
-    main_flow:Place(weapon_hand_ik_alpha, 10, 1)
     main_flow:Place(foot_placement, 11, 0)
     main_flow:Place(foot_ik_alpha, 11, 1)
     main_flow:Place(leg_ik, 12, 0)
