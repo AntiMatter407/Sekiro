@@ -75,6 +75,21 @@ function Direction.ClassifyCardinal(angle)
     return normalized_angle < 0 and Direction.Cardinal.Left or Direction.Cardinal.Right
 end
 
+---把前后、左右输入轴转换为角色局部方向角。
+---该入口用于 Dodge 以及锁定基础素材选区；实际轨迹对齐仍使用 Movement 发布的 MoveDirectionAngle。
+---@param forward_amount number|nil 前后输入分量，正数为前、负数为后。
+---@param lateral_amount number|nil 左右输入分量，正数为右、负数为左。
+---@return number direction_angle 输入向量对应的局部方向角；零向量回退为 0 度。
+function Direction.GetAngleFromAxes(forward_amount, lateral_amount)
+    local forward = forward_amount or 0
+    local lateral = lateral_amount or 0
+    if math.abs(forward) <= 0.001 and math.abs(lateral) <= 0.001 then
+        return 0
+    end
+
+    return Direction.NormalizeAngle(math.deg(math.atan(lateral, forward)))
+end
+
 ---把自由移动起步角分类为前向或最近的左右转身，永远不返回 Back。
 ---自由模式会由 Movement Lua 把角色转向输入世界方向；Back 素材表示身体朝前后退，只适用于锁定移动。
 ---@param angle number|nil Movement Lua 在旋转角色前锁存的局部移动角，单位为度。
@@ -94,43 +109,78 @@ end
 ---@param lateral_amount number|nil 左右输入分量，正数为右、负数为左。
 ---@return SekiroCardinalDirection direction 最接近输入向量的四方向枚举值；零向量回退为前向。
 function Direction.ClassifyCardinalFromAxes(forward_amount, lateral_amount)
-    local forward = forward_amount or 0
-    local lateral = lateral_amount or 0
-    if math.abs(forward) <= 0.001 and math.abs(lateral) <= 0.001 then
-        return Direction.Cardinal.Forward
-    end
-
-    return Direction.ClassifyCardinal(math.deg(math.atan(lateral, forward)))
+    return Direction.ClassifyCardinal(
+        Direction.GetAngleFromAxes(forward_amount, lateral_amount))
 end
 
----在四方向边界加入滞回，避免锁定环绕时因摇杆噪声或目标追踪导致左右 Sequence 反复切换。
+---按可配置的前后扇区边界分类锁定移动方向。
+---该入口只服务锁定 Locomotion；Dodge 等需要“几何最近方向”的调用继续使用 ClassifyCardinal。
+---@param angle number|nil 角色局部移动角，0 为前、90 为右、-90 为左、180 为后。
+---@param forward_boundary_angle number|nil Forward 扇区的绝对角上限；nil 使用传统 45 度。
+---@param back_boundary_angle number|nil Back 扇区的绝对角下限；nil 使用传统 135 度。
+---@return SekiroCardinalDirection direction 按前、侧、后非等分扇区选择的四方向枚举值。
+function Direction.ClassifyLockedCardinal(angle, forward_boundary_angle, back_boundary_angle)
+    local normalized_angle = Direction.NormalizeAngle(angle)
+    local absolute_angle = math.abs(normalized_angle)
+    local forward_boundary = math.max(0, math.min(forward_boundary_angle or 45, 180))
+    local back_boundary = math.max(
+        forward_boundary,
+        math.min(back_boundary_angle or 135, 180))
+
+    if absolute_angle <= forward_boundary then
+        return Direction.Cardinal.Forward
+    end
+    if absolute_angle >= back_boundary then
+        return Direction.Cardinal.Back
+    end
+    return normalized_angle < 0 and Direction.Cardinal.Left or Direction.Cardinal.Right
+end
+
+---在锁定四方向边界加入前后优先的非对称滞回，避免抖动且不让侧向素材侵入前后主扇区。
+---Forward/Back 离开自身扇区时保留容差；Left/Right 进入前后基础扇区时立即交出方向。
 ---@param angle number|nil 角色局部移动角，单位为度。
 ---@param current_direction SekiroCardinalDirection|nil 上一帧已选择的四方向；nil 时直接分类。
----@param hysteresis_angle number|nil 当前方向向相邻区间延伸的角度；nil 使用 10 度。
+---@param hysteresis_angle number|nil Forward/Back 离开自身扇区时保留的容差；nil 使用 10 度。
+---@param forward_boundary_angle number|nil Forward 扇区的绝对角上限；nil 使用传统 45 度。
+---@param back_boundary_angle number|nil Back 扇区的绝对角下限；nil 使用传统 135 度。
 ---@return SekiroCardinalDirection direction 本帧稳定后的四方向枚举值。
-function Direction.ResolveCardinalWithHysteresis(angle, current_direction, hysteresis_angle)
+function Direction.ResolveCardinalWithHysteresis(
+    angle,
+    current_direction,
+    hysteresis_angle,
+    forward_boundary_angle,
+    back_boundary_angle)
     local normalized_angle = Direction.NormalizeAngle(angle)
     local absolute_angle = math.abs(normalized_angle)
     local hysteresis = math.max(hysteresis_angle or 10, 0)
+    local forward_boundary = math.max(0, math.min(forward_boundary_angle or 45, 180))
+    local back_boundary = math.max(
+        forward_boundary,
+        math.min(back_boundary_angle or 135, 180))
 
-    if current_direction == Direction.Cardinal.Forward and absolute_angle <= 45 + hysteresis then
+    if current_direction == Direction.Cardinal.Forward
+        and absolute_angle <= forward_boundary + hysteresis then
         return current_direction
     end
-    if current_direction == Direction.Cardinal.Back and absolute_angle >= 135 - hysteresis then
+    if current_direction == Direction.Cardinal.Back
+        and absolute_angle >= back_boundary - hysteresis then
         return current_direction
     end
     if current_direction == Direction.Cardinal.Left
-        and normalized_angle <= -45 + hysteresis
-        and normalized_angle >= -135 - hysteresis then
+        and normalized_angle < -forward_boundary
+        and normalized_angle > -back_boundary then
         return current_direction
     end
     if current_direction == Direction.Cardinal.Right
-        and normalized_angle >= 45 - hysteresis
-        and normalized_angle <= 135 + hysteresis then
+        and normalized_angle > forward_boundary
+        and normalized_angle < back_boundary then
         return current_direction
     end
 
-    return Direction.ClassifyCardinal(normalized_angle)
+    return Direction.ClassifyLockedCardinal(
+        normalized_angle,
+        forward_boundary,
+        back_boundary)
 end
 
 ---把角色局部移动角分类为八方向，供 Jump 的 Start、InAir 和 Land 原生选择器使用。

@@ -1828,8 +1828,11 @@ bool FSekiroAnimBlueprintFactoryNativeBoolTransitionRuleTest::RunTest(const FStr
     FSekiroAnimIRGraph* StateMachineIR = FindGraph(BlueprintIR, TEXT("Graph.StateMachine"));
     TestNotNull(TEXT("Factory IR StateMachine exists"), StateMachineIR);
     if (StateMachineIR == nullptr || StateMachineIR->StateMachine.Transitions.IsEmpty()) return true;
+    for (FSekiroAnimIRTransition& Transition : StateMachineIR->StateMachine.Transitions)
+    {
+        Transition.RuleFunctionName = NAME_None;
+    }
     FSekiroAnimIRTransition& NativeTransition = StateMachineIR->StateMachine.Transitions[0];
-    NativeTransition.RuleFunctionName = NAME_None;
     NativeTransition.Gate.Nodes.Reset();
     FSekiroAnimIRTransitionGateNode& BoolProperty = NativeTransition.Gate.Nodes.AddDefaulted_GetRef();
     BoolProperty.Type = TEXT("BoolProperty");
@@ -1852,6 +1855,16 @@ bool FSekiroAnimBlueprintFactoryNativeBoolTransitionRuleTest::RunTest(const FStr
     TestEqual(TEXT("Native Bool Rule build has no diagnostics"), Diagnostics.Num(), 0);
     if (AnimBlueprint == nullptr) return true;
     TestTrue(TEXT("Native Bool Rule Blueprint compiles without error"), AnimBlueprint->Status != BS_Error);
+    TestTrue(
+        TEXT("All-native Transition Blueprint enables threaded animation update"),
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate);
+    const UAnimInstance* GeneratedDefaultInstance = AnimBlueprint->GeneratedClass != nullptr
+        ? Cast<UAnimInstance>(AnimBlueprint->GeneratedClass->GetDefaultObject())
+        : nullptr;
+    TestTrue(
+        TEXT("All-native generated AnimInstance enables threaded animation update"),
+        GeneratedDefaultInstance != nullptr
+            && GeneratedDefaultInstance->bUseMultiThreadedAnimationUpdate);
 
     UAnimGraphNode_StateMachine* StateMachineNode =
         FindFirstNode<UAnimGraphNode_StateMachine>(FindMainGraph(AnimBlueprint));
@@ -1895,6 +1908,18 @@ bool FSekiroAnimBlueprintFactoryNativeBoolTransitionRuleTest::RunTest(const FStr
     const FName RecordExpressionFunctionName = GET_FUNCTION_NAME_CHECKED(
         USekiroLuaTransitionRuntimeLibrary,
         RecordTransitionExpressionDebugValue);
+    UFunction* RecordBoolFunction =
+        USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(RecordBoolFunctionName);
+    UFunction* RecordExpressionFunction =
+        USekiroLuaTransitionRuntimeLibrary::StaticClass()->FindFunctionByName(RecordExpressionFunctionName);
+    TestTrue(
+        TEXT("Bool Transition trace is marked BlueprintThreadSafe"),
+        RecordBoolFunction != nullptr
+            && RecordBoolFunction->HasMetaData(TEXT("BlueprintThreadSafe")));
+    TestTrue(
+        TEXT("Expression Transition trace is marked BlueprintThreadSafe"),
+        RecordExpressionFunction != nullptr
+            && RecordExpressionFunction->HasMetaData(TEXT("BlueprintThreadSafe")));
     TestEqual(
         TEXT("Pure native Rule contains one Bool leaf trace"),
         CountFunctionCalls(NativeRuleGraph, RecordBoolFunctionName),
@@ -2980,6 +3005,10 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     TestNotNull(TEXT("Lua extension survives native AnimBlueprint compilation"), Extension);
     if (Extension != nullptr)
     {
+        TestEqual(
+            TEXT("Successful compile records current generator version"),
+            Extension->CompilerVersion,
+            USekiroLuaAnimBlueprintExtension::CurrentCompilerVersion);
         TestEqual(TEXT("Successful revision increments twice"), Extension->SuccessfulCompileRevision, 2);
         TestFalse(TEXT("Successful compile clears source dirty"), Extension->bSourceDirty);
         TestEqual(

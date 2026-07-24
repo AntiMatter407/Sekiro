@@ -36,6 +36,12 @@ public:
     void SetCombatActionState(ESKCombatActionState NewState);
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
+    ESKCombatPostureState GetCombatPostureState() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|State")
+    void SetCombatPostureState(ESKCombatPostureState NewState);
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
     ESKAttackSide GetCommittedAttackSide() const;
 
     UFUNCTION(BlueprintCallable, Category = "Combat|State")
@@ -156,6 +162,9 @@ private:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|State", meta = (AllowPrivateAccess = "true"))
     ESKCombatActionState CombatActionState = ESKCombatActionState::Neutral; // 当前动作状态
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|State", meta = (AllowPrivateAccess = "true"))
+    ESKCombatPostureState CombatPostureState = ESKCombatPostureState::Normal; // 当前基础战斗姿态
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|State", meta = (AllowPrivateAccess = "true"))
     ESKAttackSide CommittedAttackSide = ESKAttackSide::None; // 当前动作已提交攻击侧

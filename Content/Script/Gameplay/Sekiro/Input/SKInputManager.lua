@@ -6,6 +6,7 @@ local LuaLog = require("Gameplay.Base.LuaLog")
 ---@class SKInputManager: USKInputManager
 local SKInputManager = UnLua.Class()
 local Debug = true
+local DebugMoveIntent = false -- 高频移动意图默认关闭；其余输入状态边沿仍保留日志。
 
 ---按输入模块调试开关输出带功能区域的日志。
 ---@param area string 日志所属的输入功能区域。
@@ -80,6 +81,7 @@ function SKInputManager:Initialize(_initializer)
     self.JumpWalkHorizontalSpeed = 140.0
     self.JumpRunHorizontalSpeed = 407.0
     self.JumpSprintHorizontalSpeed = 853.0
+    self.JumpRootMotionRestoreTimeout = 0.25
 
     -- 原始方向和输入边沿在 Tick 末统一消费，避免 Enhanced Input 同帧回调顺序改变 Step 结果。
     self.CurrentMoveInputX = 0
@@ -94,6 +96,9 @@ function SKInputManager:Initialize(_initializer)
     self.SprintRequested = false
     self.bRestrictedZoneObserved = false
     self.bWeaponTransitionInputLock = false
+    self.bJumpRootMotionIgnored = false
+    self.bJumpFallingObserved = false
+    self.JumpRootMotionIgnoreStartTime = 0.0
     log_debug("Initialize", "input lua host initialized")
 end
 
@@ -136,7 +141,7 @@ end
 ---@param force boolean|nil 是否忽略频率限制并强制执行本次操作。
 ---@return nil 该函数只更新当前实例或 C++ 运行时，不返回业务值。
 function SKInputManager:LogMoveIntentDebug(reason, force)
-    if Debug ~= true then
+    if DebugMoveIntent ~= true then
         return
     end
 
@@ -171,6 +176,20 @@ function SKInputManager:Tick(delta_seconds)
     self.LastTickDeltaSeconds = delta
     local current_time = self:GetWorldTimeSecondsForScript()
     local zone_restricted = is_restricted(self)
+
+    if self.bJumpRootMotionIgnored == true then
+        if self:IsOwnerFalling() == true then
+            self.bJumpFallingObserved = true
+        elseif self.bJumpFallingObserved == true
+            or current_time - self.JumpRootMotionIgnoreStartTime
+                >= self.JumpRootMotionRestoreTimeout then
+            -- InputManager 是 CombatComponent 的 Tick 前置；这里先恢复，保证同帧启动的 Land Montage 可以立即消费 Root Motion。
+            self:SetOwnerAnimRootMotionIgnored(false)
+            self.bJumpRootMotionIgnored = false
+            self.bJumpFallingObserved = false
+            self.JumpRootMotionIgnoreStartTime = 0.0
+        end
+    end
 
     if zone_restricted ~= self.bRestrictedZoneObserved then
         self.bRestrictedZoneObserved = zone_restricted
@@ -476,8 +495,11 @@ function SKInputManager:OnJumpStarted()
 
     -- 必须在 JumpOwner 前关闭动画 Root Motion：若等待 AnimInstance 下一帧更新，Jump Start 的首帧根运动会先覆盖水平起跳速度。
     -- 起跳前精确写入水平速度；零输入会清除地面 Root Motion 的残留速度，保证原地跳真正留在原地。
-    -- JumpOwner 随后只覆盖 Z 速度，空中阶段由 CharacterMovement 的重力和惯性继续积分；落地后由 AnimInstance 恢复 Root Motion。
-    self:SetOwnerAnimRootMotionIgnored(true)
+    -- JumpOwner 随后只覆盖 Z 速度，空中阶段由 CharacterMovement 的重力和惯性继续积分。
+    -- 恢复责任由本输入层锁存；观察到 Falling 后的首次落地帧会在 CombatComponent 启动 Land Montage 前显式恢复。
+    self.bJumpRootMotionIgnored = self:SetOwnerAnimRootMotionIgnored(true) == true
+    self.bJumpFallingObserved = false
+    self.JumpRootMotionIgnoreStartTime = self:GetWorldTimeSecondsForScript()
     self:SetHorizontalVelocityFromScreen(jump_x, jump_y, jump_speed)
     self:JumpOwner()
     if resume_air_guard == true

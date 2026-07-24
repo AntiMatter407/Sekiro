@@ -106,6 +106,18 @@ function Standing.BuildTurn(Graph)
         "LatchedTurnDirection")
 end
 
+---构建 Standing Stop 后的换脚回正动作；方向由输入释放时的残差符号独立锁存。
+---@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
+---@return LuaBlendListByEnumNode pose_node Standing StopTurn 最终姿势节点。
+function Standing.BuildStopTurn(Graph)
+    return PoseSelectors.LeftRight(
+        Graph,
+        "StandingStopTurn",
+        Anim.Idle_Left_Turn,
+        Anim.Idle_Right_Turn,
+        "StopTurnDirection")
+end
+
 ---构建 Standing Walk/Run/Sprint Start，并按进入动作时锁存的朝向模式选择转向资产。
 ---@param Graph LuaAnimStateGraph Start 状态的原生 Pose Graph。
 ---@return LuaBlendListByBoolNode pose_node Standing Start 最终姿势节点。
@@ -135,10 +147,11 @@ function Standing.BuildStart(Graph)
     return start
 end
 
----构建 Standing Cycle；Sprint 作为步态分支直接与 Walk/Run 循环混合，不再拥有独立子状态机。
+---构建 Standing Cycle；Walk/Run 四向分支先独立对齐再混合，Sprint 继续作为单向步态分支。
 ---@param Graph LuaAnimStateGraph Cycle 状态的原生 Pose Graph。
+---@param alignment SekiroCardinalAlignmentConfig 混合前逐分支方向对齐配置。
 ---@return LuaBlendListByEnumNode pose_node Standing Cycle 步态选择节点。
-function Standing.BuildCycle(Graph)
+function Standing.BuildCycle(Graph, alignment)
     return PoseSelectors.WalkRunSprint(
         Graph,
         "StandingCycle",
@@ -146,7 +159,8 @@ function Standing.BuildCycle(Graph)
         "CycleDirection",
         "PoseGait",
         true,
-        Tuning.DirectionSyncGroup)
+        Tuning.DirectionSyncGroup,
+        alignment)
 end
 
 ---构建 Standing Walk/Run/Sprint Stop，使用输入释放边沿锁存的步态和方向保持一次性动画稳定。

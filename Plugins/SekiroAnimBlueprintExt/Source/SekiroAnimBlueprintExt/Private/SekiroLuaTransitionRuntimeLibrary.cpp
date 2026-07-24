@@ -17,6 +17,82 @@ namespace SekiroLuaTransitionRuntimePrivate
 {
     /** Inst 代理内保存真实 UObject userdata 的字段名；UnLua 方法调用也识别同一 Object 约定。 */
     constexpr const char* AnimInstanceObjectField = "Object";
+    /** 所有单帧 Inst 代理共用的 Lua registry metatable 名。 */
+    constexpr const char* AnimInstanceProxyMetatable = "Sekiro.AnimInstanceProxy";
+    TMap<TWeakObjectPtr<UAnimInstance>, FString> FailedBlueprintUpdateModules; // 本次 PIE 不再重试的更新模块
+    TMap<TWeakObjectPtr<UClass>, TMap<FName, FProperty*>> GeneratedPropertyCache; // 当前 PIE 动态类属性缓存
+
+    /**
+     * 从 package.loaded 读取已加载模块，不触发 require、CompileIR 或搜索器。
+     * 只能在持有当前 Lua 栈的游戏线程调用；成功时模块 table 留在栈顶，失败时栈由外层恢复。
+     *
+     * @param State 当前 UnLua 主状态。
+     * @param LuaModuleName 点分 Lua 模块名，不能为空。
+     * @return package.loaded 中存在 table 时返回 true，否则返回 false。
+     */
+    bool PushLoadedModule(lua_State* State, const FString& LuaModuleName)
+    {
+        lua_getglobal(State, "package");
+        if (!lua_istable(State, -1)) return false;
+        lua_getfield(State, -1, "loaded");
+        if (!lua_istable(State, -1)) return false;
+        const FTCHARToUTF8 ModuleUtf8(*LuaModuleName);
+        lua_pushlstring(State, ModuleUtf8.Get(), ModuleUtf8.Length());
+        lua_rawget(State, -2);
+        return lua_istable(State, -1);
+    }
+
+    /**
+     * 首次运行实例尚未加载主模块时调用一次 require；模块 Export 不再执行 CompileIR。
+     * 本函数只能在游戏线程调用；成功时模块 table 位于栈顶，失败时错误对象位于栈顶。
+     *
+     * @param State 当前 UnLua 主状态。
+     * @param LuaModuleName 点分 Lua 模块名，不能为空。
+     * @return require 成功且返回 table 时返回 true，否则返回 false。
+     */
+    bool RequireRuntimeModule(lua_State* State, const FString& LuaModuleName)
+    {
+        const FTCHARToUTF8 ModuleUtf8(*LuaModuleName);
+        lua_getglobal(State, "require");
+        lua_pushlstring(State, ModuleUtf8.Get(), ModuleUtf8.Length());
+        return lua_pcall(State, 1, 1, 0) == LUA_OK && lua_istable(State, -1);
+    }
+
+    /**
+     * 优先复用 package.loaded，只在当前实例首次更新且模块尚未加载时执行一次 require。
+     * 函数不调用 CompileIR；成功时模块 table 位于栈顶，失败时保留 require 错误供调用方记录。
+     *
+     * @param State 当前 UnLua 主状态。
+     * @param LuaModuleName 点分 Lua 模块名，不能为空。
+     * @return 找到或首次加载模块 table 时返回 true，否则返回 false。
+     */
+    bool PushOrRequireRuntimeModule(lua_State* State, const FString& LuaModuleName)
+    {
+        const int32 InitialTop = lua_gettop(State);
+        if (PushLoadedModule(State, LuaModuleName)) return true;
+        lua_settop(State, InitialTop);
+        return RequireRuntimeModule(State, LuaModuleName);
+    }
+
+    /**
+     * 只解析模块已导出的函数，不触发兼容用 CompileIR。
+     * 调用方持有模块 table；成功时函数留在栈顶，失败时弹出非函数值。
+     *
+     * @param State 当前 UnLua 主状态。
+     * @param ModuleTableIndex 模块 table 的绝对栈索引。
+     * @param FunctionName 要解析的导出函数名。
+     * @return 已找到函数时返回 true，否则返回 false。
+     */
+    bool PushExportedFunction(
+        lua_State* State,
+        const int32 ModuleTableIndex,
+        const FString& FunctionName)
+    {
+        const FTCHARToUTF8 FunctionUtf8(*FunctionName);
+        if (lua_getfield(State, ModuleTableIndex, FunctionUtf8.Get()) == LUA_TFUNCTION) return true;
+        lua_pop(State, 1);
+        return false;
+    }
 
     /**
      * 从 Inst 代理读取真实动画实例，并移除临时压栈的 UObject userdata。
@@ -32,6 +108,30 @@ namespace SekiroLuaTransitionRuntimePrivate
         UAnimInstance* AnimInstance = Cast<UAnimInstance>(UnLua::GetUObject(State, -1));
         lua_pop(State, 1);
         return AnimInstance;
+    }
+
+    /**
+     * 按当前动态 AnimInstance 类缓存属性描述，避免 Lua 高频字段访问重复遍历生成类继承链。
+     * 只能在游戏线程使用；缓存只在当前 PIE 有效，并由 EndPIE 在蓝图可能 Reinstance 前统一清空。
+     *
+     * @param AnimInstance 属性所属的真实动画实例，不能为空。
+     * @param FieldNameUtf8 Lua VM 提供的 UTF-8 字段名，不能为空。
+     * @return 找到的反射属性；未知字段返回 nullptr，并缓存该未命中结果。
+     */
+    FProperty* FindCachedAnimInstanceProperty(
+        UAnimInstance* AnimInstance,
+        const char* FieldNameUtf8)
+    {
+        UClass* InstanceClass = AnimInstance->GetClass();
+        const FName FieldName(UTF8_TO_TCHAR(FieldNameUtf8));
+        TMap<FName, FProperty*>& ClassProperties =
+            GeneratedPropertyCache.FindOrAdd(TWeakObjectPtr<UClass>(InstanceClass));
+        FProperty** CachedProperty = ClassProperties.Find(FieldName);
+        if (CachedProperty != nullptr) return *CachedProperty;
+
+        FProperty* Property = InstanceClass->FindPropertyByName(FieldName);
+        ClassProperties.Add(FieldName, Property);
+        return Property;
     }
 
     /**
@@ -148,7 +248,7 @@ namespace SekiroLuaTransitionRuntimePrivate
         const char* FieldName = lua_tostring(State, 2);
         if (AnimInstance == nullptr || FieldName == nullptr) return luaL_error(State, "invalid animation instance field read");
 
-        FProperty* Property = AnimInstance->GetClass()->FindPropertyByName(UTF8_TO_TCHAR(FieldName));
+        FProperty* Property = FindCachedAnimInstanceProperty(AnimInstance, FieldName);
         if (Property != nullptr && PushGeneratedScalarProperty(State, AnimInstance, Property)) return 1;
 
         lua_getfield(State, 1, AnimInstanceObjectField);
@@ -171,7 +271,7 @@ namespace SekiroLuaTransitionRuntimePrivate
         const char* FieldName = lua_tostring(State, 2);
         if (AnimInstance == nullptr || FieldName == nullptr) return luaL_error(State, "invalid animation instance field write");
 
-        FProperty* Property = AnimInstance->GetClass()->FindPropertyByName(UTF8_TO_TCHAR(FieldName));
+        FProperty* Property = FindCachedAnimInstanceProperty(AnimInstance, FieldName);
         if (Property != nullptr && WriteGeneratedScalarProperty(State, AnimInstance, Property, 3)) return 0;
 
         lua_getfield(State, 1, AnimInstanceObjectField);
@@ -183,8 +283,8 @@ namespace SekiroLuaTransitionRuntimePrivate
     }
 
     /**
-     * 创建保持 UnLua Object 约定的 Inst 代理。
-     * 代理只存在于单次 Lua 调用栈；Object 字段确保原生 UFunction closure 仍能把代理解析为真实 UObject。
+     * 创建保持 UnLua Object 约定的单帧 Inst 代理，并复用 registry 内唯一 metatable。
+     * 代理 table 只存在于单次调用栈；Object 字段确保原生 UFunction closure 仍能解析真实 UObject。
      *
      * @param State 当前 UnLua 主状态。
      * @param AnimInstance 要暴露给 Lua 的真实动画实例。
@@ -197,13 +297,15 @@ namespace SekiroLuaTransitionRuntimePrivate
         UnLua::PushUObject(State, AnimInstance);
         lua_rawset(State, -3);
 
-        lua_newtable(State);
-        lua_pushstring(State, "__index");
-        lua_pushcfunction(State, &AnimInstanceProxyIndex);
-        lua_rawset(State, -3);
-        lua_pushstring(State, "__newindex");
-        lua_pushcfunction(State, &AnimInstanceProxyNewIndex);
-        lua_rawset(State, -3);
+        if (luaL_newmetatable(State, AnimInstanceProxyMetatable) != 0)
+        {
+            lua_pushstring(State, "__index");
+            lua_pushcfunction(State, &AnimInstanceProxyIndex);
+            lua_rawset(State, -3);
+            lua_pushstring(State, "__newindex");
+            lua_pushcfunction(State, &AnimInstanceProxyNewIndex);
+            lua_rawset(State, -3);
+        }
         lua_setmetatable(State, -2);
     }
 
@@ -250,7 +352,7 @@ namespace SekiroLuaTransitionRuntimePrivate
 
 /**
  * 在游戏线程调用 Lua 主模块的 BlueprintUpdateAnimation(Inst, DeltaSeconds)，允许脚本直接写入生成成员变量。
- * fresh require 时会通过 CompileIR 初始化动态导出；函数不参与动画线程 Pose 求值，失败只记录日志并返回 false。
+ * 首帧只在 package.loaded 缺失时加载一次模块，不执行 CompileIR；任一失败在本次 PIE 内停止重试，避免逐帧异常。
  *
  * @param AnimInstance 当前生成 AnimBlueprint 的真实实例，不能为空。
  * @param LuaModuleName require 模块名，不是文件路径。
@@ -271,26 +373,68 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateBlueprintUpdateAnimation(
     {
         return false;
     }
+    const TWeakObjectPtr<UAnimInstance> WeakAnimInstance(AnimInstance);
+    const FString* FailedModule = FailedBlueprintUpdateModules.Find(WeakAnimInstance);
+    if (FailedModule != nullptr && *FailedModule == LuaModuleName) return false;
+
     FSekiroLuaAnimDebugRuntime::RecordAnimInstanceModule(AnimInstance, LuaModuleName);
     IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
-    if (UnLuaModule == nullptr) return false;
+    if (UnLuaModule == nullptr)
+    {
+        FailedBlueprintUpdateModules.Add(WeakAnimInstance, LuaModuleName);
+        UE_LOG(LogSekiroLuaTransitionRuntime, Error, TEXT("UnLua module is unavailable; Lua animation update will not retry during this PIE."));
+        return false;
+    }
     if (!UnLuaModule->IsActive()) UnLuaModule->SetActive(true);
     UnLua::FLuaEnv* Environment = UnLuaModule->GetEnv(AnimInstance);
-    if (Environment == nullptr) return false;
+    if (Environment == nullptr)
+    {
+        FailedBlueprintUpdateModules.Add(WeakAnimInstance, LuaModuleName);
+        UE_LOG(
+            LogSekiroLuaTransitionRuntime,
+            Error,
+            TEXT("UnLua environment is unavailable for '%s'; Lua animation update will not retry during this PIE."),
+            *AnimInstance->GetPathName());
+        return false;
+    }
 
     lua_State* State = Environment->GetMainState();
     const int32 InitialTop = lua_gettop(State);
     ON_SCOPE_EXIT { lua_settop(State, InitialTop); };
-    const FTCHARToUTF8 ModuleUtf8(*LuaModuleName);
-    lua_getglobal(State, "require");
-    lua_pushlstring(State, ModuleUtf8.Get(), ModuleUtf8.Length());
-    if (lua_pcall(State, 1, 1, 0) != LUA_OK || !lua_istable(State, -1)) return false;
+    if (!PushOrRequireRuntimeModule(State, LuaModuleName))
+    {
+        const FString Error = lua_isstring(State, -1)
+            ? UTF8_TO_TCHAR(lua_tostring(State, -1))
+            : TEXT("module did not return a table");
+        FailedBlueprintUpdateModules.Add(WeakAnimInstance, LuaModuleName);
+        UE_LOG(
+            LogSekiroLuaTransitionRuntime,
+            Error,
+            TEXT("Lua update module '%s' failed to load once and will not retry during this PIE: %s"),
+            *LuaModuleName,
+            *Error);
+        return false;
+    }
     const int32 ModuleTableIndex = lua_absindex(State, -1);
-    if (!PushRuntimeFunction(State, ModuleTableIndex, TEXT("BlueprintUpdateAnimation"))) return false;
+    if (!PushExportedFunction(State, ModuleTableIndex, TEXT("BlueprintUpdateAnimation")))
+    {
+        FailedBlueprintUpdateModules.Add(WeakAnimInstance, LuaModuleName);
+        UE_LOG(
+            LogSekiroLuaTransitionRuntime,
+            Error,
+            TEXT("Lua update module '%s' does not export BlueprintUpdateAnimation and will not retry during this PIE."),
+            *LuaModuleName);
+        return false;
+    }
 
     PushAnimInstanceProxy(State, AnimInstance);
     lua_pushnumber(State, static_cast<lua_Number>(DeltaSeconds));
-    if (lua_pcall(State, 2, 0, 0) == LUA_OK) return true;
+    if (lua_pcall(State, 2, 0, 0) == LUA_OK)
+    {
+        FailedBlueprintUpdateModules.Remove(WeakAnimInstance);
+        return true;
+    }
+    FailedBlueprintUpdateModules.Add(WeakAnimInstance, LuaModuleName);
     UE_LOG(LogSekiroLuaTransitionRuntime, Error, TEXT("Lua update '%s.BlueprintUpdateAnimation' failed: %s"),
         *LuaModuleName, UTF8_TO_TCHAR(lua_tostring(State, -1)));
     return false;
@@ -300,7 +444,7 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateBlueprintUpdateAnimation(
  * 从当前 Transition Rule Graph 按需 require Lua 模块，经 table/metatable 查找规则函数，
  * 并以 AnimInstance 代理作为 Inst 参数直接执行。规则约定为只读，本函数不缓存也不预计算其他 Transition。
  * 函数只接受严格 Lua boolean 返回；任意加载、查找、调用或类型错误均记录日志并返回 false。
- * 必须在游戏线程调用；Lua 来源 AnimBlueprint 由编辑器工厂强制关闭多线程动画更新。
+ * 必须在游戏线程调用；包含该兼容节点的 AnimBlueprint 由编辑器工厂自动关闭多线程动画更新。
  * Lua 栈在所有路径恢复，函数不保留 Lua wrapper 或 table 引用。
  *
  * @param AnimInstance 本次规则所属的实际动画实例；不能为空，函数不保留引用。
@@ -429,7 +573,7 @@ bool USekiroLuaTransitionRuntimeLibrary::EvaluateLuaTransitionRule(
 
 /**
  * 记录 Bool 叶或最终表达式并原样透传 Result，供生成的 Transition Graph 插桩。
- * 仅游戏线程且调试/快照开启时记录；禁用时无日志且不改变图语义。
+ * 可由并行动画线程调用；启用采样时提交线程安全队列，禁用时只执行一次原子读取且不改变图语义。
  */
 bool USekiroLuaTransitionRuntimeLibrary::RecordBoolTransitionDebugValue(
     UAnimInstance* AnimInstance,
@@ -453,7 +597,7 @@ bool USekiroLuaTransitionRuntimeLibrary::RecordBoolTransitionDebugValue(
 
 /**
  * 记录 Float 叶的实际值、阈值与结果并原样透传 Result，供生成图插桩。
- * 所有文本使用稳定数值格式；禁用采样时不分配调试快照。
+ * 可由并行动画线程调用；所有文本使用稳定数值格式，禁用采样时不分配调试快照。
  */
 bool USekiroLuaTransitionRuntimeLibrary::RecordFloatTransitionDebugValue(
     UAnimInstance* AnimInstance,
@@ -477,7 +621,7 @@ bool USekiroLuaTransitionRuntimeLibrary::RecordFloatTransitionDebugValue(
 
 /**
  * 记录无标量参数的逻辑/最终表达式并原样透传 Result。
- * bIsFinal 为 true 时 RuleResult 才具有权威含义；函数不触发 Lua 或日志。
+ * 可由并行动画线程调用；bIsFinal 为 true 时 RuleResult 才具有权威含义，函数不触发 Lua 或日志。
  */
 bool USekiroLuaTransitionRuntimeLibrary::RecordTransitionExpressionDebugValue(
     UAnimInstance* AnimInstance,
@@ -493,4 +637,16 @@ bool USekiroLuaTransitionRuntimeLibrary::RecordTransitionExpressionDebugValue(
             Result ? TEXT("true") : TEXT("false"), FString(), FString(), Result, bIsFinal ? Result : false, bIsFinal);
     }
     return Result;
+}
+
+/**
+ * 清除当前 PIE 的 Lua Update 失败抑制与动态类属性缓存，隔离蓝图 Reinstance 前后的反射描述。
+ * 只能由编辑器 PIE 起止边界在游戏线程调用；不卸载 package.loaded，也不触发 Lua 编译或热重载。
+ */
+void USekiroLuaTransitionRuntimeLibrary::ResetRuntimeCachesForPIESession()
+{
+    using namespace SekiroLuaTransitionRuntimePrivate;
+    check(IsInGameThread());
+    FailedBlueprintUpdateModules.Reset();
+    GeneratedPropertyCache.Reset();
 }

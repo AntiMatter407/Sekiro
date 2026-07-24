@@ -433,15 +433,20 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     if (OwnerCombatComponent)
     {
         CombatActionState = OwnerCombatComponent->GetCombatActionState();
+        CombatPostureState = OwnerCombatComponent->GetCombatPostureState();
         bIsGuardHeld = OwnerCombatComponent->IsGuardHeld();
-        bIsCombatGuardPoseActive = CombatActionState == ESKCombatActionState::GuardRaise
-            || CombatActionState == ESKCombatActionState::Guarding;
+        bIsCombatGuardGroundPosture = CombatPostureState == ESKCombatPostureState::GuardGround;
+        bIsCombatGuardAirPosture = CombatPostureState == ESKCombatPostureState::GuardAir;
+        bIsCombatGuardPoseActive = bIsCombatGuardGroundPosture || bIsCombatGuardAirPosture;
         bIsCombatFullBodyActionActive = OwnerCombatComponent->IsCombatFullBodyActionActive();
     }
     else
     {
         CombatActionState = ESKCombatActionState::Neutral;
+        CombatPostureState = ESKCombatPostureState::Normal;
         bIsGuardHeld = false;
+        bIsCombatGuardGroundPosture = false;
+        bIsCombatGuardAirPosture = false;
         bIsCombatGuardPoseActive = false;
         bIsCombatFullBodyActionActive = false;
     }

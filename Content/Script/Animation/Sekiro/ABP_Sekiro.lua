@@ -5,8 +5,7 @@
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
-local RootLocomotion = require("Animation.Sekiro.Layer.GroundLocomotion.Root")
-local GuardPose = require("Animation.Sekiro.Layer.Combat.GuardPose")
+local CombatBasePose = require("Animation.Sekiro.Layer.Combat.CombatBasePose")
 local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 local Direction = require("Animation.Sekiro.Shared.Direction")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
@@ -80,12 +79,19 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("PoseGait", "Enum", 2, GaitEnum)
     self:Variable("LatchedActionGait", "Enum", 2, GaitEnum)
     self:Variable("bPoseCrouching", "Bool", false)
-    self:Variable("DirectionResidualAngle", "Float", 0.0)
+    self:Variable("CycleForwardResidualAngle", "Float", 0.0)
+    self:Variable("CycleBackResidualAngle", "Float", 0.0)
+    self:Variable("CycleLeftResidualAngle", "Float", 0.0)
+    self:Variable("CycleRightResidualAngle", "Float", 0.0)
     self:Variable("LockOnWarpingAlpha", "Float", 0.0)
     self:Variable("StartDirectionResidualAngle", "Float", 0.0)
     self:Variable("StartWarpingAlpha", "Float", 0.0)
-    self:Variable("LatchedActionResidualAngle", "Float", 0.0)
-    self:Variable("LatchedActionWarpingAlpha", "Float", 0.0)
+    self:Variable("StopDirectionResidualAngle", "Float", 0.0)
+    self:Variable("StopWarpingAlpha", "Float", 0.0)
+    self:Variable("StopTurnDirection", "Enum", Direction.Cardinal.Right, DirectionEnum)
+    self:Variable("StopTurnWarpingAlpha", "Float", 0.0)
+    self:Variable("bStopTurnRequested", "Bool", false)
+    self:Variable("bStopTurnAlignmentCurveSeen", "Bool", false)
     -- 预留锁定模式切换边沿；当前只记录上一帧状态，尚无 Graph 或规则消费者。
     self:Variable("bWasLockedOn", "Bool", false)
     self:Variable("bLatchedActionLockedOn", "Bool", false)
@@ -102,7 +108,6 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("bJumpStartedCrouchedPose", "Bool", false)
     self:Variable("bWasInAir", "Bool", false)
     self:Variable("FootIKAlpha", "Float", 0.0)
-    self:Variable("bCombatGuardPose", "Bool", false)
     self:Variable("bCombatHasMovementInput", "Bool", false)
 end
 
@@ -115,13 +120,11 @@ function ABP_Sekiro:AnimGraph(Graph)
     self:DeclareVariables()
     local foot_ik = Tuning.FootIK
     local weapon_ik = Tuning.WeaponIK
-    local locomotion = Graph:StateMachine("RootLocomotion", RootLocomotion)
-    local inertialization = Graph:Inertialization("LocomotionInertialization")
-    inertialization.Source:Connect(locomotion.Pose)
+    local combat_base_pose = Graph:StateMachine("CombatBasePose", CombatBasePose)
 
-    -- UE 动画姿势 Pin 不能直接扇出到两个消费者；先缓存一次，再分别供 Slot Source 与基础姿势使用。
+    -- UE 动画姿势 Pin 不能直接扇出到两个消费者；基础战斗姿态先缓存，再供上半身 Slot 和分层混合共同读取。
     local locomotion_cache = Graph:SaveCachedPose("LocomotionForUpperBody")
-    locomotion_cache.Pose:Connect(inertialization.Pose)
+    locomotion_cache.Pose:Connect(combat_base_pose.Pose)
     local locomotion_for_slot = Graph:UseCachedPose("LocomotionSlotSource", locomotion_cache)
     local locomotion_for_base = Graph:UseCachedPose("LocomotionBlendBase", locomotion_cache)
 
@@ -141,20 +144,11 @@ function ABP_Sekiro:AnimGraph(Graph)
     upper_body_blend.BasePose:Connect(locomotion_for_base.Pose)
     upper_body_blend.BlendPose:Connect(upper_body_slot.Pose)
 
-    -- Raise/Lower 由全身 Slot 播放；进入稳定 Guard 后切换为可持续的 Idle/Move 防御基础姿态。
-    local guard_pose = GuardPose.Build(Graph)
-    local use_guard_pose = Graph:Property("UseCombatGuardPose", "bCombatGuardPose")
-    local combat_base = Graph:BlendListByBool("CombatGuardBaseSelector")
-    combat_base.BlendTime = Tuning.Combat.GuardPoseBlendDuration
-    combat_base.FalsePose:Connect(upper_body_blend.Pose)
-    combat_base.TruePose:Connect(guard_pose.Pose)
-    combat_base.ActiveValue:Connect(use_guard_pose.Value)
-
-    -- 攻击、Raise/Lower 与 Deflect 都是全身动作，Slot 放在所有基础姿态分层之后。
+    -- 攻击、Raise/Lower 与 Deflect 都是全身动作；Slot 放在持续姿态状态机和上半身分层之后。
     local combat_full_body_slot = Graph:Slot("CombatFullBodySlot")
     combat_full_body_slot.SlotName = Tuning.Combat.FullBodySlotName
     combat_full_body_slot.bAlwaysUpdateSourcePose = true
-    combat_full_body_slot.Source:Connect(combat_base.Pose)
+    combat_full_body_slot.Source:Connect(upper_body_blend.Pose)
 
     local to_component = Graph:LocalToComponentSpace("SkeletalControlsLocalToComponent")
     to_component.LocalPose:Connect(combat_full_body_slot.Pose)
@@ -210,24 +204,20 @@ function ABP_Sekiro:AnimGraph(Graph)
         RegionColumn = 0,
         RegionRow = 0,
     })
-    main_flow:Place(locomotion, 0, 0)
-    main_flow:Place(inertialization, 1, 0)
-    main_flow:Place(locomotion_cache, 2, 0)
-    main_flow:Place(locomotion_for_base, 3, 0)
-    main_flow:Place(locomotion_for_slot, 3, 1)
-    main_flow:Place(upper_body_slot, 4, 1)
-    main_flow:Place(upper_body_blend, 5, 0)
-    main_flow:Place(guard_pose, 6, 1)
-    main_flow:Place(use_guard_pose, 6, 2)
-    main_flow:Place(combat_base, 7, 0)
-    main_flow:Place(combat_full_body_slot, 8, 0)
-    main_flow:Place(to_component, 9, 0)
-    main_flow:Place(weapon_hand_ik, 10, 0)
-    main_flow:Place(foot_placement, 11, 0)
-    main_flow:Place(foot_ik_alpha, 11, 1)
-    main_flow:Place(leg_ik, 12, 0)
-    main_flow:Place(to_local, 13, 0)
-    main_flow:Place(Graph.OutputNode, 14, 0)
+    main_flow:Place(combat_base_pose, 0, 0)
+    main_flow:Place(locomotion_cache, 1, 0)
+    main_flow:Place(locomotion_for_base, 2, 0)
+    main_flow:Place(locomotion_for_slot, 2, 1)
+    main_flow:Place(upper_body_slot, 3, 1)
+    main_flow:Place(upper_body_blend, 4, 0)
+    main_flow:Place(combat_full_body_slot, 5, 0)
+    main_flow:Place(to_component, 6, 0)
+    main_flow:Place(weapon_hand_ik, 7, 0)
+    main_flow:Place(foot_placement, 8, 0)
+    main_flow:Place(foot_ik_alpha, 8, 1)
+    main_flow:Place(leg_ik, 9, 0)
+    main_flow:Place(to_local, 10, 0)
+    main_flow:Place(Graph.OutputNode, 11, 0)
 end
 
 ---每帧在游戏线程更新原生 Graph 消费的方向、步态和一次性动作锁存变量。
@@ -242,7 +232,6 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     local pose_gait = normalize_pose_gait(Inst.DesiredGait, crouching)
     -- Foot Placement 在 UE 5.2 中不会因 CharacterMovement 进入 Falling 而自动停用，必须由 Lua 显式控制权重。
     -- 空中快速淡出可保留跳跃原姿势；落地较慢淡入可避免斜面命中变化导致骨盆和双腿瞬间弹跳。
-    Inst.bCombatGuardPose = Inst.bIsCombatGuardPoseActive == true
     Inst.bCombatHasMovementInput = has_input
     local suppress_foot_ik = Inst.bIsInAir == true or Inst.bIsCombatFullBodyActionActive == true
     local foot_ik_target = suppress_foot_ik and 0.0 or 1.0
@@ -262,10 +251,16 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         or RootMotionMode.Everything
     local direction = Direction.Cardinal.Forward
     if locked_on and has_input then
+        -- 基础素材按锁定输入意图立即选区；真实轨迹与 ActorYaw 的偏差由每条 Sequence 自己的 Warping 残差承担。
+        local input_direction_angle = Direction.GetAngleFromAxes(
+            Inst.MoveInputY,
+            Inst.MoveInputX)
         direction = Direction.ResolveCardinalWithHysteresis(
-            Inst.MoveDirectionAngle,
+            input_direction_angle,
             Inst.CycleDirection,
-            Tuning.LockedDirectionHysteresisAngle)
+            Tuning.LockedDirectionHysteresisAngle,
+            Tuning.LockedDirectionForwardBoundaryAngle,
+            Tuning.LockedDirectionBackBoundaryAngle)
     end
     local ground_direction_alignment_enabled = locked_on
         and has_input
@@ -295,12 +290,6 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
                 Inst.MoveDirectionAngleBeforeRotation)
             Inst.LatchedActionGait = pose_gait
             Inst.bLatchedActionLockedOn = locked_on
-            Inst.LatchedActionResidualAngle = ground_direction_alignment_enabled
-                and clamp_direction_residual(
-                    Direction.GetCardinalResidual(Inst.MoveDirectionAngle, direction),
-                    Tuning.LockOnWarpingMaxAngle)
-                or 0.0
-            Inst.LatchedActionWarpingAlpha = ground_direction_alignment_enabled and 1.0 or 0.0
         end
     elseif Inst.bHadMovementInput == true then
         Inst.LatchedActionDirection = locked_on and Inst.CycleDirection or Direction.Cardinal.Forward
@@ -308,15 +297,36 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         Inst.LatchedActionGait = Inst.PoseGait
         Inst.bLatchedActionLockedOn = locked_on
         local stop_direction = locked_on and Inst.CycleDirection or Direction.Cardinal.Forward
-        Inst.LatchedActionResidualAngle = locked_on
+        Inst.StopDirectionResidualAngle = locked_on
             and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
             and clamp_direction_residual(
                 Direction.GetCardinalResidual(Inst.MoveDirectionAngle, stop_direction),
                 Tuning.LockOnWarpingMaxAngle)
             or 0.0
-        Inst.LatchedActionWarpingAlpha = locked_on
+        local stop_direction_alignment_enabled = locked_on
             and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
-            and 1.0
+        Inst.StopWarpingAlpha = stop_direction_alignment_enabled and 1.0 or 0.0
+        Inst.bStopTurnRequested = stop_direction_alignment_enabled
+            and math.abs(Inst.StopDirectionResidualAngle) >= Tuning.StopTurnMinResidualAngle
+        Inst.StopTurnDirection = Inst.StopDirectionResidualAngle < 0.0
+            and Direction.Cardinal.Left
+            or Direction.Cardinal.Right
+        Inst.StopTurnWarpingAlpha = Inst.bStopTurnRequested and 1.0 or 0.0
+        -- Stop 保持斜向姿势；等 StopTurn 的换脚动画完整接管后，才允许专用曲线撤销补偿。
+        Inst.bStopTurnAlignmentCurveSeen = false
+    end
+
+    local stop_turn_alignment_curve = math.max(
+        0.0,
+        math.min(Inst:GetCurveValue(CurveNames.StopTurnDirectionAlignment) or 0.0, 1.0))
+    if Inst.bStopTurnAlignmentCurveSeen ~= true
+        and stop_turn_alignment_curve >= Tuning.StopTurnAlignmentCurveReadyThreshold
+    then
+        Inst.bStopTurnAlignmentCurveSeen = true
+    end
+    if Inst.bStopTurnAlignmentCurveSeen == true then
+        Inst.StopTurnWarpingAlpha = Inst.bStopTurnRequested == true
+            and stop_turn_alignment_curve
             or 0.0
     end
 
@@ -328,8 +338,6 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
             or Direction.Cardinal.Forward
         Inst.LatchedActionGait = pose_gait
         Inst.bLatchedActionLockedOn = locked_on
-        Inst.LatchedActionResidualAngle = 0.0
-        Inst.LatchedActionWarpingAlpha = 0.0
     end
 
     local sprint_requested = Inst.bHasMovementInput == true and Inst.DesiredGait == UE.ESKAnimGait.Sprint
@@ -340,8 +348,6 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         Inst.LatchedFreeStartDirection = sprint_direction
         Inst.LatchedActionGait = pose_gait
         Inst.bLatchedActionLockedOn = false
-        Inst.LatchedActionResidualAngle = 0.0
-        Inst.LatchedActionWarpingAlpha = 0.0
     end
     if Inst.bIsInAir == true and Inst.bWasInAir ~= true then
         -- 输入可能在离地后的下一帧释放；实际水平速度仍代表本次 Jump 已获得物理惯性，必须保持有向动画。
@@ -378,12 +384,19 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         Tuning.LockOnWarpingMaxAngle)
     Inst.StartWarpingAlpha = start_direction_alignment_enabled and 1.0 or 0.0
 
-    -- Sprint 会由 Movement 把角色本体转向移动方向；锁定地面 Walk/Run 则用最近四向素材和残差对齐解耦上下身。
-    local residual_angle = ground_direction_alignment_enabled
-        and Direction.GetCardinalResidual(Inst.MoveDirectionAngle, direction)
-        or 0.0
-    Inst.DirectionResidualAngle = clamp_direction_residual(
-        residual_angle,
+    -- Cycle 混合期间新旧方向分支会同时求值；必须分别保存各自主轴残差，不能在选择器后共用当前方向残差。
+    local cycle_direction_angle = Inst.MoveDirectionAngle or 0.0
+    Inst.CycleForwardResidualAngle = clamp_direction_residual(
+        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Forward),
+        Tuning.LockOnWarpingMaxAngle)
+    Inst.CycleBackResidualAngle = clamp_direction_residual(
+        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Back),
+        Tuning.LockOnWarpingMaxAngle)
+    Inst.CycleLeftResidualAngle = clamp_direction_residual(
+        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Left),
+        Tuning.LockOnWarpingMaxAngle)
+    Inst.CycleRightResidualAngle = clamp_direction_residual(
+        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Right),
         Tuning.LockOnWarpingMaxAngle)
     Inst.LockOnWarpingAlpha = ground_direction_alignment_enabled and 1.0 or 0.0
     Inst.bWasLockedOn = locked_on

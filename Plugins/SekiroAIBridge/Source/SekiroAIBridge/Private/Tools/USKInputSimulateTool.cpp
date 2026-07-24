@@ -1,4 +1,4 @@
-#include "Tools/USKInputSimulateTool.h"
+﻿#include "Tools/USKInputSimulateTool.h"
 #include "Editor.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -159,7 +159,7 @@ FString USKInputSimulateTool::Execute(const FString& ArgsJson, FString& OutError
 
 	if (Delay > 0.0)
 	{
-		ExecuteWithDelay(PlayWorld, Action, ValueX, ValueY, Delay);
+		ExecuteWithDelay(PlayWorld, Action, ValueX, ValueY, HoldTime, Delay);
 
 		FString Msg = FString::Printf(TEXT("已安排 %s 在 %.2f 秒后执行"), *Action, Delay);
 		if (HoldTime > 0.0)
@@ -171,7 +171,7 @@ FString USKInputSimulateTool::Execute(const FString& ArgsJson, FString& OutError
 
 	// ── 立即执行 ──
 
-	FString Result = SimulateAction(PlayWorld, Action, ValueX, ValueY, OutError);
+	FString Result = SimulateAction(PlayWorld, Action, ValueX, ValueY, HoldTime <= 0.0, OutError);
 	if (!OutError.IsEmpty())
 	{
 		return FString();
@@ -191,7 +191,25 @@ FString USKInputSimulateTool::Execute(const FString& ArgsJson, FString& OutError
 // 模拟输入 — 核心逻辑
 // ============================================================================
 
-FString USKInputSimulateTool::SimulateAction(UWorld* World, const FString& Action, float ValueX, float ValueY, FString& OutError)
+/**
+ * 在游戏线程向 PIE 的 Enhanced Input 管线注入一次动作值，并按调用方要求决定是否生成脉冲释放。
+ * 本函数不负责长按计时；长按释放由 Execute 或 ExecuteWithDelay 统一安排。
+ *
+ * @param World 当前 PIE 世界；仅用于安排脉冲释放，可为空。
+ * @param Action 输入动作的工具层名称。
+ * @param ValueX 轴动作的 X 分量；按钮动作忽略。
+ * @param ValueY 轴动作的 Y 分量；按钮动作忽略。
+ * @param bAutoPulseRelease 按钮动作是否在下一帧自动注入 false；长按时必须为 false。
+ * @param OutError 失败时写入错误原因，成功时保持为空。
+ * @return 成功时返回工具 JSON；动作无效或资产加载失败时返回空字符串。
+ */
+FString USKInputSimulateTool::SimulateAction(
+	UWorld* World,
+	const FString& Action,
+	float ValueX,
+	float ValueY,
+	bool bAutoPulseRelease,
+	FString& OutError)
 {
 	// ── 处理 release 类动作 ──
 
@@ -266,7 +284,7 @@ FString USKInputSimulateTool::SimulateAction(UWorld* World, const FString& Actio
 
 	// ── 按钮类动作：安排 1 帧后自动释放（形成完整的 pulse），确保 Started/Completed 事件触发 ──
 
-	if (!bIsAxis && World)
+	if (!bIsAxis && bAutoPulseRelease && World)
 	{
 		SchedulePulseRelease(World, InputAction);
 	}
@@ -392,7 +410,24 @@ void USKInputSimulateTool::InjectInput(UInputAction* InputAction, const FInputAc
 // 延迟执行
 // ============================================================================
 
-void USKInputSimulateTool::ExecuteWithDelay(UWorld* World, const FString& Action, float ValueX, float ValueY, float Delay)
+/**
+ * 在 PIE 世界计时器到期后注入动作，并从实际注入时刻开始计算长按释放时间。
+ * 本函数必须在游戏线程调用；它只安排计时器，不阻塞当前线程。
+ *
+ * @param World 当前 PIE 世界，不能为空。
+ * @param Action 输入动作的工具层名称。
+ * @param ValueX 轴动作的 X 分量。
+ * @param ValueY 轴动作的 Y 分量。
+ * @param HoldTime 按钮保持时间（秒）；大于零时禁用脉冲并安排自动释放。
+ * @param Delay 首次注入前的延迟（秒）。
+ */
+void USKInputSimulateTool::ExecuteWithDelay(
+	UWorld* World,
+	const FString& Action,
+	float ValueX,
+	float ValueY,
+	float HoldTime,
+	float Delay)
 {
 	if (!World)
 	{
@@ -400,13 +435,19 @@ void USKInputSimulateTool::ExecuteWithDelay(UWorld* World, const FString& Action
 	}
 
 	FTimerHandle Handle;
-	FTimerDelegate Delegate = FTimerDelegate::CreateLambda([World, Action, ValueX, ValueY]()
+	FTimerDelegate Delegate = FTimerDelegate::CreateLambda([World, Action, ValueX, ValueY, HoldTime]()
 	{
 		FString Error;
-		SimulateAction(World, Action, ValueX, ValueY, Error);
+		SimulateAction(World, Action, ValueX, ValueY, HoldTime <= 0.0f, Error);
 		if (!Error.IsEmpty())
 		{
 			UE_LOG(LogSekiroAIBridge, Warning, TEXT("input.simulate 延迟执行失败: %s"), *Error);
+			return;
+		}
+
+		if (HoldTime > 0.0f)
+		{
+			ScheduleRelease(World, Action, HoldTime);
 		}
 	});
 
@@ -414,9 +455,18 @@ void USKInputSimulateTool::ExecuteWithDelay(UWorld* World, const FString& Action
 }
 
 // ============================================================================
-// 长按后自动释放
+// 长按保持与自动释放
 // ============================================================================
 
+/**
+ * 按 PIE 世界帧率持续续注入按钮按下值，并在保持时间结束时停止续注入和注入 false。
+ * Enhanced Input 的注入值只在单帧有效，因此长按不能只依赖延迟释放。
+ * 本函数必须在游戏线程调用；它只管理当前世界的计时器，不阻塞调用线程。
+ *
+ * @param World 当前 PIE 世界，不能为空。
+ * @param Action 按钮动作的工具层名称；轴动作不会创建保持计时器。
+ * @param HoldTime 从首次注入起继续保持的秒数，必须大于零。
+ */
 void USKInputSimulateTool::ScheduleRelease(UWorld* World, const FString& Action, float HoldTime)
 {
 	if (!World || HoldTime <= 0.0f)
@@ -440,26 +490,36 @@ void USKInputSimulateTool::ScheduleRelease(UWorld* World, const FString& Action,
 		return; // 轴动作持续注入，不自动释放
 	}
 
-	FTimerHandle Handle;
-	FTimerDelegate Delegate = FTimerDelegate::CreateLambda([Action]()
+	FString Error;
+	UInputAction* InputAction = GetInputAction(Action, Error);
+	if (!InputAction)
 	{
-		FString Error;
+		UE_LOG(LogSekiroAIBridge, Warning, TEXT("input.simulate 保持失败: %s"), *Error);
+		return;
+	}
 
-		// 找到对应的 InputAction
-		UInputAction* InputAction = GetInputAction(Action, Error);
-		if (!InputAction)
-		{
-			UE_LOG(LogSekiroAIBridge, Warning, TEXT("input.simulate 释放失败: %s"), *Error);
-			return;
-		}
+	const float ReinjectionInterval = FMath::Max(World->GetDeltaSeconds(), 0.01f);
+	TSharedRef<FTimerHandle> HoldTimerHandle = MakeShared<FTimerHandle>();
+	FTimerDelegate HoldDelegate = FTimerDelegate::CreateLambda([InputAction]()
+	{
+		InjectInput(InputAction, FInputActionValue(true));
+	});
+	World->GetTimerManager().SetTimer(
+		*HoldTimerHandle,
+		HoldDelegate,
+		ReinjectionInterval,
+		true);
 
-		// 注入 false 模拟释放
+	FTimerHandle ReleaseTimerHandle;
+	FTimerDelegate ReleaseDelegate = FTimerDelegate::CreateLambda(
+		[World, Action, InputAction, HoldTimerHandle]()
+	{
+		World->GetTimerManager().ClearTimer(*HoldTimerHandle);
 		InjectInput(InputAction, FInputActionValue(false));
 
 		UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: 自动释放 %s"), *Action);
 	});
-
-	World->GetTimerManager().SetTimer(Handle, Delegate, HoldTime, false);
+	World->GetTimerManager().SetTimer(ReleaseTimerHandle, ReleaseDelegate, HoldTime, false);
 }
 
 // ============================================================================

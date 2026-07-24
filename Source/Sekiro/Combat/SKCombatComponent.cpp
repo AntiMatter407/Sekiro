@@ -97,6 +97,29 @@ void USKCombatComponent::SetCombatActionState(ESKCombatActionState NewState)
     CombatActionState = NewState;
 }
 
+/**
+ * 查询 AnimGraph 应持续输出的基础战斗姿态，不推进 Lua 战斗状态机。
+ * 该姿态独立于当前离散动作，因此攻击 Montage 覆盖期间仍可保留防御底层 Pose。
+ * 仅允许游戏线程读取。
+ *
+ * @return Lua 最近发布的基础战斗姿态枚举。
+ */
+ESKCombatPostureState USKCombatComponent::GetCombatPostureState() const
+{
+    return CombatPostureState;
+}
+
+/**
+ * 写入供 AnimBlueprint 消费的基础战斗姿态，不修改动作状态，也不播放或停止动画。
+ * 仅允许游戏线程由 Lua 战斗状态机调用。
+ *
+ * @param NewState 要立即发布的新基础战斗姿态。
+ */
+void USKCombatComponent::SetCombatPostureState(ESKCombatPostureState NewState)
+{
+    CombatPostureState = NewState;
+}
+
 /** 查询当前离散动作已提交的攻击侧；仅允许游戏线程读取。 */
 ESKAttackSide USKCombatComponent::GetCommittedAttackSide() const
 {
@@ -518,6 +541,7 @@ void USKCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     IncomingAttackContext = FSKIncomingAttackAnimationContext();
     bGuardHeld = false;
     CombatActionState = ESKCombatActionState::Neutral;
+    CombatPostureState = ESKCombatPostureState::Normal;
     Super::EndPlay(EndPlayReason);
 }
 

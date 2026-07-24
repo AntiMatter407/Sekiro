@@ -9,12 +9,14 @@
 #include "IAnimationBlueprintEditorModule.h"
 #include "HAL/FileManager.h"
 #include "IDirectoryWatcher.h"
+#include "Logging/MessageLog.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "SekiroLuaAnimDebugRuntime.h"
 #include "SekiroLuaAnimSnapshotViewer.h"
 #include "SekiroLuaAnimBlueprintEditorBinding.h"
 #include "SekiroLuaAnimBlueprintAutoCompileScheduler.h"
+#include "SekiroLuaTransitionRuntimeLibrary.h"
 #include "ToolMenus.h"
 #include "UnLuaFunctionLibrary.h"
 #include "UnLuaModule.h"
@@ -27,6 +29,68 @@ DEFINE_LOG_CATEGORY_STATIC(LogSekiroAnimBlueprintExtEditor, Log, All);
 namespace SekiroAnimBlueprintExtEditorPrivate
 {
 const FName LuaAnimSnapshotViewerTabName(TEXT("LuaAnimSnapshotViewer"));
+
+/**
+ * 将一条 Lua 动画蓝图结构化诊断格式化为 PIE 错误面板文本。
+ * 仅处理内存中的诊断数据，不修改资产；来源未知时仍保留稳定错误代码和消息。
+ *
+ * @param Diagnostic 编译器返回的只读诊断。
+ * @return 包含错误代码、消息及 Lua 模块行列的单行文本。
+ */
+FText FormatPIECompileDiagnostic(const FSekiroAnimIRDiagnostic& Diagnostic)
+{
+    const FString Source = Diagnostic.SourceLocation.LuaModule.IsEmpty()
+        ? TEXT("UnknownLuaModule")
+        : Diagnostic.SourceLocation.LuaModule;
+    return FText::FromString(FString::Printf(
+        TEXT("%s: %s (%s:%d:%d)"),
+        *Diagnostic.Code.ToString(),
+        *Diagnostic.Message,
+        *Source,
+        Diagnostic.SourceLocation.Line,
+        Diagnostic.SourceLocation.Column));
+}
+
+/**
+ * 将 PIE 前 Lua 动画蓝图编译失败作为一次性 Error 写入并打开 PIE Message Log。
+ * 只能在游戏线程的 PreBeginPIE 回调中调用；本函数只报告已有诊断，不执行编译或重试。
+ *
+ * @param Diagnostics 本次同步编译产生的只读诊断；为空时输出通用失败信息。
+ */
+void ReportPIECompileFailure(const TArray<FSekiroAnimIRDiagnostic>& Diagnostics)
+{
+    check(IsInGameThread());
+    FMessageLog PIEMessageLog(TEXT("PIE"));
+    PIEMessageLog.NewPage(FText::FromString(TEXT("Lua AnimBlueprint Pre-PIE Compile")));
+    PIEMessageLog.Error(FText::FromString(
+        TEXT("Lua 动画蓝图在 PIE 开始前编译失败；本次运行保留上一次成功生成的动画类，运行时不会重试编译。")));
+
+    bool bHasDetailedError = false;
+    for (const FSekiroAnimIRDiagnostic& Diagnostic : Diagnostics)
+    {
+        const FText Message = FormatPIECompileDiagnostic(Diagnostic);
+        if (Diagnostic.Severity == ESekiroAnimIRDiagnosticSeverity::Error)
+        {
+            PIEMessageLog.Error(Message);
+            bHasDetailedError = true;
+        }
+        else
+        {
+            PIEMessageLog.Warning(Message);
+        }
+    }
+    if (!bHasDetailedError)
+    {
+        PIEMessageLog.Error(FText::FromString(
+            TEXT("编译器未返回具体错误诊断，请查看 Output Log 中的 LogSekiroLuaAnimBlueprintCompiler。")));
+    }
+
+    PIEMessageLog.Notify(
+        FText::FromString(TEXT("Lua 动画蓝图编译失败")),
+        EMessageSeverity::Error,
+        true);
+    PIEMessageLog.Open(EMessageSeverity::Error, true);
+}
 }
 
 /** 管理 Lua 动画源码监听、PIE 前同步编译以及官方动画蓝图编辑器工具栏扩展。 */
@@ -55,7 +119,7 @@ private:
     FString WatchedAnimationScriptRoot; // 注册和注销使用的 ScriptRoot/Animation 目录
     FDelegateHandle DirectoryWatcherHandle; // DirectoryWatcher 回调句柄
     FDelegateHandle PreBeginPIEHandle; // PIE 前同步编译委托句柄
-    FDelegateHandle EndPIEHandle; // PIE 结束自动关闭快照委托句柄
+    FDelegateHandle EndPIEHandle; // PIE 结束自动关闭全部 Lua 动画调试委托句柄
     FDelegateHandle ToolbarExtenderHandle; // 官方动画蓝图编辑器工具栏扩展句柄
     TArray<TSharedPtr<FSekiroLuaAnimBlueprintEditorBinding>> EditorBindings; // 每个命令列表唯一的安全绑定
     TAtomic<bool> bShuttingDown = false; // 阻止关闭阶段继续接收变化
@@ -344,7 +408,7 @@ void FSekiroAnimBlueprintExtEditorModule::HandleDirectoryChanged(
 }
 
 /**
- * 在 PIE/SIE 创建 PlayWorld 前同步消费尚未派发的源变化，并编译全部已加载 Dirty Lua AnimBlueprint。
+ * 在 PIE/SIE 创建 PlayWorld 前关闭全部 Lua 动画采样、重置运行缓存，再编译已加载 Dirty Lua AnimBlueprint。
  * 只能在游戏线程调用；失败会保留各资产上一次成功 GeneratedClass 和 Dirty 状态，但本委托不取消 PIE。
  *
  * @param bIsSimulatingInEditor true 表示 SIE，false 表示 PIE；两种模式采用同一编译规则。
@@ -352,6 +416,8 @@ void FSekiroAnimBlueprintExtEditorModule::HandleDirectoryChanged(
 void FSekiroAnimBlueprintExtEditorModule::HandlePreBeginPIE(
     const bool bIsSimulatingInEditor)
 {
+    USekiroLuaTransitionRuntimeLibrary::ResetRuntimeCachesForPIESession();
+    FSekiroLuaAnimDebugRuntime::ResetForPIEStart();
     MarkPendingSourceChanges(Scheduler);
 
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
@@ -361,17 +427,18 @@ void FSekiroAnimBlueprintExtEditorModule::HandlePreBeginPIE(
             Diagnostics);
     if (!bSucceeded)
     {
+        SekiroAnimBlueprintExtEditorPrivate::ReportPIECompileFailure(Diagnostics);
         UE_LOG(
             LogSekiroAnimBlueprintExtEditor,
             Error,
-            TEXT("One or more dirty Lua AnimBlueprints failed to compile before PIE; previous generated classes remain active."));
+            TEXT("Lua AnimBlueprint pre-PIE compilation failed; detailed Error entries were opened in the PIE Message Log, and runtime compilation retry is disabled."));
     }
 }
 
 /**
- * 在 PIE/SIE 完全结束时 Flush 并关闭活动快照 Session，确保 JSONL 文件不再被编辑器进程占用。
+ * 在 PIE/SIE 完全结束时关闭实时层级 Debug 与 Snapshot，并 Flush JSONL 后释放文件句柄。
  * 只能由 FEditorDelegates::EndPIE 在游戏线程调用；参数仅标识 SIE/PIE，两种模式采用相同行为。
- * 本回调不关闭实时层级 Debug，也不清除最后快照路径。
+ * 回调清除本次运行的实时帧和实例缓存，但保留最后快照路径供查看器读取。
  *
  * @param bIsSimulatingInEditor true 表示刚结束 SIE，false 表示刚结束 PIE。
  */
@@ -379,7 +446,8 @@ void FSekiroAnimBlueprintExtEditorModule::HandleEndPIE(
     const bool bIsSimulatingInEditor)
 {
     static_cast<void>(bIsSimulatingInEditor);
-    FSekiroLuaAnimDebugRuntime::StopSnapshotSession();
+    USekiroLuaTransitionRuntimeLibrary::ResetRuntimeCachesForPIESession();
+    FSekiroLuaAnimDebugRuntime::ResetForPIEEnd();
 }
 
 /**

@@ -11,7 +11,7 @@
 
 ## 一、设计结论
 
-当前阶段采用“通用 C++ 动作宿主 + Lua 动作状态机 + 活动 Sequence 曲线 + 模拟来袭测试入口”的结构：
+当前阶段采用“通用 C++ 动作宿主 + Lua 动作状态机 + 原生基础姿态状态机 + 全身 Slot + 活动 Sequence 曲线”的混合结构：
 
 ```text
 SKInputManager Started/Completed Events
@@ -23,7 +23,7 @@ USKCombatComponent <-> Gameplay.Sekiro.Combat.SKCombatComponent.lua
         |              SimulatedIncomingAttack
         |              Type / Serial / Time Range
         v
-CombatFullBodySlot / Guard StateMachine
+CombatBasePose StateMachine -> CombatFullBodySlot
         |
         v
 Active Sequence Curves
@@ -51,6 +51,9 @@ Active Sequence Curves
 8. Falling 时的首段攻击进入 `Air_Combo_01`；活动空中攻击落地后按编号切换到对应 `Land_Combo`。
 9. 空中链和落地链均为三段轻攻击链，长按不升级重攻击；第三段自然结束。
 10. 地面攻击只在独立 `CanCancelToJump` 窗口内允许 Jump；普通防御始终允许 Jump，并在 Guard Held 时续接空中防御。
+11. `CombatActionState` 与 `CombatPostureState` 相互独立；攻击 Montage 覆盖期间可以继续保持 Guard 基础姿态意图。
+12. 防御阶段短按攻击进入左侧轻攻击，长按进入左侧重攻击；攻击结束时 Guard 仍按住则返回 Guarding。
+13. 地面防御按下攻击立即播放 `Charged_Thrust_Left` 作为共用起手；阈值前释放切入 `Left`，达到 `0.30s` 时原地提交为重攻击并继续当前 Montage。
 
 ## 二、现有基础与缺口
 
@@ -171,6 +174,32 @@ enum class ESKCombatActionState : uint8
 ```
 
 枚举只表达当前动画动作阶段的通用状态。`Right`、`Combo_01` 等具体动作 ID 保存在 Lua 配置和运行时字符串/FName 中；BlockReaction、HitStun、PostureBroken 和 Dead 在对应玩法接入时再增加。
+
+基础姿态使用独立枚举，禁止再从离散动作状态反推：
+
+```cpp
+UENUM(BlueprintType)
+enum class ESKCombatPostureState : uint8
+{
+    Normal,
+    GuardGround,
+    GuardAir,
+};
+```
+
+`CombatActionState` 决定输入仲裁和当前离散动作；`CombatPostureState` 只决定全身 Slot 下方持续输出的基础 Pose。二者分离后，防御起手攻击可以在播放攻击 Montage 的同时保留回防意图。
+
+防御攻击使用可替换的共用起手配置：
+
+```text
+GuardRaise / Guarding / GuardLower
+-> Attack Started
+-> PendingAttack + GuardAttackStartup_Left
+   ├─ Completed < 0.30s -> Left
+   └─ Montage Position >= 0.30s -> 同一 ActionSerial 原地提交 Charged_Thrust_Left
+```
+
+首版复用 `Charged_Thrust_Left` 本身作为起手，因此长按路径不停止、不重启 Montage。短按路径使用普通攻击淡入淡出参数切入 `Left`；后续找到独立共用前摇资产时只替换 Lua 配置，不改变裁决流程。
 
 ### 4.3 输入事件
 
@@ -630,7 +659,7 @@ Air Attack/Pending/Deflect/Dodge -> Reject
 
 攻击取消使用独立 `CanCancelToJump`，数据来自原始 TAE JT119；`Left`、`Combo_01` 和 Land 三段缺失的首段窗口统一补为 `0.00~0.10s`。合法取消必须停止 Montage、失效旧 ActionSerial、清除 PendingAttack，并在物理 Jump 前切回 Neutral。
 
-防御跳跃额外返回 `resume_air_guard`。输入层先完成 Root Motion 交接和 `JumpOwner()`，只有防御键仍按住时才播放 `Guard.Air_Raise`。Raise 完成进入 Guarding 后，Guard Pose 根据 `bIsInAir` 在地面 Idle/Move 和 `Guard.Air_Idle` 之间选择；空中释放防御使用 `Guard.Air_Lower`。
+防御跳跃额外返回 `resume_air_guard`。输入层先完成 Root Motion 交接和 `JumpOwner()`，只有防御键仍按住时才播放 `Guard.Air_Raise`。Raise 完成进入 Guarding 后，Gameplay Lua 将独立姿态写为 `GuardAir`；落地或走下边缘时同步切换 `GuardGround/GuardAir`，空中释放防御使用 `Guard.Air_Lower`。
 
 ## 九、动作转换表
 
@@ -659,10 +688,11 @@ Light 转换使用固定动作链；SideSnapshot 用于验证目标动作侧、�
 建议根图调整为：
 
 ```text
-RootLocomotion
--> Inertialization
+CombatBasePose StateMachine
+├─ Normal -> RootLocomotion -> Inertialization
+├─ GuardGround -> Guard Idle/Move
+└─ GuardAir -> Guard Air Idle
 -> WeaponUpperBodySlot + Spine Layer Blend
--> Guard Pose Blend/StateMachine
 -> CombatFullBodySlot
 -> FootPlacement / LegIK
 -> Result
@@ -670,11 +700,13 @@ RootLocomotion
 
 `CombatFullBodySlot` 必须覆盖完整骨架，当前承担轻攻击、重攻击和 Deflect 等离散动作。该 Slot 由 `USKCombatComponent` 独占；开始战斗动作前必须停止或拒绝与其冲突的收拔刀 Montage，并明确配置 SlotGroup，不能让武器管理器和战斗组件同时认为自己拥有活动 Montage。
 
-持续 Guard 使用状态机而不是循环动态 Montage：
+持续姿态使用正式状态机而不是根图布尔 Pose 选择器或循环动态 Montage：
 
 ```text
-Raise -> GuardIdle/GuardMove -> Lower
+Normal <-> GuardGround <-> GuardAir
 ```
+
+`Normal` 状态内部输出既有 `RootLocomotion`；`GuardGround` 输出 Guard Idle/Move，`GuardAir` 输出 Air Idle。Raise、Lower、攻击和 Deflect 继续作为可抢占的离散动作从 `CombatFullBodySlot` 播放。
 
 ### 10.2 Foot IK
 
@@ -687,6 +719,7 @@ Raise -> GuardIdle/GuardMove -> Lower
 - Deflect：默认禁用位移型 Root Motion，只保留姿势；最终以资产核验结果为准。
 - 空中攻击：空中轨迹继续由 CharacterMovement 驱动，忽略水平 Root Motion。
 - 落地攻击：允许使用资产 Root Motion，由 `CombatFullBodySlot` 覆盖普通 Jump Land。
+- Root Motion 所有权由输入层成对交接：Jump 前切换为 `IgnoreRootMotion`，观察到 Falling 后的首次落地帧显式恢复 `RootMotionFromEverything`。InputManager 是 CombatComponent 的 Tick 前置，因此恢复必须早于同帧 Land Montage 启动；Jump 未成功离地时使用短超时兜底恢复。
 
 ## 十一、攻击盒和命中（后续阶段）
 

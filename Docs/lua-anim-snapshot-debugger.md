@@ -47,6 +47,8 @@ Sekiro.LuaAnim.Snapshot 0.25
 Sekiro.LuaAnim.Snapshot.Stop
 ```
 
+PIE 或 SIE 结束时，编辑器会自动执行统一清理：实时层级视图恢复为关闭状态，活动 Snapshot 被 Flush 并释放文件句柄，本次运行的实时帧和 Transition 缓存被清空。最后快照路径会保留给时间轴查看器；下一次 PIE 不会自动恢复上一次的 `Debug` 或 `Snapshot`。
+
 每次开始命令都会结束旧 Session，并在 `Saved/LuaAnimSnapshots/` 创建新的 `.jsonl` 文件。记录器会立即保存 Start 帧，此后按间隔采样；任一活跃状态机、活跃分支、Sequence 或 Montage 发生离散变化时立即保存 `StateChanged` 帧，并从该时刻重新计算下一个定时采样点。同一游戏帧最多写入一个快照。
 
 每个快照包含：

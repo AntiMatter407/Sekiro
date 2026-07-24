@@ -52,6 +52,7 @@ USekiroLuaAnimBlueprintExtension* USekiroLuaAnimBlueprintExtension::Request(
  */
 void USekiroLuaAnimBlueprintExtension::MarkCompileSucceeded()
 {
+    CompilerVersion = CurrentCompilerVersion;
     ++SuccessfulCompileRevision;
     SuccessfulSourceRevision = SourceRevision;
     bSourceDirty = false;

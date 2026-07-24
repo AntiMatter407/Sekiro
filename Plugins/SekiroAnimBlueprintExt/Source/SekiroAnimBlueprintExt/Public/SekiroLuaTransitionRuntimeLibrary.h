@@ -7,7 +7,7 @@
 
 class UAnimInstance;
 
-/** 在游戏线程执行 Lua 动画更新与 Transition Rule。 */
+/** 执行游戏线程 Lua 更新、兼容 Rule，以及任意线程安全的原生 Transition 调试透传。 */
 UCLASS()
 class SEKIROANIMBLUEPRINTEXT_API USekiroLuaTransitionRuntimeLibrary : public UBlueprintFunctionLibrary
 {
@@ -31,7 +31,7 @@ public:
         const FString& RuleFunctionName);
 
     // ── Transition Debug Pass-through ────────────────────────
-    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug")
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug", meta = (BlueprintThreadSafe))
     static bool RecordBoolTransitionDebugValue(
         UAnimInstance* AnimInstance,
         const FString& TransitionId,
@@ -42,7 +42,7 @@ public:
         bool Result,
         bool bIsFinal);
 
-    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug")
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug", meta = (BlueprintThreadSafe))
     static bool RecordFloatTransitionDebugValue(
         UAnimInstance* AnimInstance,
         const FString& TransitionId,
@@ -53,11 +53,14 @@ public:
         bool Result,
         bool bIsFinal);
 
-    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug")
+    UFUNCTION(BlueprintPure, Category = "Sekiro|Animation|Lua Debug", meta = (BlueprintThreadSafe))
     static bool RecordTransitionExpressionDebugValue(
         UAnimInstance* AnimInstance,
         const FString& TransitionId,
         const FString& ExpressionLabel,
         bool Result,
         bool bIsFinal);
+
+    /** PIE/SIE 边界清除失败抑制与动态类属性缓存。 */
+    static void ResetRuntimeCachesForPIESession();
 };

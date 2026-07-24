@@ -6,6 +6,7 @@
 ---@field CanEnterLoop string Start 或锁定 Jump InAir 过渡段已进入可衔接循环姿势的窗口。
 ---@field CanEnterStop string Start/Cycle 已进入可自然衔接 Stop 的脚步窗口。
 ---@field CanEnterIdle string Stop 已进入可回 Idle 或退出外层 Sprint 的窗口。
+---@field StopTurnDirectionAlignment string StopTurn 换脚期间撤销锁定方向补偿的连续权重。
 ---@field CanExitStep string Step 已进入可返回普通地面移动的尾部窗口。
 ---@field CanExitTurn string 原地 Turn 已进入可返回 Idle 或接受后续转向的尾部窗口。
 ---@field CanEnterInAir string Jump Start 已进入可衔接 InAir 姿势的窗口。
@@ -22,6 +23,7 @@ local CurveNames = {
     CanEnterLoop = "CanEnterLoop",
     CanEnterStop = "CanEnterStop",
     CanEnterIdle = "CanEnterIdle",
+    StopTurnDirectionAlignment = "StopTurnDirectionAlignment",
     CanExitStep = "CanExitStep",
     CanExitTurn = "CanExitTurn",
     CanEnterInAir = "CanEnterInAir",

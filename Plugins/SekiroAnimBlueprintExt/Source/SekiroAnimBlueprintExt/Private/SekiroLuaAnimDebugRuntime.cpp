@@ -3,6 +3,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimNodeBase.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Containers/Queue.h"
 #include "Containers/StringConv.h"
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
@@ -41,10 +42,17 @@ namespace SekiroLuaAnimDebugPrivate
         int32 ParentIndex = INDEX_NONE; // 扁平数组父索引
     };
 
+    struct FPendingTransitionDebugValue
+    {
+        TWeakObjectPtr<UAnimInstance> AnimInstance; // 产生该结果的动画实例
+        FSekiroLuaAnimTransitionDebugValue Value; // 工作线程完成构造的不可变调试值
+    };
+
     struct FRuntimeState
     {
         EDebugView DebugView = EDebugView::Off; // 当前屏幕视图
         TMap<TWeakObjectPtr<UAnimInstance>, FString> LuaModules; // 实例模块映射
+        TMap<FString, FString> ResolvedAnimationNames; // 当前 PIE 的 Lua 动画名解析缓存
         TMap<TWeakObjectPtr<UAnimInstance>, TArray<FSekiroLuaAnimTransitionDebugValue>> Transitions; // 最近规则值
         FSekiroLuaAnimDebugFrame LatestFrame; // 供 Editor 读取的最近帧
         bool bHasLatestFrame = false; // 最近帧是否有效
@@ -53,6 +61,7 @@ namespace SekiroLuaAnimDebugPrivate
         float SnapshotInterval = DefaultSnapshotInterval; // 定时间隔秒
         double SessionStartSeconds = 0.0; // Session 平台起点
         double NextCaptureSeconds = 0.0; // 下次定时采样时间
+        double NextInspectionSeconds = 0.0; // Snapshot-only 下次允许重建节点树的时间
         uint64 NextFrameIndex = 0; // 下一个帧序号
         FString PreviousStateSignature; // 上次检测的状态签名
         FString SnapshotPath; // 当前 JSONL 路径
@@ -64,6 +73,85 @@ namespace SekiroLuaAnimDebugPrivate
     };
 
     FRuntimeState RuntimeState;
+    TAtomic<bool> SamplingEnabledForAnyThread(false); // 工作线程只读的采样开关
+    TQueue<FPendingTransitionDebugValue, EQueueMode::Mpsc> PendingTransitionValues; // 并行动画线程待合并记录
+
+    /**
+     * 按 Transition 与表达式身份保存最新一次不同的求值，避免采样期间累积逐帧历史。
+     * 只能在游戏线程修改目标数组；相同值保持原时间戳，变化值原位替换，不改变稳定显示顺序。
+     *
+     * @param Values 当前 AnimInstance 的最新 Transition 值集合。
+     * @param Value 本次待合并值，函数会移动其字符串所有权。
+     */
+    void StoreLatestTransitionValue(
+        TArray<FSekiroLuaAnimTransitionDebugValue>& Values,
+        FSekiroLuaAnimTransitionDebugValue&& Value)
+    {
+        FSekiroLuaAnimTransitionDebugValue* Existing = Values.FindByPredicate(
+            [&Value](const FSekiroLuaAnimTransitionDebugValue& Candidate)
+            {
+                return Candidate.TransitionId == Value.TransitionId
+                    && Candidate.ExpressionLabel == Value.ExpressionLabel
+                    && Candidate.bIsFinal == Value.bIsFinal;
+            });
+        if (Existing == nullptr)
+        {
+            Values.Add(MoveTemp(Value));
+            return;
+        }
+        if (Existing->ParameterName == Value.ParameterName
+            && Existing->ParameterType == Value.ParameterType
+            && Existing->ParameterValue == Value.ParameterValue
+            && Existing->ExpectedValue == Value.ExpectedValue
+            && Existing->Threshold == Value.Threshold
+            && Existing->bExpressionResult == Value.bExpressionResult
+            && Existing->bRuleResult == Value.bRuleResult)
+        {
+            return;
+        }
+        *Existing = MoveTemp(Value);
+    }
+
+    /** 根据仅由游戏线程修改的 Debug/Snapshot 状态发布任意线程可读采样开关。 */
+    void RefreshSamplingEnabledForAnyThread()
+    {
+        check(IsInGameThread());
+        SamplingEnabledForAnyThread.Store(
+            RuntimeState.DebugView == EDebugView::Hierarchy
+                || RuntimeState.bSnapshotActive,
+            EMemoryOrder::SequentiallyConsistent);
+    }
+
+    /**
+     * 把并行动画线程提交的 Transition 值合并到游戏线程实例表。
+     * 只能在游戏线程采帧或结束 PIE 时调用；失效实例和采样关闭后的残留记录直接丢弃。
+     */
+    void DrainPendingTransitionValues()
+    {
+        check(IsInGameThread());
+        FPendingTransitionDebugValue Pending;
+        while (PendingTransitionValues.Dequeue(Pending))
+        {
+            if (!SamplingEnabledForAnyThread.Load(EMemoryOrder::SequentiallyConsistent)
+                || !Pending.AnimInstance.IsValid())
+            {
+                continue;
+            }
+            TArray<FSekiroLuaAnimTransitionDebugValue>& Values =
+                RuntimeState.Transitions.FindOrAdd(Pending.AnimInstance);
+            StoreLatestTransitionValue(Values, MoveTemp(Pending.Value));
+        }
+    }
+
+    /** 清空尚未由游戏线程消费的并行动画 Transition 值。 */
+    void DiscardPendingTransitionValues()
+    {
+        check(IsInGameThread());
+        FPendingTransitionDebugValue Pending;
+        while (PendingTransitionValues.Dequeue(Pending))
+        {
+        }
+    }
 
     /** 仅移除本功能固定 Key 的屏幕内容。 */
     void RemoveScreenMessage()
@@ -242,29 +330,52 @@ namespace SekiroLuaAnimDebugPrivate
     }
 
     /**
-     * 尝试调用 Lua 模块的 ResolveDebugAnimationName(NativeAssetName)。
-     * 仅游戏线程使用当前实例 UnLua 环境；任何缺失、错误或非字符串结果均静默回退原生名。
+     * 从已加载 Lua 模块调用 ResolveDebugAnimationName，并缓存成功或失败结果。
+     * 只能在游戏线程调用；本函数绝不 require 模块，因此不会在 Debug/Snapshot 采样中触发动画蓝图编译。
+     *
+     * @param AnimInstance 提供当前 UnLua 环境的动画实例；可空，空值直接回退原生名。
+     * @param LuaModuleName 已由运行时登记的动画蓝图模块名；不能为空。
+     * @param NativeAssetName UE 调试树给出的原生动画资产名；不能为空。
+     * @return 已加载模块返回的 Lua 动画名；模块、函数或结果无效时返回原生名，并缓存该回退结果。
      */
     FString ResolveAnimationName(UAnimInstance* AnimInstance, const FString& LuaModuleName, const FString& NativeAssetName)
     {
         if (AnimInstance == nullptr || LuaModuleName.IsEmpty() || NativeAssetName.IsEmpty()) return NativeAssetName;
-        IUnLuaModule* UnLuaModule = FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
-        if (UnLuaModule == nullptr || !UnLuaModule->IsActive()) return NativeAssetName;
+        check(IsInGameThread());
+
+        const FString CacheKey = LuaModuleName + TEXT("\n") + NativeAssetName;
+        const FString* CachedName = RuntimeState.ResolvedAnimationNames.Find(CacheKey);
+        if (CachedName != nullptr) return *CachedName;
+        auto CacheFallback = [&CacheKey, &NativeAssetName]()
+        {
+            RuntimeState.ResolvedAnimationNames.Add(CacheKey, NativeAssetName);
+            return NativeAssetName;
+        };
+
+        IUnLuaModule* UnLuaModule = FModuleManager::GetModulePtr<IUnLuaModule>(TEXT("UnLua"));
+        if (UnLuaModule == nullptr || !UnLuaModule->IsActive()) return CacheFallback();
         UnLua::FLuaEnv* Environment = UnLuaModule->GetEnv(AnimInstance);
-        if (Environment == nullptr) return NativeAssetName;
+        if (Environment == nullptr) return CacheFallback();
         lua_State* State = Environment->GetMainState();
         const int32 InitialTop = lua_gettop(State);
         ON_SCOPE_EXIT { lua_settop(State, InitialTop); };
+
+        lua_getglobal(State, "package");
+        if (!lua_istable(State, -1)) return CacheFallback();
+        lua_getfield(State, -1, "loaded");
+        if (!lua_istable(State, -1)) return CacheFallback();
         const FTCHARToUTF8 ModuleUtf8(*LuaModuleName);
-        lua_getglobal(State, "require");
         lua_pushlstring(State, ModuleUtf8.Get(), ModuleUtf8.Length());
-        if (lua_pcall(State, 1, 1, 0) != LUA_OK || !lua_istable(State, -1)) return NativeAssetName;
-        if (lua_getfield(State, -1, "ResolveDebugAnimationName") != LUA_TFUNCTION) return NativeAssetName;
+        lua_rawget(State, -2);
+        if (!lua_istable(State, -1)) return CacheFallback();
+        if (lua_getfield(State, -1, "ResolveDebugAnimationName") != LUA_TFUNCTION) return CacheFallback();
         const FTCHARToUTF8 NativeUtf8(*NativeAssetName);
         lua_pushlstring(State, NativeUtf8.Get(), NativeUtf8.Length());
-        if (lua_pcall(State, 1, 1, 0) != LUA_OK || !lua_isstring(State, -1)) return NativeAssetName;
+        if (lua_pcall(State, 1, 1, 0) != LUA_OK || !lua_isstring(State, -1)) return CacheFallback();
         const FString Resolved = UTF8_TO_TCHAR(lua_tostring(State, -1));
-        return Resolved.IsEmpty() ? NativeAssetName : Resolved;
+        const FString Result = Resolved.IsEmpty() ? NativeAssetName : Resolved;
+        RuntimeState.ResolvedAnimationNames.Add(CacheKey, Result);
+        return Result;
     }
 
     /** 从 raw 中提取可靠的 `Key: Value` 数值输入；找不到时不写入。 */
@@ -682,9 +793,9 @@ namespace SekiroLuaAnimDebugPrivate
         if (!RuntimeState.SnapshotFile.IsValid()) return false;
         const FString Line = FrameToJsonLine(Frame) + LINE_TERMINATOR;
         FTCHARToUTF8 Utf8(*Line);
-        const bool bWritten = RuntimeState.SnapshotFile->Write(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
-        RuntimeState.SnapshotFile->Flush();
-        return bWritten;
+        return RuntimeState.SnapshotFile->Write(
+            reinterpret_cast<const uint8*>(Utf8.Get()),
+            Utf8.Length());
     }
 
     /** 成功写帧后消费该目标自上一快照以来的 Transition 值，实时帧不会调用本函数。 */
@@ -709,6 +820,8 @@ namespace SekiroLuaAnimDebugPrivate
         RuntimeState.bSnapshotActive = false;
         RuntimeState.bIntervalSamplingEnabled = false;
         RuntimeState.PreviousStateSignature.Reset();
+        RuntimeState.NextInspectionSeconds = 0.0;
+        RefreshSamplingEnabledForAnyThread();
     }
 
     /**
@@ -746,6 +859,7 @@ namespace SekiroLuaAnimDebugPrivate
 
         RuntimeState.bSnapshotActive = true;
         RuntimeState.bIntervalSamplingEnabled = bEnableIntervalSampling;
+        RefreshSamplingEnabledForAnyThread();
         RuntimeState.SessionStartSeconds = FPlatformTime::Seconds();
         RuntimeState.NextFrameIndex = 0;
         UAnimInstance* Target = nullptr;
@@ -756,6 +870,7 @@ namespace SekiroLuaAnimDebugPrivate
         CaptureFrameValues(Target, Frame);
         RuntimeState.PreviousStateSignature = BuildStateSignature(Frame);
         RuntimeState.NextCaptureSeconds = RuntimeState.SessionStartSeconds + RuntimeState.SnapshotInterval;
+        RuntimeState.NextInspectionSeconds = RuntimeState.NextCaptureSeconds;
         RuntimeState.LatestFrame = Frame;
         RuntimeState.bHasLatestFrame = true;
         const bool bWritten = WriteFrame(Frame);
@@ -864,6 +979,7 @@ namespace SekiroLuaAnimDebugPrivate
         if (Arguments.IsEmpty()) RuntimeState.DebugView = EDebugView::Hierarchy;
         else if (Arguments.Num() == 1 && Arguments[0].Equals(TEXT("Off"), ESearchCase::IgnoreCase)) RuntimeState.DebugView = EDebugView::Off;
         else RuntimeState.DebugView = EDebugView::Help;
+        RefreshSamplingEnabledForAnyThread();
     }
 
     /**
@@ -898,7 +1014,7 @@ namespace SekiroLuaAnimDebugPrivate
         StopSnapshot();
     }
 
-    /** 每帧最多 Gather 一次并复用给实时页与 Snapshot；状态变化优先于定时原因。 */
+    /** 实时层级每帧 Gather；Snapshot-only 按采样间隔限频检查状态并复用同一帧。 */
     bool Tick(const float DeltaSeconds)
     {
         static_cast<void>(DeltaSeconds);
@@ -911,13 +1027,26 @@ namespace SekiroLuaAnimDebugPrivate
             return true;
         }
 
+        const double Now = FPlatformTime::Seconds();
+        const bool bRealtimeHierarchy = RuntimeState.DebugView == EDebugView::Hierarchy;
+        if (!bRealtimeHierarchy
+            && RuntimeState.bSnapshotActive
+            && Now < RuntimeState.NextInspectionSeconds)
+        {
+            return true;
+        }
+        if (!bRealtimeHierarchy && RuntimeState.bSnapshotActive)
+        {
+            RuntimeState.NextInspectionSeconds = Now + RuntimeState.SnapshotInterval;
+        }
+
+        DrainPendingTransitionValues();
         UAnimInstance* Target = nullptr;
         FSekiroLuaAnimDebugFrame Frame = GatherFrame(
             TEXT("Realtime"),
             RuntimeState.NextFrameIndex,
             Target);
         const FString StateSignature = BuildStateSignature(Frame);
-        const double Now = FPlatformTime::Seconds();
         if (RuntimeState.bSnapshotActive)
         {
             const bool bStateChanged = !RuntimeState.PreviousStateSignature.IsEmpty() && StateSignature != RuntimeState.PreviousStateSignature;
@@ -972,6 +1101,8 @@ void FSekiroLuaAnimDebugRuntime::Shutdown()
     check(IsInGameThread());
     StopSnapshot();
     RemoveScreenMessage();
+    SamplingEnabledForAnyThread.Store(false, EMemoryOrder::SequentiallyConsistent);
+    DiscardPendingTransitionValues();
     if (RuntimeState.TickerHandle.IsValid())
     {
         FTSTicker::GetCoreTicker().RemoveTicker(RuntimeState.TickerHandle);
@@ -984,11 +1115,14 @@ void FSekiroLuaAnimDebugRuntime::Shutdown()
     RuntimeState = FRuntimeState();
 }
 
-/** 查询实时或 JSONL 是否需要采样；禁用时调用方可保持一次分支的低开销。 */
+/**
+ * 查询实时层级或 JSONL 是否需要采样。
+ * 可由游戏线程和并行动画线程调用；返回值来自原子快照，不读取可变 RuntimeState。
+ */
 bool FSekiroLuaAnimDebugRuntime::IsSamplingEnabled()
 {
     using namespace SekiroLuaAnimDebugPrivate;
-    return RuntimeState.DebugView != EDebugView::Off || RuntimeState.bSnapshotActive;
+    return SamplingEnabledForAnyThread.Load(EMemoryOrder::SequentiallyConsistent);
 }
 
 /** 在真实 Lua Update/Transition 调用时登记实例与模块；只在游戏线程且采样开启时保留弱引用。 */
@@ -999,7 +1133,22 @@ void FSekiroLuaAnimDebugRuntime::RecordAnimInstanceModule(UAnimInstance* AnimIns
     RuntimeState.LuaModules.Add(TWeakObjectPtr<UAnimInstance>(AnimInstance), LuaModuleName);
 }
 
-/** 记录一个叶子、逻辑表达式或最终 Transition 结果；同一实例保留当前采样期真实求值序列。 */
+/**
+ * 记录一个叶子、逻辑表达式或最终 Transition 结果。
+ * 游戏线程直接追加，动画工作线程通过 MPSC 队列提交并在下一次采帧前合并；函数不执行 UObject 方法。
+ *
+ * @param AnimInstance 当前 Transition 所属实例；仅作为弱键保存，不转移所有权。
+ * @param TransitionId Transition 稳定 ID。
+ * @param ExpressionLabel AST 表达式稳定标签。
+ * @param ParameterName 本次读取的参数名；组合表达式可为空。
+ * @param ParameterType Bool、Float、Expression 或 Error。
+ * @param ParameterValue 本次真实输入值的稳定文本。
+ * @param ExpectedValue Bool 比较期望值；不适用时为空。
+ * @param Threshold Float 比较阈值；不适用时为空。
+ * @param bExpressionResult 当前表达式结果。
+ * @param bRuleResult 最终规则结果；非最终表达式传 false。
+ * @param bIsFinal 是否为接入 Transition Result 的最终值。
+ */
 void FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
     UAnimInstance* AnimInstance,
     const FString& TransitionId,
@@ -1014,7 +1163,7 @@ void FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
     const bool bIsFinal)
 {
     using namespace SekiroLuaAnimDebugPrivate;
-    if (!IsSamplingEnabled() || !IsInGameThread() || AnimInstance == nullptr) return;
+    if (!IsSamplingEnabled() || AnimInstance == nullptr) return;
     FSekiroLuaAnimTransitionDebugValue Value;
     Value.TransitionId = TransitionId;
     Value.ExpressionLabel = ExpressionLabel;
@@ -1027,9 +1176,19 @@ void FSekiroLuaAnimDebugRuntime::RecordTransitionValue(
     Value.bRuleResult = bRuleResult;
     Value.bIsFinal = bIsFinal;
     Value.EvaluatedUtcTimestamp = FDateTime::UtcNow().ToIso8601();
-    TArray<FSekiroLuaAnimTransitionDebugValue>& Values = RuntimeState.Transitions.FindOrAdd(TWeakObjectPtr<UAnimInstance>(AnimInstance));
-    Values.Add(MoveTemp(Value));
-    if (Values.Num() > 2048) Values.RemoveAt(0, Values.Num() - 2048, false);
+    const TWeakObjectPtr<UAnimInstance> WeakAnimInstance(AnimInstance);
+    if (IsInGameThread())
+    {
+        TArray<FSekiroLuaAnimTransitionDebugValue>& Values =
+            RuntimeState.Transitions.FindOrAdd(WeakAnimInstance);
+        StoreLatestTransitionValue(Values, MoveTemp(Value));
+        return;
+    }
+
+    FPendingTransitionDebugValue Pending;
+    Pending.AnimInstance = WeakAnimInstance;
+    Pending.Value = MoveTemp(Value);
+    PendingTransitionValues.Enqueue(MoveTemp(Pending));
 }
 
 /** 复制最近一帧供 Editor UI 读取；无帧时返回 false 且清空输出。 */
@@ -1059,6 +1218,39 @@ void FSekiroLuaAnimDebugRuntime::StopSnapshotSession()
 {
     check(IsInGameThread());
     SekiroLuaAnimDebugPrivate::StopSnapshot();
+}
+
+/**
+ * 在 PIE/SIE 创建 PlayWorld 前强制关闭实时 Debug 与 Snapshot，保证每次运行默认无采样负担。
+ * 只能由编辑器 PreBeginPIE 生命周期在游戏线程调用；会 Flush 未关闭文件并保留最后快照路径。
+ */
+void FSekiroLuaAnimDebugRuntime::ResetForPIEStart()
+{
+    ResetForPIEEnd();
+}
+
+/**
+ * 在 PIE/SIE 结束后关闭实时层级 Debug 与 Snapshot，Flush 文件并清除仅属于本次运行的采样缓存。
+ * 只能由编辑器 EndPIE 生命周期在游戏线程调用；保留最后快照路径，供时间轴查看器继续加载刚结束的记录。
+ */
+void FSekiroLuaAnimDebugRuntime::ResetForPIEEnd()
+{
+    using namespace SekiroLuaAnimDebugPrivate;
+    check(IsInGameThread());
+    StopSnapshot();
+    RemoveScreenMessage();
+    SamplingEnabledForAnyThread.Store(false, EMemoryOrder::SequentiallyConsistent);
+    DiscardPendingTransitionValues();
+    RuntimeState.DebugView = EDebugView::Off;
+    RuntimeState.LuaModules.Reset();
+    RuntimeState.ResolvedAnimationNames.Reset();
+    RuntimeState.Transitions.Reset();
+    RuntimeState.LatestFrame = FSekiroLuaAnimDebugFrame();
+    RuntimeState.bHasLatestFrame = false;
+    RuntimeState.SessionStartSeconds = 0.0;
+    RuntimeState.NextCaptureSeconds = 0.0;
+    RuntimeState.NextInspectionSeconds = 0.0;
+    RuntimeState.NextFrameIndex = 0;
 }
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -1141,13 +1333,7 @@ FString FSekiroLuaAnimDebugRuntime::BuildRealtimeTextForTesting(
 void FSekiroLuaAnimDebugRuntime::ResetForTesting()
 {
     using namespace SekiroLuaAnimDebugPrivate;
-    StopSnapshot();
-    RemoveScreenMessage();
-    RuntimeState.DebugView = EDebugView::Off;
-    RuntimeState.LuaModules.Reset();
-    RuntimeState.Transitions.Reset();
-    RuntimeState.LatestFrame = FSekiroLuaAnimDebugFrame();
-    RuntimeState.bHasLatestFrame = false;
+    ResetForPIEEnd();
     RuntimeState.SnapshotPath.Reset();
 }
 #endif

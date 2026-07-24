@@ -20,6 +20,14 @@ enum class ESKCombatActionState : uint8
 };
 
 UENUM(BlueprintType)
+enum class ESKCombatPostureState : uint8
+{
+    Normal,
+    GuardGround,
+    GuardAir
+};
+
+UENUM(BlueprintType)
 enum class ESKAttackSide : uint8
 {
     None,

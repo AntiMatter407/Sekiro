@@ -148,4 +148,117 @@ bool FSekiroLuaAnimSnapshotSessionTest::RunTest(const FString& Parameters)
     return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroLuaAnimPIEStartResetTest,
+    "Sekiro.LuaAnimDebug.Runtime.PIEStartReset",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 PIE 开始入口会覆盖编辑器阶段残留的 Debug/Snapshot 开关，并 Flush 已打开文件。
+ * 测试直接调用生产重置入口，不启动 PIE；临时 JSONL 只写入 Saved/Automation/LuaAnimDebug。
+ */
+bool FSekiroLuaAnimPIEStartResetTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FSekiroLuaAnimDebugRuntime::ResetForTesting();
+    const FString Directory = FPaths::Combine(
+        FPaths::ProjectSavedDir(),
+        TEXT("Automation"),
+        TEXT("LuaAnimDebug"));
+    IFileManager::Get().MakeDirectory(*Directory, true);
+    const FString SnapshotPath = FPaths::Combine(Directory, TEXT("PIEStartReset.jsonl"));
+
+    FSekiroLuaAnimDebugRuntime::ApplyDebugArgumentsForTesting(TArray<FString>());
+    TestTrue(
+        TEXT("Hierarchy debug starts enabled"),
+        FSekiroLuaAnimDebugRuntime::IsDebugEnabledForTesting());
+    TestTrue(
+        TEXT("Snapshot starts enabled"),
+        FSekiroLuaAnimDebugRuntime::StartSnapshotForTesting(0.15f, SnapshotPath));
+
+    FSekiroLuaAnimDebugRuntime::ResetForPIEStart();
+
+    TestFalse(
+        TEXT("PIE start disables hierarchy debug"),
+        FSekiroLuaAnimDebugRuntime::IsDebugEnabledForTesting());
+    TestFalse(
+        TEXT("PIE start closes snapshot"),
+        FSekiroLuaAnimDebugRuntime::IsSnapshotActiveForTesting());
+    TestFalse(
+        TEXT("PIE start disables all sampling"),
+        FSekiroLuaAnimDebugRuntime::IsSamplingEnabled());
+
+    FString JsonLine;
+    TestTrue(
+        TEXT("PIE start flushes the snapshot file"),
+        FFileHelper::LoadFileToString(JsonLine, *SnapshotPath));
+    TestTrue(
+        TEXT("Flushed snapshot retains its Start frame"),
+        JsonLine.Contains(TEXT("\"CaptureReason\":\"Start\"")));
+
+    IFileManager::Get().Delete(*SnapshotPath, false, true);
+    FSekiroLuaAnimDebugRuntime::ResetForTesting();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroLuaAnimPIEEndResetTest,
+    "Sekiro.LuaAnimDebug.Runtime.PIEEndReset",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 PIE 结束入口会同时关闭实时 Debug 与 Snapshot、Flush 文件并停止全部采样。
+ * 测试直接调用生产重置入口，不启动 PIE；临时 JSONL 只写入 Saved/Automation/LuaAnimDebug。
+ */
+bool FSekiroLuaAnimPIEEndResetTest::RunTest(const FString& Parameters)
+{
+    static_cast<void>(Parameters);
+    FSekiroLuaAnimDebugRuntime::ResetForTesting();
+    const FString Directory = FPaths::Combine(
+        FPaths::ProjectSavedDir(),
+        TEXT("Automation"),
+        TEXT("LuaAnimDebug"));
+    IFileManager::Get().MakeDirectory(*Directory, true);
+    const FString SnapshotPath = FPaths::Combine(Directory, TEXT("PIEEndReset.jsonl"));
+
+    FSekiroLuaAnimDebugRuntime::ApplyDebugArgumentsForTesting(TArray<FString>());
+    TestTrue(
+        TEXT("Hierarchy debug starts enabled"),
+        FSekiroLuaAnimDebugRuntime::IsDebugEnabledForTesting());
+    TestTrue(
+        TEXT("Snapshot starts enabled"),
+        FSekiroLuaAnimDebugRuntime::StartSnapshotForTesting(0.15f, SnapshotPath));
+    TestTrue(
+        TEXT("Sampling is enabled before PIE end"),
+        FSekiroLuaAnimDebugRuntime::IsSamplingEnabled());
+
+    FSekiroLuaAnimDebugRuntime::ResetForPIEEnd();
+
+    TestFalse(
+        TEXT("PIE end disables hierarchy debug"),
+        FSekiroLuaAnimDebugRuntime::IsDebugEnabledForTesting());
+    TestFalse(
+        TEXT("PIE end closes snapshot"),
+        FSekiroLuaAnimDebugRuntime::IsSnapshotActiveForTesting());
+    TestFalse(
+        TEXT("PIE end disables all sampling"),
+        FSekiroLuaAnimDebugRuntime::IsSamplingEnabled());
+    TestEqual(
+        TEXT("PIE end preserves the latest snapshot path"),
+        FSekiroLuaAnimDebugRuntime::GetSnapshotSessionPath(),
+        SnapshotPath);
+
+    FString JsonLine;
+    TestTrue(
+        TEXT("PIE end flushes the snapshot file"),
+        FFileHelper::LoadFileToString(JsonLine, *SnapshotPath));
+    TestTrue(
+        TEXT("Flushed snapshot retains its Start frame"),
+        JsonLine.Contains(TEXT("\"CaptureReason\":\"Start\"")));
+
+    IFileManager::Get().Delete(*SnapshotPath, false, true);
+    FSekiroLuaAnimDebugRuntime::ResetForTesting();
+    return true;
+}
+
 #endif

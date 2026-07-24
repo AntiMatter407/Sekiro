@@ -16,6 +16,17 @@ local Tuning = require("Animation.Sekiro.Shared.Tuning")
 ---@class GroundedMode: LuaAnimStateMachine
 local GroundedMode = LuaAnimStateMachine:Extend("GroundedMode")
 
+---@type SekiroCardinalAlignmentConfig
+local CycleDirectionAlignment = {
+    ForwardResidualVariable = "CycleForwardResidualAngle",
+    BackResidualVariable = "CycleBackResidualAngle",
+    LeftResidualVariable = "CycleLeftResidualAngle",
+    RightResidualVariable = "CycleRightResidualAngle",
+    AlphaVariable = "LockOnWarpingAlpha",
+    -- 方向选择器已经负责 0.06 秒 Pose 混合；分支内部再次插值会让新旧素材在不同角度下交叉。
+    RotationInterpSpeed = 0.0,
+}
+
 ---把 Standing 与 Crouching Pose 合并为共享运动阶段的姿态选择节点。
 ---姿态变化只切换原生 BlendList 分支，不重进状态机 Entry，因此移动中的 Cycle 可以连续保留。
 ---@param Graph LuaAnimStateGraph 当前运动阶段的原生 Pose Graph。
@@ -45,6 +56,7 @@ function GroundedMode.StateMachine(Machine)
     Machine:State("Start")
     Machine:State("Cycle")
     Machine:State("Stop")
+    Machine:State("StopTurn")
     Machine:State("Step")
 
     -- Dodge 优先恢复 Step，避免已有移动输入抢占一次性动作。
@@ -168,14 +180,48 @@ function GroundedMode.StateMachine(Machine)
             Rule.BoolProperty("bHasMovementInput", true),
             Rule.BoolProperty("bIsDodging", false)),
     })
-    -- Stop 没有新输入时，在待机曲线窗口返回 Idle。
+    -- 锁定斜向 Stop 完成制动后进入专用换脚动作；方向补偿在该动作内随脚步撤销。
+    Machine:Transition("Stop_StopTurn", "Stop", "StopTurn", {
+        BlendDuration = Tuning.TurnBlendDuration,
+        PriorityOrder = 2,
+        Rule = Rule.All(
+            Rule.BoolProperty("bStopTurnRequested", true),
+            Rule.BoolProperty("bHasMovementInput", false),
+            Rule.BoolProperty("bIsDodging", false),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterIdle, Tuning.CurveThreshold)),
+    })
+    -- 不需要明显回正动作的 Stop 在待机曲线窗口直接返回 Idle。
     Machine:Transition("Stop_Idle", "Stop", "Idle", {
         BlendDuration = Tuning.IdleBlendDuration,
+        PriorityOrder = 3,
+        Rule = Rule.All(
+            Rule.BoolProperty("bStopTurnRequested", false),
+            Rule.BoolProperty("bHasMovementInput", false),
+            Rule.BoolProperty("bIsDodging", false),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterIdle, Tuning.CurveThreshold)),
+    })
+    -- StopTurn 中 Dodge 仍保持最高响应优先级。
+    Machine:Transition("StopTurn_Step", "StopTurn", "Step", {
+        BlendDuration = Tuning.StepBlendDuration,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsDodging", true),
+    })
+    -- StopTurn 期间重新输入时立即进入新 Start，不强制等换脚动作播完。
+    Machine:Transition("StopTurn_Start", "StopTurn", "Start", {
+        BlendDuration = Tuning.StartBlendDuration,
+        PriorityOrder = 1,
+        Rule = Rule.All(
+            Rule.BoolProperty("bHasMovementInput", true),
+            Rule.BoolProperty("bIsDodging", false)),
+    })
+    -- 换脚动作进入退出曲线窗口后回到当前 Standing/Crouching Idle。
+    Machine:Transition("StopTurn_Idle", "StopTurn", "Idle", {
+        BlendDuration = Tuning.TurnBlendDuration,
         PriorityOrder = 2,
         Rule = Rule.All(
             Rule.BoolProperty("bHasMovementInput", false),
             Rule.BoolProperty("bIsDodging", false),
-            Rule.CurveGreaterEqual(CurveNames.CanEnterIdle, Tuning.CurveThreshold)),
+            Rule.CurveGreaterEqual(CurveNames.CanExitTurn, Tuning.CurveThreshold)),
     })
     -- Step 结束且仍有移动输入时直接进入 Cycle，不再次播放 Start。
     Machine:Transition("Step_Cycle", "Step", "Cycle", {
@@ -225,7 +271,7 @@ function GroundedMode.StateGraph_Turn(Graph)
     Graph.Result:Connect(turn.Pose)
 end
 
----构建共享 Start；Standing/Crouching 均选择最近四向起步资产，再补齐锁定输入的量化残差。
+---构建共享 Start；Standing/Crouching 均选择锁定分区对应的四向起步资产，再补齐输入残差。
 ---@param Graph LuaAnimStateGraph Start 状态的原生 Pose Graph。
 ---@return nil result 姿态选择结果连接 State Result。
 function GroundedMode.StateGraph_Start(Graph)
@@ -239,24 +285,22 @@ function GroundedMode.StateGraph_Start(Graph)
     Graph.Result:Connect(aligned.Pose)
 end
 
----构建共享 Cycle；锁定 Standing/Crouching Walk/Run 都使用最近四向素材和连续残差对齐。
+---构建共享 Cycle；每条四向素材先按自己的主轴对齐真实轨迹，再混合 Standing/Crouching 姿势。
 ---@param Graph LuaAnimStateGraph Cycle 状态的原生 Pose Graph。
----@return nil result 方向扭曲并惯性化后的 Cycle 姿势连接 State Result。
+---@return nil result 分支对齐并惯性化后的 Cycle 姿势连接 State Result。
 function GroundedMode.StateGraph_Cycle(Graph)
-    local cycle = select_stance(Graph, "Cycle", Standing.BuildCycle(Graph), Crouching.BuildCycle(Graph))
-    local aligned = DirectionalPose.Align(
+    local cycle = select_stance(
         Graph,
-        "GroundedCycleAlignment",
-        cycle,
-        "DirectionResidualAngle",
-        "LockOnWarpingAlpha")
+        "Cycle",
+        Standing.BuildCycle(Graph, CycleDirectionAlignment),
+        Crouching.BuildCycle(Graph, CycleDirectionAlignment))
 
     local inertialization = Graph:Inertialization("GroundedCycleInertialization")
-    inertialization.Source:Connect(aligned.Pose)
+    inertialization.Source:Connect(cycle.Pose)
     Graph.Result:Connect(inertialization.Pose)
 end
 
----构建共享 Stop；步态、最近四向素材和量化残差都使用输入释放边沿的锁存值。
+---构建共享 Stop；步态、锁定分区四向素材和量化残差都使用输入释放边沿的锁存值。
 ---@param Graph LuaAnimStateGraph Stop 状态的原生 Pose Graph。
 ---@return nil result 姿态选择结果连接 State Result。
 function GroundedMode.StateGraph_Stop(Graph)
@@ -265,8 +309,26 @@ function GroundedMode.StateGraph_Stop(Graph)
         Graph,
         "GroundedStopAlignment",
         stop,
-        "LatchedActionResidualAngle",
-        "LatchedActionWarpingAlpha")
+        "StopDirectionResidualAngle",
+        "StopWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
+end
+
+---构建 Stop 后的专用换脚回正动作；Turn 动画提供真实脚步，方向补偿只在动作内部逐步撤销。
+---@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
+---@return nil result 方向对齐后的换脚姿势连接 State Result。
+function GroundedMode.StateGraph_StopTurn(Graph)
+    local stop_turn = select_stance(
+        Graph,
+        "StopTurn",
+        Standing.BuildStopTurn(Graph),
+        Crouching.BuildStopTurn(Graph))
+    local aligned = DirectionalPose.Align(
+        Graph,
+        "GroundedStopTurnAlignment",
+        stop_turn,
+        "StopDirectionResidualAngle",
+        "StopTurnWarpingAlpha")
     Graph.Result:Connect(aligned.Pose)
 end
 

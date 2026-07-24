@@ -190,10 +190,19 @@ public:
     ESKCombatActionState CombatActionState = ESKCombatActionState::Neutral; // 当前战斗动作状态
 
     UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    ESKCombatPostureState CombatPostureState = ESKCombatPostureState::Normal; // 当前基础战斗姿态
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
     bool bIsGuardHeld = false;                   // 防御键是否仍按住
 
     UPROPERTY(BlueprintReadOnly, Category = "Combat")
-    bool bIsCombatGuardPoseActive = false;       // 是否应输出 Raise/Guarding 防御基础姿态
+    bool bIsCombatGuardGroundPosture = false;    // 是否应输出地面防御基础姿态
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    bool bIsCombatGuardAirPosture = false;       // 是否应输出空中防御基础姿态
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat")
+    bool bIsCombatGuardPoseActive = false;       // 兼容字段：当前是否为任意防御基础姿态
 
     UPROPERTY(BlueprintReadOnly, Category = "Combat")
     bool bIsCombatFullBodyActionActive = false;  // 战斗全身 Slot 是否正在播放或混合

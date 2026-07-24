@@ -31,6 +31,9 @@ class SEKIROANIMBLUEPRINTEXTEDITOR_API USekiroLuaAnimBlueprintExtension : public
     GENERATED_BODY()
 
 public:
+    /** 当前原生图生成器版本；变更时已加载旧资产会在 PIE 前重新编译。 */
+    static constexpr int32 CurrentCompilerVersion = 2;
+
     // ── 资产身份 ──────────────────────────────────────────────────────────────
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
     FString LuaModuleName; // Lua 动画蓝图模块名，不是文件系统路径
@@ -41,7 +44,7 @@ public:
 
     // ── 编译状态 ──────────────────────────────────────────────────────────────
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
-    int32 CompilerVersion = 1; // 生成器架构版本
+    int32 CompilerVersion = CurrentCompilerVersion; // 最近成功使用的生成器架构版本
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
     int32 SuccessfulCompileRevision = 0; // 当前资产成功原地编译次数

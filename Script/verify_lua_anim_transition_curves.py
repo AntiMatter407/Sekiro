@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""验证 Lua 动画蓝图实际引用的 Sequence 是否具备有效 Transition 语义曲线。"""
+"""验证 Lua 动画蓝图实际引用的 Sequence 是否具备有效 Transition 和运行时语义曲线。"""
 
 import json
 import re
@@ -57,7 +57,7 @@ def required_curves(alias):
             "Idle_Right_Turn",
             "Crouch_Idle_Left_Turn",
             "Crouch_Idle_Right_Turn"):
-        required.add("CanExitTurn")
+        required.update(("CanExitTurn", "StopTurnDirectionAlignment"))
     elif alias.startswith("Jump_Start_"):
         required.add("CanEnterInAir")
     elif alias.startswith("Jump_InAir_") or alias in (
@@ -131,6 +131,31 @@ def main():
                 errors.append("stop_window_ends_before_loop={0}".format(asset_path))
             elif float(curve_keys["CanEnterStop"][-1][1]) < CURVE_THRESHOLD:
                 errors.append("stop_tail_blocked={0}".format(asset_path))
+
+        if "StopTurnDirectionAlignment" in required \
+                and "StopTurnDirectionAlignment" in curve_keys \
+                and "CanExitTurn" in curve_keys:
+            alignment_keys = curve_keys["StopTurnDirectionAlignment"]
+            exit_keys = curve_keys["CanExitTurn"]
+            if float(alignment_keys[0][1]) < 0.999:
+                errors.append("stop_turn_alignment_does_not_start_full={0}".format(asset_path))
+            if float(alignment_keys[-1][1]) > 0.001:
+                errors.append("stop_turn_alignment_does_not_end_zero={0}".format(asset_path))
+
+            alignment_zero_times = [
+                float(time)
+                for time, value in alignment_keys
+                if float(value) <= 0.001
+            ]
+            exit_open_time = min(
+                float(time)
+                for time, value in exit_keys
+                if float(value) >= CURVE_THRESHOLD
+            )
+            if not alignment_zero_times:
+                errors.append("stop_turn_alignment_has_no_zero_key={0}".format(asset_path))
+            elif min(alignment_zero_times) + 0.0001 >= exit_open_time:
+                errors.append("stop_turn_alignment_not_zero_before_exit={0}".format(asset_path))
 
         if any(alias.endswith("_Stop") for alias in aliases_by_path[asset_path]) \
                 and "CanEnterLoop" in actual_names:

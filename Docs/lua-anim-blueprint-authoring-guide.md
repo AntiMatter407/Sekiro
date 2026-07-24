@@ -398,9 +398,9 @@ UAnimInstance 更新
     -> 输出最终 Pose
 ```
 
-Lua 来源的动画蓝图会关闭 `bUseMultiThreadedAnimationUpdate`。Lua 不直接求值 `FCompactPose`；Sequence Player、混合、Root Motion、Curve 和 Notify 仍由 UE 原生 AnimNode 完成。
+Lua 来源动画蓝图会按 Transition 类型决定 `bUseMultiThreadedAnimationUpdate`：全部 Transition 使用强类型原生 Rule AST 时启用并行动画更新；只要存在兼容 `CanEnter_*` Lua Rule 就自动回退单线程。`BlueprintUpdateAnimation` 仍先在游戏线程采集并写入变量，Sequence Player、混合、状态机、Root Motion、Curve 和 Notify 随后由 UE 原生 AnimNode 求值。启用 `RootMotionFromEverything` 时，引擎仍可能为需要即时根运动的帧选择同步更新。
 
-角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前用 Lua 决定速度和 ActorYaw，并发布转向前输入角；`ABP_Sekiro.BlueprintUpdateAnimation` 只读取该快照选择动画。自由移动的 Back 输入必须映射到 Left/Right Turn 后让角色转向移动方向，Back Sequence 仅表示角色身体朝前时向后退，适用于锁定移动。锁定地面移动使用最近四向动画，Jump 使用最近八向动画；两者都通过 `Animation.Sekiro.Shared.DirectionalPose` 用 Orientation Warping 补齐输入角与素材主运动轴的残差，并由原生节点反向补偿脊柱以保持上半身朝向目标。
+角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前用 Lua 决定速度和 ActorYaw，并发布转向前输入角；`ABP_Sekiro.BlueprintUpdateAnimation` 用 `MoveInputX/MoveInputY` 即时选择锁定 Cycle 基础素材，用 Movement 快照的 `MoveDirectionAngle` 对齐实际轨迹。自由移动的 Back 输入必须映射到 Left/Right Turn 后让角色转向移动方向，Back Sequence 仅表示角色身体朝前时向后退，适用于锁定移动。锁定地面移动使用前后扇区扩宽的四向动画：Forward 覆盖 `0°..60°`，Back 覆盖 `120°..180°`，中间使用 Left/Right；Forward/Back 离开时保留 `10°` 防抖容差，侧向进入前后扇区时在基础边界立即切换。Cycle 的四条 Sequence 必须在方向选择器之前分别应用各自主轴残差，再混合已经对齐的 Pose；禁止在选择器后用当前方向残差旋转新旧混合结果。Jump 仍使用最近八向动画。方向对齐通过 `Animation.Sekiro.Shared.DirectionalPose` 的原生 Orientation Warping 完成，并由原生节点反向补偿脊柱以保持上半身朝向目标。
 
 ## 十三、调试与常见错误
 

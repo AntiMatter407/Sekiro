@@ -139,7 +139,7 @@ Idle -> Start -> Cycle -> Stop -> Idle
 
 非锁定模式下 `CycleDirection` 始终为 Forward；大角度起步使用 Movement Lua 旋转前锁存的方向角选择 Left/Right Turn Start。后方输入也按角度符号选择最近的左右转身，不使用表示“身体朝前向后退”的 Back 素材；Movement Lua 同时把角色朝向输入世界方向。
 
-锁定模式下 `CycleDirection` 使用 Forward/Back/Left/Right 四向滞回选择。斜向输入保留精确 `MoveDirectionAngle`，四向动画只提供最接近的下半身姿势；Cycle 内的原生 Orientation Warping 使用剩余角度旋转下半身，并通过 `Spine/Spine1/Spine2` 反向补偿，使上半身继续朝向目标。Sprint、Start、Stop、Step 和空中状态不启用该节点。
+锁定模式下 `CycleDirection` 使用 Forward/Back/Left/Right 四向选择。基础素材按 `MoveInputX/MoveInputY` 的即时输入角选区：Forward 覆盖绝对角 `0°..60°`，Back 覆盖 `120°..180°`，中间扇区选择 Left/Right。滞回采用前后优先的非对称规则：Forward/Back 离开自身扇区时保留 `10°` 容差，Left/Right 进入前后基础扇区时则在 `60°/120°` 立即切换。Cycle 为四条 Sequence 分别计算 `MoveDirectionAngle - 素材主方向角`，在 `BlendListByEnum` 之前各自执行 Orientation Warping；新旧方向混合时两条素材因此都保持对齐真实轨迹。Start/Stop 方向在动作边沿锁存，继续使用选择器后的单节点对齐。原生节点通过 `Spine/Spine1/Spine2` 反向补偿，使上半身继续朝向目标。Sprint、Step 和空中状态不启用 Cycle 分支对齐。
 
 ### 4.2 Standing 与 Crouching Pose 构建器
 
@@ -201,7 +201,7 @@ Input Lua 发布 MoveIntent / MovementTier
     -> ABP_Sekiro.BlueprintUpdateAnimation 选择方向与动画
 ```
 
-`MoveDirectionAngle` 表示角色更新朝向后的当前局部移动角，锁定四向循环继续使用它；`MoveDirectionAngleBeforeRotation` 表示同帧 Movement Lua 转向前的输入角，只用于自由起步和 Sprint 转身动画锁存。
+`MoveDirectionAngle` 表示角色更新朝向后的当前局部移动角，锁定四向循环用它计算四条分支各自的轨迹对齐残差；`MoveInputX/MoveInputY` 用于即时基础素材选区。`MoveDirectionAngleBeforeRotation` 表示同帧 Movement Lua 转向前的输入角，只用于自由起步和 Sprint 转身动画锁存。
 
 新编译器需要支持在生成类中声明以下瞬态变量：
 
@@ -213,10 +213,13 @@ Input Lua 发布 MoveIntent / MovementTier
 | `PoseGait` | Byte/Enum | Cycle 当前 Walk/Run/Sprint Pose 分支；直接追随输入目标步态 |
 | `LatchedActionGait` | Byte/Enum | 一次性动作进入时锁定 Walk/Run/Sprint |
 | `bPoseCrouching` | Bool | StateGraph 内 Standing/Crouching 原生姿态选择 |
-| `DirectionResidualAngle` | Float | 精确方向减去四向素材主方向；连接 Cycle 的方向对齐链 |
+| `CycleForward/Back/Left/RightResidualAngle` | Float | 精确方向分别减去四条素材主方向；连接 Cycle 各分支混合前的独立方向对齐链 |
 | `LockOnWarpingAlpha` | Float | 锁定地面 Walk/Run 有输入时为 1；Sprint、空中和非锁定模式为 0 |
 | `StartDirectionResidualAngle` / `StartWarpingAlpha` | Float | Start 使用的实时四向量化残差和启用强度；基础动画方向锁存，但残差持续追随输入 |
-| `LatchedActionResidualAngle` / `LatchedActionWarpingAlpha` | Float | Stop 使用的四向量化残差和启用强度；输入释放边沿锁存，播放期间不翻转 |
+| `StopDirectionResidualAngle` | Float | Stop 使用的四向量化残差；输入释放边沿锁存，播放期间不被后续 Start/Cycle 改写 |
+| `StopWarpingAlpha` | Float | Stop 的 Orientation Warping 强度；斜向 Stop 全程保持，不再无动作撤销 |
+| `StopTurnDirection` / `bStopTurnRequested` | Enum/Bool | 残差角达到阈值时选择左右换脚动画并请求进入 StopTurn |
+| `StopTurnWarpingAlpha` / `bStopTurnAlignmentCurveSeen` | Float/Bool | StopTurn 的补偿强度，以及当前 Turn Sequence 的连续曲线是否已经接管权重 |
 | `JumpDirection` | Byte/Enum | 离地上升沿锁定的八方向；非锁定当前固定 Forward |
 | `JumpDirectionResidualAngle` / `JumpWarpingAlpha` | Float | Jump 八向素材的量化残差和启用强度；与 `JumpDirection` 同时锁存 |
 | `bLatchedActionLockedOn` | Bool | Standing Start 选择锁定/非锁定资产集合 |
@@ -230,10 +233,18 @@ Input Lua 发布 MoveIntent / MovementTier
 ---@param _delta_seconds number 本帧时长；当前方向分类不依赖帧率但保留标准事件签名。
 ---@return nil result 直接更新生成变量。
 function ABP_Sekiro.BlueprintUpdateAnimation(Inst, _delta_seconds)
+    local input_direction_angle = Direction.GetAngleFromAxes(
+        Inst.MoveInputY,
+        Inst.MoveInputX)
     Inst.CycleDirection = Direction.ResolveCardinalWithHysteresis(
-        Inst.MoveDirectionAngle,
+        input_direction_angle,
         Inst.CycleDirection,
-        Tuning.LockedDirectionHysteresisAngle)
+        Tuning.LockedDirectionHysteresisAngle,
+        Tuning.LockedDirectionForwardBoundaryAngle,
+        Tuning.LockedDirectionBackBoundaryAngle)
+    Inst.CycleForwardResidualAngle = Direction.GetCardinalResidual(
+        Inst.MoveDirectionAngle,
+        Direction.Cardinal.Forward)
 end
 ```
 
@@ -245,16 +256,16 @@ end
 
 ```text
 Walk Cycle Pose
-├── Forward SequencePlayer
-├── Back SequencePlayer
-├── Left SequencePlayer
-└── Right SequencePlayer
-       -> BlendListByEnum(CycleDirection)
+├── Forward SequencePlayer -> Warp(MoveAngle - 0°)
+├── Back SequencePlayer    -> Warp(MoveAngle - 180°)
+├── Left SequencePlayer    -> Warp(MoveAngle + 90°)
+└── Right SequencePlayer   -> Warp(MoveAngle - 90°)
+                              -> BlendListByEnum(CycleDirection)
 ```
 
-Standing 的 Walk/Run/Sprint 外层由 `BlendListByEnum(PoseGait)` 选择，Crouching 只暴露 Walk/Run；两套姿态再由 `BlendListByBool(bPoseCrouching)` 选择。锁定 Standing 和 Crouching 的 Start/Cycle/Stop 共用“最近四向素材 + 量化残差”方向对齐链：根与下半身对齐精确输入方向，脊柱反向补偿后继续面向锁定目标。所有 Cycle SequencePlayer 加入同一个 Sync Group，通过原生同步组保持相位；方向、步态或姿态切换后接 Inertialization。
+Standing 的 Walk/Run/Sprint 外层由 `BlendListByEnum(PoseGait)` 选择，Crouching 只暴露 Walk/Run；两套姿态再由 `BlendListByBool(bPoseCrouching)` 选择。锁定 Cycle 的四向 Sequence 在选择器前分别完成量化残差对齐，内部 `RotationInterpSpeed=0`，只保留 `DirectionBlendDuration` 的 Pose 混合，避免旧方向素材被新方向残差错误旋转。Start/Stop 仍使用锁存方向和选择器后的单节点对齐。所有 Cycle SequencePlayer 加入同一个 Sync Group，通过原生同步组保持相位；方向、步态或姿态切换后接 Inertialization。
 
-Start、Stop 和 Step 使用 `LatchedActionDirection`；Jump 使用独立的八方向 `JumpDirection`。Start 只锁存基础四向动画，`StartDirectionResidualAngle` 持续根据最新输入相对该基础方向计算，因此起步中追加斜向输入会立即开始对齐且不会重启 Sequence；Stop 锁存四向残差，Jump Start/InAir/Land 锁存八向残差。Lua 资产表只在 `AnimGraph()` 与 `StateGraph_*()` 编译期读取，运行时 Graph 中保存的是实际资产引用。
+Start、Stop 和 Step 使用 `LatchedActionDirection`；Jump 使用独立的八方向 `JumpDirection`。Start 只锁存基础四向动画，`StartDirectionResidualAngle` 持续根据最新输入相对该基础方向计算，因此起步中追加斜向输入会立即开始对齐且不会重启 Sequence；Stop 把四向残差锁存到独立的 `StopDirectionResidualAngle` 并保持到制动结束，明显残差随后进入 StopTurn，由 Turn 动画和 `StopTurnDirectionAlignment` 共同完成换脚回正。Jump Start/InAir/Land 锁存八向残差。Lua 资产表只在 `AnimGraph()` 与 `StateGraph_*()` 编译期读取，运行时 Graph 中保存的是实际资产引用。
 
 ### 7.1 双脚 Foot IK
 
@@ -321,7 +332,8 @@ Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
 - Start -> Cycle：等待源 Sequence 的 `CanEnterLoop` 曲线窗口。
 - Cycle 方向/步态/姿态变化：所有循环播放器加入 `SekiroLocomotion` Sync Group，输出后使用 Inertialization。
 - Start/Cycle -> Stop：等待 `CanEnterStop` 曲线窗口。
-- Stop -> Idle：等待 `CanEnterIdle` 曲线窗口。
+- Stop -> StopTurn/Idle：等待 `CanEnterIdle`；明显残差进入 StopTurn，较小残差直接进入 Idle。
+- StopTurn -> Idle：Turn 动画换脚期间由 `StopTurnDirectionAlignment` 撤销补偿，再等待 `CanExitTurn`。
 - Step -> Cycle/Idle：等待 `CanExitStep` 曲线窗口。
 
 `MovePhase` 与 `FootPlant` 已写入部分动画资产，但当前 Graph 没有正式运行时消费者。精确相位反查仍是后续增强，不能因此恢复运行时动态播放器或 Pose 快照架构。

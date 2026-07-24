@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
@@ -37,7 +37,13 @@ public:
 
 private:
 	/** 通过 InjectInputForAction 模拟一个输入动作（立即执行） */
-	static FString SimulateAction(UWorld* World, const FString& Action, float ValueX, float ValueY, FString& OutError);
+	static FString SimulateAction(
+		UWorld* World,
+		const FString& Action,
+		float ValueX,
+		float ValueY,
+		bool bAutoPulseRelease,
+		FString& OutError);
 
 	/** 查找 PIE 中的 Enhanced Input 子系统 */
 	static UEnhancedInputLocalPlayerSubsystem* FindEnhancedInputSubsystem(FString& OutError);
@@ -49,9 +55,15 @@ private:
 	static void InjectInput(UInputAction* InputAction, const FInputActionValue& InputValue);
 
 	/** 延迟后执行 */
-	static void ExecuteWithDelay(UWorld* World, const FString& Action, float ValueX, float ValueY, float Delay);
+	static void ExecuteWithDelay(
+		UWorld* World,
+		const FString& Action,
+		float ValueX,
+		float ValueY,
+		float HoldTime,
+		float Delay);
 
-	/** 长按后自动释放 */
+	/** 在指定时长内持续注入按钮按下值，并在结束时自动释放 */
 	static void ScheduleRelease(UWorld* World, const FString& Action, float HoldTime);
 
 	/** 按钮类动作：延迟 1 帧后自动注入 false（脉冲释放），确保 Started/Completed 事件触发 */

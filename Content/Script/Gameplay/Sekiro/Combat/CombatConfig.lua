@@ -26,6 +26,7 @@ local Deflect = AnimAssets.Deflect
 ---@field LandAttacks table<string, SKCombatActionConfig> 落地轻攻击动作 ID 到动作配置的映射。
 ---@field AirToLand table<string, string> 活动空中攻击到配对落地攻击动作 ID 的映射。
 ---@field HeavyBySide table<string, SKCombatActionConfig> 当前侧别到蓄力突刺动作的映射。
+---@field GuardAttackStartupBySide table<string, SKCombatActionConfig> 防御攻击共用起手；首版复用同侧重攻击并在阈值处原地提交。
 ---@field DeflectByType table<string, string[]> 模拟攻击类型到弹反动画序列链的映射。
 ---@field Guard table<string, string> 地面与空中防御举刀、收刀动画路径。
 
@@ -110,6 +111,15 @@ local CombatConfig = {
         },
         Left = {
             ActionId = "Charged_Thrust_Left",
+            AnimationPath = Attack.Charged_Thrust_Left,
+            StartSide = "Left",
+            bAllowHeavy = true,
+        },
+    },
+    -- 防御左侧起手立即播放重攻击前摇；短按会在阈值前切入 Left，长按则沿当前 Montage 继续重攻击。
+    GuardAttackStartupBySide = {
+        Left = {
+            ActionId = "Guard_Attack_Startup_Left",
             AnimationPath = Attack.Charged_Thrust_Left,
             StartSide = "Left",
             bAllowHeavy = true,

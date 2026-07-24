@@ -12,6 +12,9 @@ local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 ---@field LightActionId string|nil 本次输入允许衔接的轻攻击动作 ID。
 ---@field bLightAccepted boolean 本次输入是否允许判定为轻攻击。
 ---@field bHeavyAccepted boolean 本次输入是否允许判定为重攻击。
+---@field bStartedFromGuard boolean 候选是否从防御动作或持续防御姿态创建。
+---@field bGuardStartupPlaying boolean 是否已立即播放防御攻击共用起手。
+---@field StartupActionSerial number|nil 共用起手 Montage 对应的动作序列号。
 
 ---@class SKCombatRuntime
 ---@field ActionId string|nil 当前具体动作稳定 ID。
@@ -19,10 +22,11 @@ local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 ---@field ActiveAttackKind string|nil 当前攻击种类：Light 或 Heavy。
 ---@field ActiveAttackDomain string|nil 当前轻攻击动作域：Ground、Air 或 Land。
 ---@field bWasAnimationPlaying boolean 上一帧是否仍在播放组件自有 Montage。
----@field PendingAttack SKCombatBufferedAttack|nil 等待 Completed 判定长短按的攻击输入。
+---@field PendingAttack SKCombatBufferedAttack|nil 等待 Completed 或长按阈值提交的攻击输入。
 ---@field RestingSide string 动画曲线已经提交、供下一动作使用的刀侧。
 ---@field ComboNextAction string|nil 当前动作允许衔接的下一段轻攻击 ID。
 ---@field bSideCurveConsumed boolean 当前攻击是否已经提交过一次非零 AttackSide。
+---@field bReturnToGuardAfterAttack boolean 当前攻击结束时是否允许按 Held 意图返回防御姿态。
 ---@field LastDeflectType string|nil 上一次弹反类型。
 ---@field LastDeflectTime number 上一次弹反输入时间。
 ---@field DeflectStage number 当前同类型弹反段数。
@@ -93,6 +97,7 @@ local function create_runtime(initial_side)
         RestingSide = resting_side,
         ComboNextAction = nil,
         bSideCurveConsumed = false,
+        bReturnToGuardAfterAttack = false,
         LastDeflectType = nil,
         LastDeflectTime = -math.huge,
         DeflectStage = 0,
@@ -119,6 +124,23 @@ function SKCombatComponent:SetRestingSide(side_name)
     return resolved_side
 end
 
+---根据地面状态写入独立防御姿态；离散动作状态不会再决定 Slot 下方的基础 Pose。
+---@param force_air boolean|nil true 表示物理 Jump 已请求但 Falling 尚未在本帧更新。
+---@return nil result C++ 战斗宿主被写入 GuardGround 或 GuardAir。
+function SKCombatComponent:SetGuardCombatPosture(force_air)
+    local posture = UE.ESKCombatPostureState.GuardGround
+    if force_air == true or self:IsOwnerFalling() == true then
+        posture = UE.ESKCombatPostureState.GuardAir
+    end
+    self:SetCombatPostureState(posture)
+end
+
+---清除持续防御姿态；全身 Slot 淡出后将回到普通移动状态机。
+---@return nil result C++ 战斗宿主被写入 Normal 姿态。
+function SKCombatComponent:ClearCombatPosture()
+    self:SetCombatPostureState(UE.ESKCombatPostureState.Normal)
+end
+
 ---清除动画内攻击链状态，并恢复默认刀侧。
 ---@param clear_pending boolean 是否同时丢弃尚未 Completed 的攻击输入。
 ---@return nil result 运行时状态和 C++ 刀侧被同步重置。
@@ -130,6 +152,7 @@ function SKCombatComponent:ResetAttackRetention(clear_pending)
     self.Runtime.ActiveAttackDomain = nil
     self.Runtime.ComboNextAction = nil
     self.Runtime.bSideCurveConsumed = false
+    self.Runtime.bReturnToGuardAfterAttack = false
     local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
     self:SetCommittedAttackSide(name_to_side(default_side))
 end
@@ -141,6 +164,7 @@ function SKCombatComponent:ReceiveBeginPlay()
         self:Initialize(nil)
     end
     self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+    self:ClearCombatPosture()
     local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
     self:SetCommittedAttackSide(name_to_side(default_side))
 end
@@ -232,11 +256,101 @@ function SKCombatComponent:StartHeavyAttack(side_name)
     return false
 end
 
+---立即播放防御攻击的共用起手；首版复用同侧重攻击前摇，短按时可切入轻攻击。
+---@param pending SKCombatBufferedAttack 防御按下边沿创建的地面攻击候选。
+---@return boolean started 共用起手是否成功取代当前 Guard 动作。
+function SKCombatComponent:StartGuardAttackStartup(pending)
+    local side_name = pending.SideSnapshot
+    local startup = CombatConfig.GuardAttackStartupBySide[side_name]
+    if startup == nil then
+        return false
+    end
+
+    self.Runtime.bReturnToGuardAfterAttack = self:IsGuardHeld() == true
+    if self.Runtime.bReturnToGuardAfterAttack == true then
+        self:SetGuardCombatPosture(false)
+    else
+        self:ClearCombatPosture()
+    end
+
+    local start_side = startup.StartSide or side_name
+    self:SetCommittedAttackSide(name_to_side(start_side))
+    self:SetRestingSide(start_side)
+    self.Runtime.ActiveAttackKind = nil
+    self.Runtime.ActiveAttackDomain = "Ground"
+    self.Runtime.ComboNextAction = nil
+    if self:StartAction(
+        UE.ESKCombatActionState.PendingAttack,
+        startup.ActionId or ("Guard_Attack_Startup_" .. side_name),
+        startup.AnimationPath) == true then
+        pending.bGuardStartupPlaying = true
+        pending.StartupActionSerial = self.Runtime.ActionSerial
+        self.Runtime.PendingAttack = pending
+        return true
+    end
+
+    self.Runtime.PendingAttack = nil
+    self:ResetAttackRetention(false)
+    if pending.bStartedFromGuard == true and self:IsGuardHeld() == true then
+        local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
+        self:SetCommittedAttackSide(name_to_side(defense_side))
+        self:SetGuardCombatPosture(false)
+        self:SetCombatActionState(UE.ESKCombatActionState.Guarding)
+    else
+        self:ClearCombatPosture()
+        self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+    end
+    return false
+end
+
+---把正在播放的防御共用起手原地提交为重攻击，不重启 Montage 或重置播放位置。
+---@param pending SKCombatBufferedAttack 当前仍有效的防御起手候选。
+---@return boolean committed 当前动作和同一 ActionSerial 是否成功升级为重攻击。
+function SKCombatComponent:CommitGuardAttackStartupToHeavy(pending)
+    if pending.bGuardStartupPlaying ~= true
+        or pending.StartupActionSerial == nil
+        or self:IsActionSerialValid(pending.StartupActionSerial) ~= true
+        or self:GetCombatActionState() ~= UE.ESKCombatActionState.PendingAttack
+        or self:IsCombatAnimationPlaying() ~= true then
+        return false
+    end
+
+    local side_name = pending.SideSnapshot
+    local action = CombatConfig.HeavyBySide[side_name]
+    if action == nil then
+        return false
+    end
+
+    self:SetCommittedAttackSide(name_to_side(action.StartSide or side_name))
+    self:SetRestingSide(side_name)
+    self.Runtime.ActiveAttackKind = "Heavy"
+    self.Runtime.ActiveAttackDomain = "Ground"
+    self.Runtime.ComboNextAction = side_name
+    self.Runtime.ActionId = action.ActionId or ("Charged_Thrust_" .. side_name)
+    self.Runtime.PendingAttack = nil
+    self:SetCombatActionState(UE.ESKCombatActionState.HeavyAttack)
+    return true
+end
+
+---达到长按阈值时原地提交防御起手重攻击；阈值前释放由 Completed 精确判定为轻攻击。
+---@return boolean committed 本帧是否把 PendingAttack 提交为 HeavyAttack。
+function SKCombatComponent:TryCommitGuardAttackStartup()
+    local pending = self.Runtime.PendingAttack
+    if pending == nil
+        or pending.bGuardStartupPlaying ~= true
+        or pending.bHeavyAccepted ~= true
+        or self:GetCombatAnimationPosition() < CombatConfig.HeavyHoldThreshold then
+        return false
+    end
+    return self:CommitGuardAttackStartupToHeavy(pending)
+end
+
 ---开始防御举刀，并按离地状态选择地面或空中动作。
 ---@param force_air boolean|nil true 表示物理 Jump 已请求，本帧直接使用空中举刀动作。
 ---@return boolean started 举刀动画是否成功开始。
 function SKCombatComponent:StartGuardRaise(force_air)
     self:ResetAttackRetention(true)
+    self:SetGuardCombatPosture(force_air)
     local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
     self:SetCommittedAttackSide(name_to_side(defense_side))
     local is_air_guard = force_air == true or self:IsOwnerFalling() == true
@@ -248,6 +362,7 @@ function SKCombatComponent:StartGuardRaise(force_air)
         animation_path) == true then
         return true
     end
+    self:ClearCombatPosture()
     self:SetRestingSide(CombatConfig.DefaultSide)
     return false
 end
@@ -256,6 +371,8 @@ end
 ---@return boolean started 收刀动画是否成功开始。
 function SKCombatComponent:StartGuardLower()
     self:SetRestingSide(CombatConfig.DefenseSide)
+    -- Lower 的 Slot 下方提前切回 Normal，确保动作结束时与 Idle/Locomotion 混合，而不是重新露出 Guard Idle。
+    self:ClearCombatPosture()
     local is_air_guard = self:IsOwnerFalling() == true
     local action_id = is_air_guard and "Guard_Air_Lower" or "Guard_Lower"
     local animation_path = is_air_guard and CombatConfig.Guard.AirLower or CombatConfig.Guard.Lower
@@ -289,6 +406,7 @@ function SKCombatComponent:StartDeflect(attack_type, event_time)
     self.Runtime.LastDeflectType = type_name
     self.Runtime.LastDeflectTime = event_time
     self:ResetAttackRetention(true)
+    self:SetGuardCombatPosture(false)
     local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
     self:SetCommittedAttackSide(name_to_side(defense_side))
     if self:StartAction(
@@ -297,6 +415,7 @@ function SKCombatComponent:StartDeflect(attack_type, event_time)
         chain[self.Runtime.DeflectStage]) == true then
         return true
     end
+    self:ClearCombatPosture()
     self:SetRestingSide(CombatConfig.DefaultSide)
     return false
 end
@@ -368,6 +487,7 @@ function SKCombatComponent:TryPrepareJump(event_time)
     self.Runtime.ActionId = nil
     self.Runtime.bWasAnimationPlaying = false
     self:ResetAttackRetention(true)
+    self:ClearCombatPosture()
     self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
     return true, resume_air_guard
 end
@@ -407,7 +527,7 @@ function SKCombatComponent:UpdateAttackSideAtTime(event_time)
         self:SampleActiveSequenceCurveAtTime(CurveNames.CanCancelToGuard, event_time))
 end
 
----处理攻击 Started，只在活动 Sequence 的输入窗口内锁存后续候选。
+---处理攻击 Started；活动攻击锁存后续候选，防御地面候选则立即播放共用攻击起手。
 ---@param input_event FSKCombatInputEvent 攻击按下事件。
 ---@return nil result 候选写入 Runtime，等待同 Serial 的 Completed。
 function SKCombatComponent:HandleAttackStarted(input_event)
@@ -431,31 +551,53 @@ function SKCombatComponent:HandleAttackStarted(input_event)
             LightActionId = self.Runtime.ComboNextAction,
             bLightAccepted = self.Runtime.ComboNextAction ~= nil and can_accept_light,
             bHeavyAccepted = self:DoesCurrentAttackAllowHeavy() and can_accept_heavy,
+            -- 防御起手的攻击链在后续轻攻击候选中继续携带回防意图，直到 Guard Completed 显式清除。
+            bStartedFromGuard = self.Runtime.bReturnToGuardAfterAttack == true,
+            bGuardStartupPlaying = false,
+            StartupActionSerial = nil,
         }
         return
     end
 
-    if state ~= UE.ESKCombatActionState.Neutral then
+    local is_guard_state = state == UE.ESKCombatActionState.GuardRaise
+        or state == UE.ESKCombatActionState.Guarding
+        or state == UE.ESKCombatActionState.GuardLower
+    if state ~= UE.ESKCombatActionState.Neutral and is_guard_state ~= true then
         return
     end
 
-    self:ResetAttackRetention(false)
-    self:BeginCombatAction(UE.ESKCombatActionState.PendingAttack)
+    if is_guard_state ~= true then
+        self:ResetAttackRetention(false)
+        self:BeginCombatAction(UE.ESKCombatActionState.PendingAttack)
+    end
     local attack_domain = "Ground"
-    local light_action_id = CombatConfig.DefaultSide
+    local light_action_id = is_guard_state and CombatConfig.DefenseSide or CombatConfig.DefaultSide
     if self:IsOwnerFalling() == true then
         attack_domain = "Air"
         light_action_id = "Air_Combo_01"
     end
-    self.Runtime.PendingAttack = {
+    local pending = {
         InputSerial = input_event.InputSerial,
         PressTime = input_event.EventTimeSeconds,
-        SideSnapshot = CombatConfig.DefaultSide,
+        SideSnapshot = is_guard_state and CombatConfig.DefenseSide or CombatConfig.DefaultSide,
         AttackDomain = attack_domain,
         LightActionId = light_action_id,
         bLightAccepted = true,
         bHeavyAccepted = attack_domain == "Ground",
+        bStartedFromGuard = is_guard_state,
+        bGuardStartupPlaying = false,
+        StartupActionSerial = nil,
     }
+    if is_guard_state == true then
+        if attack_domain == "Air" then
+            -- 空中攻击不支持重击，无需等待 Completed，按下边沿即可立即进入首段轻攻击。
+            self:ResolveAttackInput(pending, false)
+        else
+            self:StartGuardAttackStartup(pending)
+        end
+        return
+    end
+    self.Runtime.PendingAttack = pending
 end
 
 ---执行已经完成长短按判定的攻击；有效窗口内立即混合到下一动作。
@@ -471,6 +613,19 @@ function SKCombatComponent:ResolveAttackInput(pending, is_heavy)
         return
     end
 
+    self.Runtime.bReturnToGuardAfterAttack = pending.bStartedFromGuard == true
+        and self:IsGuardHeld() == true
+    if self.Runtime.bReturnToGuardAfterAttack == true then
+        self:SetGuardCombatPosture(false)
+    else
+        self:ClearCombatPosture()
+    end
+
+    if kind == "Heavy"
+        and pending.bGuardStartupPlaying == true
+        and self:CommitGuardAttackStartupToHeavy(pending) == true then
+        return
+    end
     if kind == "Heavy" then
         self:StartHeavyAttack(pending.SideSnapshot)
     else
@@ -537,6 +692,19 @@ end
 ---@return nil result 必要时启动 Guard Lower。
 function SKCombatComponent:HandleGuardCompleted()
     local state = self:GetCombatActionState()
+    if state == UE.ESKCombatActionState.PendingAttack
+        and self.Runtime.PendingAttack ~= nil
+        and self.Runtime.PendingAttack.bStartedFromGuard == true then
+        self.Runtime.bReturnToGuardAfterAttack = false
+        self:ClearCombatPosture()
+        return
+    end
+    if state == UE.ESKCombatActionState.LightAttack
+        or state == UE.ESKCombatActionState.HeavyAttack then
+        self.Runtime.bReturnToGuardAfterAttack = false
+        self:ClearCombatPosture()
+        return
+    end
     if state == UE.ESKCombatActionState.GuardRaise
         or state == UE.ESKCombatActionState.Guarding then
         self:StartGuardLower()
@@ -565,22 +733,53 @@ end
 ---处理未被续段切换的攻击动画自然结束，并立即恢复默认状态。
 ---@return nil result 清空当前攻击并恢复 Neutral。
 function SKCombatComponent:HandleAttackAnimationFinished()
+    local return_to_guard = self.Runtime.bReturnToGuardAfterAttack == true
+        and self:IsGuardHeld() == true
     self.Runtime.PendingAttack = nil
     self.Runtime.ActionId = nil
 
     self:ResetAttackRetention(false)
-    self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+    if return_to_guard == true then
+        local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
+        self:SetCommittedAttackSide(name_to_side(defense_side))
+        self:SetGuardCombatPosture(false)
+        self:SetCombatActionState(UE.ESKCombatActionState.Guarding)
+    else
+        self:ClearCombatPosture()
+        self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+    end
 end
 
 ---处理当前全身动画自然结束后的状态收敛。
 ---@return nil result 进入稳定 Guard、收刀、下一攻击或 Neutral。
 function SKCombatComponent:HandleAnimationFinished()
     local state = self:GetCombatActionState()
+    if state == UE.ESKCombatActionState.PendingAttack then
+        local pending = self.Runtime.PendingAttack
+        local return_to_guard = pending ~= nil
+            and pending.bStartedFromGuard == true
+            and self:IsGuardHeld() == true
+        self.Runtime.PendingAttack = nil
+        self.Runtime.ActionId = nil
+        self:ResetAttackRetention(false)
+        if return_to_guard == true then
+            local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
+            self:SetCommittedAttackSide(name_to_side(defense_side))
+            self:SetGuardCombatPosture(false)
+            self:SetCombatActionState(UE.ESKCombatActionState.Guarding)
+        else
+            self:ClearCombatPosture()
+            self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+        end
+        return
+    end
     if state == UE.ESKCombatActionState.GuardRaise then
         self.Runtime.ActionId = nil
         if self:IsGuardHeld() == true then
+            self:SetGuardCombatPosture(false)
             self:SetCombatActionState(UE.ESKCombatActionState.Guarding)
         else
+            self:ClearCombatPosture()
             self:StartGuardLower()
         end
         return
@@ -588,8 +787,10 @@ function SKCombatComponent:HandleAnimationFinished()
     if state == UE.ESKCombatActionState.DeflectReaction then
         self.Runtime.ActionId = nil
         if self:IsGuardHeld() == true then
+            self:SetGuardCombatPosture(false)
             self:SetCombatActionState(UE.ESKCombatActionState.Guarding)
         else
+            self:ClearCombatPosture()
             self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
             local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
             self:SetCommittedAttackSide(name_to_side(default_side))
@@ -598,6 +799,7 @@ function SKCombatComponent:HandleAnimationFinished()
     end
     if state == UE.ESKCombatActionState.GuardLower then
         self.Runtime.ActionId = nil
+        self:ClearCombatPosture()
         self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
         local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
         self:SetCommittedAttackSide(name_to_side(default_side))
@@ -610,7 +812,28 @@ function SKCombatComponent:HandleAnimationFinished()
     end
 
     self.Runtime.ActionId = nil
+    self:ClearCombatPosture()
     self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+end
+
+---同步可持续防御姿态的地面/空中分支；离散动作状态仍由各自的结束回调收敛。
+---该同步覆盖持续防御、弹反底层和从防御起手的攻击，处理走下边缘等非 Jump 导致的 Falling 变化。
+---@return nil result 必要时更新独立 CombatPostureState。
+function SKCombatComponent:UpdateSustainedCombatPosture()
+    local state = self:GetCombatActionState()
+    local should_keep_guard = state == UE.ESKCombatActionState.GuardRaise
+        or state == UE.ESKCombatActionState.Guarding
+        or (state == UE.ESKCombatActionState.PendingAttack
+            and self.Runtime.PendingAttack ~= nil
+            and self.Runtime.PendingAttack.bStartedFromGuard == true
+            and self.Runtime.bReturnToGuardAfterAttack == true)
+        or (state == UE.ESKCombatActionState.DeflectReaction and self:IsGuardHeld() == true)
+        or ((state == UE.ESKCombatActionState.LightAttack
+            or state == UE.ESKCombatActionState.HeavyAttack)
+            and self.Runtime.bReturnToGuardAfterAttack == true)
+    if should_keep_guard == true then
+        self:SetGuardCombatPosture(false)
+    end
 end
 
 ---每帧采样活动 Sequence 曲线，在可取消阶段提交下一刀侧。
@@ -635,6 +858,7 @@ function SKCombatComponent:Tick(_delta_seconds)
         self.Runtime = create_runtime(side_to_name(self:GetNextAttackSide()))
     end
     self:TryTransitionAirAttackToLand()
+    self:UpdateSustainedCombatPosture()
     while true do
         local has_event, input_event = self:ConsumeCombatInputEvent()
         if has_event ~= true or input_event == nil then
@@ -643,6 +867,7 @@ function SKCombatComponent:Tick(_delta_seconds)
         self:HandleInputEvent(input_event)
     end
 
+    self:TryCommitGuardAttackStartup()
     self:UpdateAttackSideCurve()
     local is_playing = self:IsCombatAnimationPlaying() == true
     if self.Runtime.bWasAnimationPlaying == true and is_playing ~= true then

@@ -188,6 +188,28 @@ namespace SekiroAnimBlueprintFactoryPrivate
     }
 
     /**
+     * 判断完整 IR 是否只包含可在动画工作线程求值的原生 Transition Rule。
+     * 本函数只读遍历值类型 IR，不加载 UObject；任一旧式 RuleFunctionName 都会使资产回退游戏线程更新。
+     *
+     * @param Blueprint 已通过 Canonicalize 的动画蓝图 IR。
+     * @return 所有 Transition 均无 Lua RuleFunctionName 时返回 true，否则返回 false。
+     */
+    bool CanUseMultiThreadedAnimationUpdate(const FSekiroAnimBlueprintIR& Blueprint)
+    {
+        for (const FSekiroAnimIRLayer& Layer : Blueprint.Layers)
+        {
+            for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+            {
+                for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
+                {
+                    if (!Transition.RuleFunctionName.IsNone()) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
      * 在节点属性数组中按注册名查找只读属性。
      * 本函数不加载 UObject，可在任意线程调用；返回指针只在节点属性数组不扩容时有效。
      *
@@ -4211,7 +4233,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
 
         AnimBlueprint->Modify();
-        AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate =
+            CanUseMultiThreadedAnimationUpdate(Preflight.Blueprint);
 
         if (bTransient)
         {
@@ -4302,7 +4325,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
             NSLOCTEXT("SekiroLuaAnimBlueprint", "PrepareTransaction", "Prepare Lua Animation Blueprint Graph"),
             &Blueprint);
         Blueprint.Modify();
-        Blueprint.bUseMultiThreadedAnimationUpdate = false;
+        Blueprint.bUseMultiThreadedAnimationUpdate =
+            CanUseMultiThreadedAnimationUpdate(Preflight.Blueprint);
 
         bool bPrepared = ResetLuaOwnedBlueprint(
             Blueprint,
@@ -4983,10 +5007,13 @@ bool USekiroAnimBlueprintFactoryLibrary::CompileDirtyLoadedLuaAnimBlueprints(
 
         USekiroLuaAnimBlueprintExtension* Extension =
             USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+        const bool bCompilerOutOfDate = Extension != nullptr
+            && Extension->CompilerVersion
+                != USekiroLuaAnimBlueprintExtension::CurrentCompilerVersion;
         if (Extension == nullptr
             || Extension->LuaModuleName.IsEmpty()
             || Extension->SourceMode != ESekiroLuaAnimBlueprintSourceMode::Lua
-            || !Extension->bSourceDirty)
+            || (!Extension->bSourceDirty && !bCompilerOutOfDate))
         {
             continue;
         }

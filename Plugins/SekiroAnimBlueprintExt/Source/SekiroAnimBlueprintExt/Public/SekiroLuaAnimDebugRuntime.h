@@ -66,8 +66,10 @@ public:
     static void Startup();
     static void Shutdown();
 
+    /** 任意线程查询当前是否需要采集 Transition 调试值。 */
     static bool IsSamplingEnabled();
     static void RecordAnimInstanceModule(UAnimInstance* AnimInstance, const FString& LuaModuleName);
+    /** 从游戏线程或并行动画线程提交 Transition 调试值。 */
     static void RecordTransitionValue(
         UAnimInstance* AnimInstance,
         const FString& TransitionId,
@@ -84,6 +86,10 @@ public:
     static FString GetSnapshotSessionPath();
     /** Flush 并关闭当前快照 Session，保留最后文件路径。 */
     static void StopSnapshotSession();
+    /** PIE/SIE 开始前关闭全部采样并清理上一运行态。 */
+    static void ResetForPIEStart();
+    /** PIE/SIE 结束时关闭全部采样并清理本次运行态。 */
+    static void ResetForPIEEnd();
 
 #if WITH_DEV_AUTOMATION_TESTS
     static void ApplyDebugArgumentsForTesting(const TArray<FString>& Arguments);

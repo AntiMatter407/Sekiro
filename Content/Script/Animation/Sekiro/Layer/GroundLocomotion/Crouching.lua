@@ -73,6 +73,18 @@ function Crouching.BuildTurn(Graph)
         "LatchedTurnDirection")
 end
 
+---构建 Crouching Stop 后的换脚回正动作；与普通 Aim Turn 使用不同的锁存方向。
+---@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
+---@return LuaBlendListByEnumNode pose_node Crouching StopTurn 最终姿势节点。
+function Crouching.BuildStopTurn(Graph)
+    return PoseSelectors.LeftRight(
+        Graph,
+        "CrouchingStopTurn",
+        Anim.Crouch_Idle_Left_Turn,
+        Anim.Crouch_Idle_Right_Turn,
+        "StopTurnDirection")
+end
+
 ---构建 Crouching Walk/Run Start；Sprint 由 Movement 先退出蹲姿后在 Standing 分支表现。
 ---@param Graph LuaAnimStateGraph Start 状态的原生 Pose Graph。
 ---@return LuaBlendListByEnumNode pose_node Crouching Start 姿势节点。
@@ -87,10 +99,11 @@ function Crouching.BuildStart(Graph)
         nil)
 end
 
----构建 Crouching Walk/Run Cycle，并与 Standing Cycle 共用方向和同步组。
+---构建 Crouching Walk/Run Cycle；四向分支先独立对齐，再按输入方向平滑混合。
 ---@param Graph LuaAnimStateGraph Cycle 状态的原生 Pose Graph。
+---@param alignment SekiroCardinalAlignmentConfig 混合前逐分支方向对齐配置。
 ---@return LuaBlendListByEnumNode pose_node Crouching Cycle 姿势节点。
-function Crouching.BuildCycle(Graph)
+function Crouching.BuildCycle(Graph, alignment)
     return PoseSelectors.WalkRun(
         Graph,
         "CrouchingCycle",
@@ -98,7 +111,8 @@ function Crouching.BuildCycle(Graph)
         "CycleDirection",
         "PoseGait",
         true,
-        Tuning.DirectionSyncGroup)
+        Tuning.DirectionSyncGroup,
+        alignment)
 end
 
 ---构建 Crouching Walk/Run Stop，使用动作边沿锁存的方向和步态。

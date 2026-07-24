@@ -1,7 +1,7 @@
 # Sekiro 锁定状态 Locomotion 设计
 
 > 状态：历史实现方案。四方向资源选择和输入语义仍有效，但本文所述 BlendSpace、MovePhase 匹配和 Stop 轨迹冻结等旧动态 Pose Graph 机制已经删除；Orientation Warping 后来以原生生成节点重新接入。
-> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + Orientation Warping + Inertialization；`DirectionResidualAngle` 只驱动锁定 Walk/Run 的姿势补偿，不修改 CharacterMovement 的物理轨迹。
+> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + 分支级 Orientation Warping + Inertialization；四条方向残差只驱动锁定 Walk/Run 的姿势补偿，不修改 CharacterMovement 的物理轨迹。
 > 日期：2026-07-11  
 > 关联文档：[角色摄像头与 Locomotion 方案](sekiro-camera-locomotion.md)、[动画曲线生成与使用手册](../animation-curve-authoring-guide.md)
 
@@ -91,20 +91,20 @@ Movement Lua 把角色朝向移动方向，摄像机不被移动输入修改。�
 
 ## 五、锁定方向解析
 
-方向以 `MoveDirectionAngle` 为权威输入。它表达实际世界移动方向相对当前角色朝向的角度，比直接拼接动画名或只读 WASD 更适合角色尚在缓慢面向目标的阶段。
+Cycle 的素材选区与轨迹对齐承担不同职责：`MoveInputX/MoveInputY` 表达玩家相对锁定视角的即时方向意图，用于快速选择 Forward/Back/Left/Right；`MoveDirectionAngle` 表达实际世界移动方向相对当前角色朝向的角度，用于把每条素材分别对齐真实轨迹。两者不能在方向选择器之后共用一个残差，而要在各条 Sequence 分支混合前分别应用。
 
 基础分区：
 
 | 角度 | 方向 |
 | --- | --- |
-| `[-45°, 45°]` | Forward |
-| `(45°, 135°)` | Right |
-| `[-135°, -45°)` | Left |
-| `[135°, 180°]` 或 `[-180°, -135°)` | Back |
+| `[-60°, 60°]` | Forward |
+| `(60°, 120°)` | Right |
+| `(-120°, -60°)` | Left |
+| `[120°, 180°]` 或 `[-180°, -120°]` | Back |
 
-必须加入滞回，不能在 `45°/135°` 边界直接切换。建议以当前方向为基准，候选方向至少比当前方向多 `10°` 优势才允许切换。Start、Stop 或 Step 的基础动画方向一旦进入状态就锁定到动作结束；Cycle 可以更新基础动画方向。Start 的方向残差例外：它持续根据最新输入相对锁存基础方向计算，使起步中追加斜向输入时下半身立即开始对齐，同时不重启一次性动画。
+必须加入前后优先的非对称滞回。Forward 离开自身扇区需要超过约 `70°`，但 Left/Right 进入 Forward 时到达 `60°` 基础边界就立即切换；Back 离开自身扇区需要小于约 `110°`，但 Left/Right 进入 Back 时到达 `120°` 基础边界就立即切换。这样既保留 Forward/Back 边缘的 `10°` 防抖范围，也不会让侧向素材侵入更自然的前后主扇区。Start、Stop 或 Step 的基础动画方向一旦进入状态就锁定到动作结束；Cycle 可以更新基础动画方向。Start 的方向残差例外：它持续根据最新输入相对锁存基础方向计算，使起步中追加斜向输入时下半身立即开始对齐，同时不重启一次性动画。
 
-四向分区只决定播放哪条 Sequence，不得量化真实移动轨迹。Lua 同时保留精确 `MoveDirectionAngle`，计算 `精确角 - 素材主方向角`；CharacterMovement 按真实输入负责物理轨迹，Orientation Warping 用该残差旋转下半身，并通过 `Spine/Spine1/Spine2` 反向补偿上半身。这样 45 度输入仍沿 45 度移动，而角色胸口继续朝向锁定目标。
+四向分区只决定播放哪条 Sequence，不得量化真实移动轨迹。Lua 为四条分支同时计算 `实际移动角 - 各素材主方向角`：Forward、Back、Left、Right 分别以 `0°/180°/-90°/90°` 为主轴。每条 Sequence 先通过自己的 Orientation Warping 对齐，再由 `BlendListByEnum` 混合；因此 Left 淡出和 Forward 淡入期间不会误用同一个残差。分支内部角度立即应用，平滑只由方向 Pose 混合承担；`Spine/Spine1/Spine2` 继续反向补偿，使角色胸口朝向锁定目标。
 
 无移动输入时不把方向重置为 Forward。停止过程中保留最后一个有效 `LockedMoveDirection`，用于选择匹配的 Stop 动画。
 
@@ -138,9 +138,13 @@ Movement Lua 把角色朝向移动方向，摄像机不被移动输入修改。�
 
 - 输入释放时锁定最后一个有效 Cycle 方向。
 - 同时冻结输入释放前的精确角度。Stop Root Motion 在整个动作中继续沿该斜向轨迹，不能退化为四向直线。
-- Stop 尾段把 Orientation Warping 权重平滑收回到零，使下半身在进入 Idle 前重新对齐锁定目标；上半身始终由脊柱反向补偿保持朝向目标。
+- Stop 全程保持锁定方向补偿，禁止在没有换脚动作时直接把 Orientation Warping 收回到零。
+- 残差角绝对值达到 `StopTurnMinResidualAngle` 时，Stop 在 `CanEnterIdle` 窗口进入专用 StopTurn；站立/蹲姿分别播放对应左右 Idle Turn，并由 `StopTurnDirectionAlignment` 在换脚阶段撤销补偿。
+- 残差角较小时直接进入 Idle，避免很小的角度也播放完整转身动作。
+- 输入释放时把角度和权重分别锁存到 Stop 专用变量。后续重新输入只更新 Start/Cycle，不得改写仍在混合退出的 Stop 方向。
 - Walk 选择 `Walk_<Direction>_Stop`，Run 选择 `Run_<Direction>_Stop`。
 - `Stop -> Idle` 使用 `CanEnterIdle >= 0.5`。
+- `StopTurn -> Idle` 使用 `CanExitTurn >= 0.5`。
 - Stop 中重新输入时，根据新方向进入对应 Start；锁定环绕内不创建面向移动方向的 Turn。
 
 ### 6.5 Step
@@ -217,9 +221,11 @@ Sprint Forward Cycle
 
 | 配置 | 初始值 | 作用 |
 | --- | ---: | --- |
-| `LockedDirectionBoundaryAngle` | `45°` | 前后与左右基础分界 |
+| `LockedDirectionForwardBoundaryAngle` | `60°` | Forward 与 Left/Right 的基础分界 |
+| `LockedDirectionBackBoundaryAngle` | `120°` | Left/Right 与 Back 的基础分界 |
 | `LockedDirectionHysteresisAngle` | `10°` | 防止方向边界抖动 |
-| `LockedDirectionBlendTime` | `0.10s` | 四个 Cycle BlendSpace 切换混合 |
+| `LockOnWarpingMaxAngle` | `70°` | 覆盖基础边界加滞回后的最大方向残差 |
+| `DirectionBlendDuration` | `0.06s` | 四向 Sequence 分支切换混合 |
 | `LockOnActorInterpSpeed` | `14`（Movement Lua） | 非 Sprint 身体跟随目标 |
 | `LockOnCameraYawInterpSpeed` | 保持 `8` | 镜头跟随目标 |
 | `SprintActorInterpSpeed` | `12`（Movement Lua） | Sprint 身体追随移动方向 |

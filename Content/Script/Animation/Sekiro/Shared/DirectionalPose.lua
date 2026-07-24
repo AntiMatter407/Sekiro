@@ -15,13 +15,15 @@ local DirectionalPose = {}
 ---@param source_pose LuaAnimNode 已选出最近方向动画的局部空间 Pose 节点。
 ---@param residual_angle_variable string 已声明的有符号量化残差变量名，单位为度。
 ---@param alpha_variable string 已声明的方向对齐强度变量名，范围为 0..1。
+---@param rotation_interp_speed number|nil 节点内部角度插值速度；nil 使用集中配置，0 表示立即应用目标角。
 ---@return LuaComponentToLocalSpaceNode aligned_pose 已对齐下半身并保留上半身目标朝向的局部空间 Pose。
 function DirectionalPose.Align(
     Graph,
     name,
     source_pose,
     residual_angle_variable,
-    alpha_variable)
+    alpha_variable,
+    rotation_interp_speed)
     local residual_angle = Graph:Property(name .. "ResidualAngle", residual_angle_variable)
     local alignment_alpha = Graph:Property(name .. "Alpha", alpha_variable)
     local warping_settings = Tuning.LockOnOrientationWarping
@@ -34,7 +36,9 @@ function DirectionalPose.Align(
     warping.IKFootBones = warping_settings.IKFootBones
     warping.RotationAxis = warping_settings.RotationAxis
     warping.DistributedBoneOrientationAlpha = warping_settings.DistributedBoneOrientationAlpha
-    warping.RotationInterpSpeed = Tuning.LockOnWarpingInterpSpeed
+    warping.RotationInterpSpeed = rotation_interp_speed ~= nil
+        and rotation_interp_speed
+        or Tuning.LockOnWarpingInterpSpeed
     to_component.LocalPose:Connect(source_pose.Pose)
     warping.ComponentPose:Connect(to_component.ComponentPose)
     warping.OrientationAngle:Connect(residual_angle.Value)

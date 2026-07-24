@@ -136,6 +136,7 @@ Right -> Left -> Combo_01 -> Combo_02 -> Combo_03 -> End
 - **REQ-AIR-005**：落地链固定为 `Land_Combo_01 -> Land_Combo_02 -> Land_Combo_03 -> End`。
 - **REQ-AIR-006**：空中和落地动作均不允许重攻击；长按只要在轻攻击窗口内开始，仍解析为下一段轻攻击。
 - **REQ-AIR-007**：落地转换必须清除尚未释放的空中攻击候选，避免旧输入跨动作执行。
+- **REQ-AIR-008**：Jump 前临时忽略动画 Root Motion；真正离地后的首次落地帧必须在 Land 攻击启动前显式恢复 `RootMotionFromEverything`，Jump 失败时必须超时恢复。
 
 ## 七、重攻击需求
 
@@ -232,6 +233,10 @@ Right -> Left -> Combo_01 -> Combo_02 -> Combo_03 -> End
 - **REQ-DEF-005**：普通防御的 Raise、Guarding 和 Lower 阶段都允许 Jump；执行顺序必须为清理地面防御、请求物理 Jump、按 Held 状态决定是否进入空中防御。
 - **REQ-DEF-006**：防御键在 Jump 后仍按住时播放 `Guard.Air_Raise`，随后使用 `Guard.Air_Idle`；空中释放时播放 `Guard.Air_Lower`。
 - **REQ-DEF-007**：防御键在起跳后已经释放时不得自动进入空中防御。
+- **REQ-ATK-GUARD-001**：`GuardRaise/Guarding/GuardLower` 按下攻击键必须立即创建攻击候选并播放共用攻击起手，不得继续停留在 Guard 动画等待 Completed。
+- **REQ-ATK-GUARD-002**：地面防御候选短按进入左侧轻攻击，达到 `HeavyHoldThreshold` 时进入左侧重攻击；空中防御长按仍按空中轻攻击处理。
+- **REQ-ATK-GUARD-003**：从防御进入攻击时，攻击 Montage 可以覆盖全身防御 Pose，但必须保留独立防御姿态意图；攻击结束时防御键仍按住则返回 `Guarding`，已释放则返回 `Neutral`。
+- **REQ-ATK-GUARD-004**：首版共用起手复用 `Charged_Thrust_Left` 前摇；阈值前释放立即混合到 `Left`，达到阈值则在同一 Montage 和 ActionSerial 上提交为重攻击，禁止从头重播。
 
 ### 10.2 跳跃取消
 
