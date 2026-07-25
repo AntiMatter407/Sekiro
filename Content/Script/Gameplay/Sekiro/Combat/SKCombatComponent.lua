@@ -853,7 +853,7 @@ end
 ---该入口由原生组件显式 require 后调用，不依赖纯原生组件的 Blueprint ReceiveTick 分发。
 ---@param _delta_seconds number 本帧时长；当前实现使用 Sequence 曲线和事件绝对时间。
 ---@return boolean handled 始终返回 true，表示本帧战斗动画逻辑已执行。
-function SKCombatComponent:Tick(_delta_seconds)
+function SKCombatComponent:HandleCombatTick(_delta_seconds)
     if self.Runtime == nil then
         self.Runtime = create_runtime(side_to_name(self:GetNextAttackSide()))
     end

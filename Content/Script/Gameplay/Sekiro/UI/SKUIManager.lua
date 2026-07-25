@@ -134,7 +134,7 @@ end
 ---执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
 ---@param _delta_seconds number|nil C++ Tick 传入的本帧秒数；当前函数无需逐帧时间但保留签名兼容。
 ---@return boolean handled 始终返回 true，表示 Lua 已完成 UI 管理器本帧刷新。
-function SKUIManager:Tick(_delta_seconds)
+function SKUIManager:HandleUIManagerTick(_delta_seconds)
     self:RefreshCachedUIOwner()
     if not self:HasPlayerController() or not self:IsLocalPlayerController() then
         return true

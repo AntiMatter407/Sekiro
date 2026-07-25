@@ -4,53 +4,6 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "UI/SKLockOnIndicatorWidget.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
-
-namespace
-{
-    static UnLua::FLuaRetValues RequireSKLockOnIndicatorLuaModule(UnLua::FLuaEnv* LuaEnv, const FString& LuaModuleName, bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKLockOnIndicator Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKLockOnIndicator Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-
-    static bool ReadSKLockOnIndicatorLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName)
-    {
-        if (!ReturnValues.IsValid()) return false;
-        if (ReturnValues.Num() == 0) return false;
-        if (ReturnValues[0].GetType() == LUA_TNIL) return false;
-
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN)
-        {
-            return ReturnValues[0].Value<bool>();
-        }
-
-        UE_LOG(LogTemp, Warning, TEXT("SKLockOnIndicator Lua Tick should return boolean. Module=%s"), *LuaModuleName);
-        return false;
-    }
-}
-
 USKLockOnIndicatorComponent::USKLockOnIndicatorComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
@@ -80,6 +33,19 @@ FString USKLockOnIndicatorComponent::GetLuaLockOnIndicatorModuleName() const
 FString USKLockOnIndicatorComponent::GetModuleName_Implementation() const
 {
     return LuaLockOnIndicatorModuleName;
+}
+
+/**
+ * 提供未绑定 Lua 时的锁定指示器 Tick 回退，并主动隐藏可能残留的指示器。
+ * 同名 Lua override 返回 true 时表示已完成本帧显示计算；仅由组件 Tick 在游戏线程调用。
+ *
+ * @param DeltaTime 当前帧步长，单位秒；默认实现不消费该值。
+ * @return 默认返回 false，使调用方执行安全隐藏。
+ */
+bool USKLockOnIndicatorComponent::HandleLockOnIndicatorTick_Implementation(float DeltaTime)
+{
+    (void)DeltaTime;
+    return false;
 }
 
 void USKLockOnIndicatorComponent::RefreshCachedLockOnComponents()
@@ -281,44 +247,9 @@ void USKLockOnIndicatorComponent::TickComponent(float DeltaTime, ELevelTick Tick
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
     RefreshCachedComponents();
-    if (TryCallLuaLockOnIndicatorTick(DeltaTime)) return;
+    if (bUseLuaLockOnIndicatorLogic && HandleLockOnIndicatorTick(DeltaTime)) return;
 
     SetLockOnIndicatorVisible(false);
-}
-
-bool USKLockOnIndicatorComponent::TryCallLuaLockOnIndicatorTick(float DeltaTime)
-{
-    const FString ModuleName = ResolveLuaLockOnIndicatorModuleName();
-    if (!bUseLuaLockOnIndicatorLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKLockOnIndicatorLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-    const bool bHandled = ReadSKLockOnIndicatorLuaHandled(FunctionReturnValues, ModuleName);
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-FString USKLockOnIndicatorComponent::ResolveLuaLockOnIndicatorModuleName() const
-{
-    if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
-    {
-        const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<USKLockOnIndicatorComponent*>(this));
-        if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
-    }
-
-    return LuaLockOnIndicatorModuleName;
 }
 
 void USKLockOnIndicatorComponent::RefreshCachedComponents()

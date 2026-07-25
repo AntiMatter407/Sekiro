@@ -33,6 +33,14 @@ public:
 
     virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
 
+    /** Lua 可覆盖的 HUD 初始化入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "UI|HUD|Gameplay")
+    void HandleHUDInitialized();
+
+    /** Lua 可覆盖的 HUD 逐帧入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "UI|HUD|Gameplay")
+    void HandleHUDTick(float DeltaSeconds);
+
     UFUNCTION(BlueprintCallable, Category = "UI|HUD|Lua")
     void RefreshCachedHUDOwner();                     // 刷新 HUD 所属玩家
 
@@ -63,8 +71,5 @@ private:
     UPROPERTY()
     TObjectPtr<APlayerController> CachedPlayerController; // 缓存玩家控制器
 
-    bool TryCallLuaHUDBeginPlay();                    // 调用 Lua HUD BeginPlay
-    bool TryCallLuaHUDTick(float DeltaSeconds);        // 调用 Lua HUD Tick
-    FString ResolveLuaHUDModuleName() const;          // 解析 Lua HUD 模块名
     void RefreshCachedOwner();                        // 刷新所属玩家
 };

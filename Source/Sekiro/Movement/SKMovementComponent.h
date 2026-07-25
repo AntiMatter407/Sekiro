@@ -66,6 +66,9 @@ public:
 
     virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
 
+    UFUNCTION(BlueprintNativeEvent, Category = "Movement|Lua")
+    void UpdateMovementLogic(float DeltaTime);                     // Lua 可覆盖的逐帧移动策略入口
+
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
     void RefreshCachedMovementComponents();                       // 刷新脚本可用组件缓存
 
@@ -146,10 +149,8 @@ private:
     uint32 bHasDesiredMoveYawSnapshot : 1;                        // 当前是否存在有效移动目标快照
     uint32 bRootMotionMoveDirectionEnabled : 1;                   // 是否把动画根运动水平位移对齐到 Lua 目标方向
 
-    // ── Lua 调用与通用执行 ────────────────────────────────────
+    // ── 通用执行 ──────────────────────────────────────────────
 
-    bool TryCallLuaMovementTick(float DeltaTime);                 // 调用 Lua Movement Tick
-    FString ResolveLuaMovementModuleName() const;                 // 解析 UnLua 接口模块名
     void RefreshCachedComponents();                              // 刷新角色相关组件缓存
     void ApplyActorYaw(float TargetYaw, float InterpSpeed, float DeltaTime); // 原生执行最短路径 Yaw 插值
     FTransform RedirectRootMotionTranslation(const FTransform& WorldRootMotion, UCharacterMovementComponent* SourceMovementComponent, float DeltaSeconds) const; // 对齐世界根运动水平位移

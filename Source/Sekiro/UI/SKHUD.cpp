@@ -2,52 +2,6 @@
 
 #include "GameFramework/PlayerController.h"
 #include "UI/SKUIManagerComponent.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
-
-namespace
-{
-    static UnLua::FLuaRetValues RequireSKHUDLuaModule(UnLua::FLuaEnv* LuaEnv, const FString& LuaModuleName, bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKHUD Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKHUD Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-
-    static bool ReadSKHUDLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName, FName FunctionName)
-    {
-        if (!ReturnValues.IsValid()) return false;
-        if (ReturnValues.Num() == 0) return false;
-        if (ReturnValues[0].GetType() == LUA_TNIL) return false;
-
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN)
-        {
-            return ReturnValues[0].Value<bool>();
-        }
-
-        UE_LOG(LogTemp, Warning, TEXT("SKHUD Lua %s should return boolean. Module=%s"), *FunctionName.ToString(), *LuaModuleName);
-        return false;
-    }
-}
 
 ASKHUD::ASKHUD()
 {
@@ -87,6 +41,25 @@ FString ASKHUD::GetModuleName_Implementation() const
     return LuaHUDModuleName;
 }
 
+/**
+ * 提供未绑定 Lua 时的 HUD 初始化回退；默认实现不创建业务界面。
+ * 同名 Lua override 可在玩家和 UIManager 缓存完成后配置界面；仅由 BeginPlay 在游戏线程调用。
+ */
+void ASKHUD::HandleHUDInitialized_Implementation()
+{
+}
+
+/**
+ * 提供未绑定 Lua 时的空 HUD Tick 回退，避免 C++ 通过模块名手写分发脚本。
+ * 同名 Lua override 负责 HUD 逐帧编排；仅由 AHUD Tick 在游戏线程调用。
+ *
+ * @param DeltaSeconds 当前帧步长，单位秒；默认实现不消费该值。
+ */
+void ASKHUD::HandleHUDTick_Implementation(float DeltaSeconds)
+{
+    (void)DeltaSeconds;
+}
+
 void ASKHUD::RefreshCachedHUDOwner()
 {
     RefreshCachedOwner();
@@ -112,7 +85,10 @@ void ASKHUD::BeginPlay()
     Super::BeginPlay();
 
     RefreshCachedOwner();
-    TryCallLuaHUDBeginPlay();
+    if (bUseLuaHUDLogic)
+    {
+        HandleHUDInitialized();
+    }
 }
 
 void ASKHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -130,66 +106,10 @@ void ASKHUD::Tick(float DeltaSeconds)
     Super::Tick(DeltaSeconds);
 
     RefreshCachedOwner();
-    TryCallLuaHUDTick(DeltaSeconds);
-}
-
-bool ASKHUD::TryCallLuaHUDBeginPlay()
-{
-    const FString ModuleName = ResolveLuaHUDModuleName();
-    if (!bUseLuaHUDLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKHUDLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["BeginPlay"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this);
-    const bool bHandled = ReadSKHUDLuaHandled(FunctionReturnValues, ModuleName, FName(TEXT("BeginPlay")));
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-bool ASKHUD::TryCallLuaHUDTick(float DeltaSeconds)
-{
-    const FString ModuleName = ResolveLuaHUDModuleName();
-    if (!bUseLuaHUDLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKHUDLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaSeconds);
-    const bool bHandled = ReadSKHUDLuaHandled(FunctionReturnValues, ModuleName, FName(TEXT("Tick")));
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-FString ASKHUD::ResolveLuaHUDModuleName() const
-{
-    if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
+    if (bUseLuaHUDLogic)
     {
-        const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<ASKHUD*>(this));
-        if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
+        HandleHUDTick(DeltaSeconds);
     }
-
-    return LuaHUDModuleName;
 }
 
 void ASKHUD::RefreshCachedOwner()

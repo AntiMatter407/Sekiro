@@ -174,10 +174,10 @@ function SKCameraManager:UpdateLockOnMode(delta_seconds)
     self:ApplyControllerYawForScript(target_yaw, self:GetLockOnCameraYawInterpSpeed(), delta_seconds or 0)
 end
 
----执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
+---由 C++ BlueprintNativeEvent 反射分发，执行本模块的逐帧更新并同步最新输入和状态。
 ---@param delta_seconds number|nil 本帧增量时间，单位为秒；缺失时按 0 处理。
 ---@return boolean handled 始终返回 true，表示相机逻辑已处理本帧更新。
-function SKCameraManager:Tick(delta_seconds)
+function SKCameraManager:UpdateCameraLogic(delta_seconds)
     self:RefreshCachedCameraComponents()
     if not self:HasOwnerCharacter() then
         self:ClearPendingLookInputForScript()

@@ -130,10 +130,10 @@ function SKMovementComponent:ResolveActorFacing(has_desired_yaw, desired_move_ya
     return false, self:GetOwnerYaw(), self.FreeActorInterpSpeed
 end
 
----在原生 CharacterMovement 求值前更新速度和角色朝向。
+---由 C++ BlueprintNativeEvent 反射分发，在原生 CharacterMovement 求值前更新速度和角色朝向。
 ---@param delta_seconds number|nil 当前帧时长，单位为秒；nil 按 0 处理。
 ---@return boolean handled 始终返回 true，表示 Lua 已处理本帧 Movement 策略。
-function SKMovementComponent:Tick(delta_seconds)
+function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:RefreshCachedMovementComponents()
     if not self:HasOwnerCharacter() then
         self:ClearMoveFacingSnapshotForScript()

@@ -48,7 +48,7 @@ end
 
 ---在 BeginPlay 生命周期阶段初始化本模块需要的缓存、绑定或动画层配置。
 ---@return boolean handled 始终返回 true，表示 HUD 已完成 Lua UI 框架接入。
-function SKHUD:BeginPlay()
+function SKHUD:HandleHUDInitialized()
     self:RefreshCachedHUDOwner()
 
     local ui_manager = self:GetUIManagerSafe()
@@ -64,7 +64,7 @@ end
 ---执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
 ---@param _delta_seconds number|nil C++ Tick 传入的本帧秒数；当前函数无需逐帧时间但保留签名兼容。
 ---@return boolean handled 始终返回 true，表示 HUD 已刷新本帧所有者缓存。
-function SKHUD:Tick(_delta_seconds)
+function SKHUD:HandleHUDTick(_delta_seconds)
     self:RefreshCachedHUDOwner()
     return true
 end

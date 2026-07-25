@@ -31,6 +31,10 @@ public:
 
     virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
 
+    /** Lua 可覆盖的 UI 管理逐帧编排入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "UI|Gameplay")
+    void HandleUIManagerTick(float DeltaTime);
+
     UFUNCTION(BlueprintCallable, Category = "UI|Runtime")
     void RefreshCachedUIOwner();                        // 刷新 UI 所属控制器
 
@@ -121,8 +125,6 @@ private:
     UPROPERTY()
     TMap<FName, int32> LayerZOrders;                    // UI 层级 ZOrder 表
 
-    bool TryCallLuaUIManagerTick(float DeltaTime);       // 调用 Lua UI Tick
-    FString ResolveLuaUIManagerModuleName() const;      // 解析 Lua UI 模块名
     void RefreshCachedOwner();                          // 刷新所属控制器
     TSubclassOf<UUserWidget> LoadWidgetClass(const FString& WidgetClassPath) const; // 加载控件类型
     FString MakeGeneratedWidgetClassPath(const FString& WidgetClassPath) const; // 生成蓝图类路径

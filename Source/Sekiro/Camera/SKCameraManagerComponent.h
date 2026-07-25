@@ -85,6 +85,9 @@ public:
 
     virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
 
+    UFUNCTION(BlueprintNativeEvent, Category = "Camera|Lua")
+    void UpdateCameraLogic(float DeltaTime);               // Lua 可覆盖的逐帧相机策略入口
+
     UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
     void RefreshCachedCameraComponents();                  // 刷新脚本可用组件缓存
 
@@ -180,8 +183,6 @@ private:
 
     // ── 内部流程 ─────────────────────────────────────────────
 
-    bool TryCallLuaCameraTick(float DeltaTime);        // 调用 Lua 相机 Tick
-    FString ResolveLuaCameraModuleName() const;        // 解析 UnLua 接口模块名
     ESKCameraMode ResolveCameraModeByName(FName ModeName) const; // 根据名称解析相机模式
     void RefreshCachedComponents();                   // 刷新角色相关组件缓存
     void ValidateLockTarget();                        // 检查当前锁定目标是否仍有效

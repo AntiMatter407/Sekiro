@@ -185,12 +185,6 @@ public:
 	// ── Lua 输入宿主 ─────────────────────────────────────────
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	void SetUseLuaInputLogic(bool bNewUseLuaInputLogic); // 设置是否由 Lua 接管输入逻辑
-
-	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	bool IsUsingLuaInputLogic() const;                // 是否启用 Lua 输入逻辑
-
-	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	void SetLuaInputModuleName(const FString& ModuleName); // 设置 Lua 输入模块名
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
@@ -329,84 +323,89 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	// ── 移动/视角回调 ───────────────────────────────────────
+	// Lua 可覆盖的 Gameplay 输入入口；未覆盖时调用对应 _Implementation 回退逻辑。
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleInputTick(float DeltaTime);
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleMoveInput(float InputX, float InputY);
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleMoveCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleLookInput(float InputX, float InputY);
 
-	UFUNCTION()
-	void OnMove(const FInputActionValue& Value);     // 持续移动输入
-	void OnMoveCompleted(const FInputActionValue& Value); // 移动输入完整释放
-	UFUNCTION()
-	void OnLook(const FInputActionValue& Value);     // 视角输入
-
-	// ── 跳跃回调 ────────────────────────────────────────────
-
-	UFUNCTION()
-	void OnJumpStarted(const FInputActionValue& Value);   // 跳跃按下 → ACharacter::Jump
-	UFUNCTION()
-	void OnJumpCompleted(const FInputActionValue& Value); // 跳跃松开 → ACharacter::StopJumping
-
-	// ── 闪避/冲刺回调 ──────────────────────────────────────
-
-	UFUNCTION()
-	void OnDodgeStarted(const FInputActionValue& Value);   // 闪避键按下开始计时
-	UFUNCTION()
-	void OnDodgeCompleted(const FInputActionValue& Value); // 闪避键松开，短按生成闪避
-
-	UFUNCTION()
-	void OnWalkModifierStarted(const FInputActionValue& Value); // 步行修饰按下
-	UFUNCTION()
-	void OnWalkModifierCompleted(const FInputActionValue& Value); // 步行修饰松开
-
-	// ── 蹲下回调 ────────────────────────────────────────────
-
-	UFUNCTION()
-	void OnCrouchStarted(const FInputActionValue& Value);  // 蹲下切换
-
-	// ── 战斗回调 ────────────────────────────────────────────
-
-	UFUNCTION()
-	void OnAttackStarted(const FInputActionValue& Value);   // 攻击按下
-	UFUNCTION()
-	void OnAttackCompleted(const FInputActionValue& Value); // 攻击松开
-	UFUNCTION()
-	void OnGuardStarted(const FInputActionValue& Value);    // 防御按下
-	UFUNCTION()
-	void OnGuardCompleted(const FInputActionValue& Value);  // 防御松开
-	UFUNCTION()
-	void OnLockOnStarted(const FInputActionValue& Value);   // 锁定按下
-	UFUNCTION()
-	void OnProstheticStarted(const FInputActionValue& Value);   // 义手按下
-	UFUNCTION()
-	void OnProstheticCompleted(const FInputActionValue& Value); // 义手松开
-	UFUNCTION()
-	void OnGrappleStarted(const FInputActionValue& Value);  // 钩索按下
-
-	// ── 交互/道具回调 ──────────────────────────────────────
-
-	UFUNCTION()
-	void OnInteractStarted(const FInputActionValue& Value);      // 交互按下
-	UFUNCTION()
-	void OnUseItemStarted(const FInputActionValue& Value);       // 道具使用
-	UFUNCTION()
-	void OnHealingGourdStarted(const FInputActionValue& Value);  // 伤药葫芦
-	UFUNCTION()
-	void OnCycleItemNextStarted(const FInputActionValue& Value); // 切换道具下一个
-	UFUNCTION()
-	void OnCycleItemPrevStarted(const FInputActionValue& Value); // 切换道具上一个
-
-	// ── 系统回调 ────────────────────────────────────────────
-
-	UFUNCTION()
-	void OnPauseStarted(const FInputActionValue& Value); // 暂停
-	UFUNCTION()
-	void OnMenuStarted(const FInputActionValue& Value);  // 菜单
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleJumpStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleJumpCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleDodgeStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleDodgeCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleWalkModifierStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleWalkModifierCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleCrouchStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleAttackStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleAttackCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleGuardStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleGuardCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleLockOnStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleProstheticStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleProstheticCompleted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleGrappleStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleInteractStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleUseItemStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleHealingGourdStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleCycleItemNextStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleCycleItemPrevStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandlePauseStarted();
+	UFUNCTION(BlueprintNativeEvent, Category = "Input|Gameplay")
+	void HandleMenuStarted();
 
 private:
-	// ── Lua 调用 ─────────────────────────────────────────────
+	// Enhanced Input 类型适配层；只转换 FInputActionValue 并分发反射事件。
+	void OnMoveInput(const FInputActionValue& Value);
+	void OnMoveCompletedInput(const FInputActionValue& Value);
+	void OnLookInput(const FInputActionValue& Value);
+	void OnJumpStartedInput(const FInputActionValue& Value);
+	void OnJumpCompletedInput(const FInputActionValue& Value);
+	void OnDodgeStartedInput(const FInputActionValue& Value);
+	void OnDodgeCompletedInput(const FInputActionValue& Value);
+	void OnWalkModifierStartedInput(const FInputActionValue& Value);
+	void OnWalkModifierCompletedInput(const FInputActionValue& Value);
+	void OnCrouchStartedInput(const FInputActionValue& Value);
+	void OnAttackStartedInput(const FInputActionValue& Value);
+	void OnAttackCompletedInput(const FInputActionValue& Value);
+	void OnGuardStartedInput(const FInputActionValue& Value);
+	void OnGuardCompletedInput(const FInputActionValue& Value);
+	void OnLockOnStartedInput(const FInputActionValue& Value);
+	void OnProstheticStartedInput(const FInputActionValue& Value);
+	void OnProstheticCompletedInput(const FInputActionValue& Value);
+	void OnGrappleStartedInput(const FInputActionValue& Value);
+	void OnInteractStartedInput(const FInputActionValue& Value);
+	void OnUseItemStartedInput(const FInputActionValue& Value);
+	void OnHealingGourdStartedInput(const FInputActionValue& Value);
+	void OnCycleItemNextStartedInput(const FInputActionValue& Value);
+	void OnCycleItemPrevStartedInput(const FInputActionValue& Value);
+	void OnPauseStartedInput(const FInputActionValue& Value);
+	void OnMenuStartedInput(const FInputActionValue& Value);
 
-	bool TryCallLuaInputEvent(FName FunctionName);   // 调用 Lua 无参数输入事件
-	bool TryCallLuaInputAxisEvent(FName FunctionName, const FVector2D& AxisValue); // 调用 Lua 轴输入事件
-	bool TryCallLuaInputTick(float DeltaTime);       // 调用 Lua Tick
-	FString ResolveLuaInputModuleName() const;       // 解析 UnLua 接口模块名
 	void PublishCombatInputEvent(ESKCombatInputAction Action, ESKCombatInputPhase Phase, int32 InputSerial, double EventTimeSeconds, float HoldDuration); // 转发战斗输入边沿
 
 	// ── 移动档位解析 ──────────────────────────────────────────
@@ -479,9 +478,6 @@ private:
 	TObjectPtr<UInputMappingContext> DefaultMappingContext; // 默认映射上下文
 
 	// ── Lua 输入配置 ─────────────────────────────────────────
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Lua", meta = (AllowPrivateAccess = "true"))
-	bool bUseLuaInputLogic = true;                  // 是否由 Lua 接管输入逻辑
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input|Lua", meta = (AllowPrivateAccess = "true"))
 	FString LuaInputModuleName = TEXT("Gameplay.Sekiro.Input.SKInputManager"); // Lua 输入模块名

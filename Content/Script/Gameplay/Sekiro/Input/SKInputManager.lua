@@ -171,7 +171,7 @@ end
 ---执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
 ---@param delta_seconds number|nil 本帧增量时间，单位为秒；缺失时按 0 处理。
 ---@return boolean handled 始终返回 true，表示输入管理器已完成本帧缓冲和意图同步。
-function SKInputManager:Tick(delta_seconds)
+function SKInputManager:HandleInputTick(delta_seconds)
     local delta = delta_seconds or 0
     self.LastTickDeltaSeconds = delta
     local current_time = self:GetWorldTimeSecondsForScript()
@@ -364,7 +364,7 @@ end
 ---@param input_x number|nil 屏幕空间横向输入，通常为 -1..1，负值表示左移。
 ---@param input_y number|nil 屏幕空间纵向输入，通常为 -1..1，负值表示后退。
 ---@return boolean handled 始终返回 true，表示移动输入已写入 C++ 组件。
-function SKInputManager:OnMove(input_x, input_y)
+function SKInputManager:HandleMoveInput(input_x, input_y)
     local x = input_x or 0
     local y = input_y or 0
     local normalized_x, normalized_y, raw_amount = normalize2(x, y)
@@ -418,7 +418,7 @@ end
 
 ---处理屏幕空间移动输入的完整释放边沿，清除移动意图并退出 Sprint。
 ---@return boolean handled 始终返回 true，表示释放事件已经由 Lua 完整处理。
-function SKInputManager:OnMoveCompleted()
+function SKInputManager:HandleMoveCompleted()
     self.CurrentMoveInputX = 0
     self.CurrentMoveInputY = 0
     self.CurrentMoveInputAmount = 0
@@ -448,7 +448,7 @@ end
 ---@param input_x number|nil 屏幕空间横向输入，通常为 -1..1，负值表示左移。
 ---@param input_y number|nil 屏幕空间纵向输入，通常为 -1..1，负值表示后退。
 ---@return boolean handled 始终返回 true，表示视角输入已提交。
-function SKInputManager:OnLook(input_x, input_y)
+function SKInputManager:HandleLookInput(input_x, input_y)
     self:SetLookIntentForScript(input_x or 0, input_y or 0)
     self:AddLookInputToCamera(input_x or 0, input_y or 0)
     return true
@@ -456,7 +456,7 @@ end
 
 ---处理跳跃按下：先由战斗状态机裁决取消窗口，再缓存起跳姿态并请求 Character Jump。
 ---@return boolean handled 始终返回 true，表示跳跃按下已处理。
-function SKInputManager:OnJumpStarted()
+function SKInputManager:HandleJumpStarted()
     local combat = self:GetOwnerCombatComponent()
     local jump_allowed = true
     local resume_air_guard = false
@@ -512,14 +512,14 @@ end
 
 ---处理跳跃释放并通知 Character 停止继续施加跳跃保持力。
 ---@return boolean handled 始终返回 true，表示跳跃释放已处理。
-function SKInputManager:OnJumpCompleted()
+function SKInputManager:HandleJumpCompleted()
     self:StopJumpingOwner()
     return true
 end
 
 ---处理闪避键按下边沿，立即冻结当前方向并触发一次 Step；持续按住由 Tick 决定是否升级 Sprint。
 ---@return boolean handled 始终返回 true，表示闪避按下已处理。
-function SKInputManager:OnDodgeStarted()
+function SKInputManager:HandleDodgeStarted()
     if is_action_restricted(self) then
         self:SetHeldFlag("Dodge", false)
         self:SetDodgeHoldTime(0)
@@ -552,7 +552,7 @@ end
 
 ---处理闪避键释放，结束 Sprint 请求但保留 Step 必需的最短动作时间。
 ---@return boolean handled 始终返回 true，表示闪避释放已处理。
-function SKInputManager:OnDodgeCompleted()
+function SKInputManager:HandleDodgeCompleted()
     local completed_time = self:GetWorldTimeSecondsForScript()
     local hold_time = self.DodgeStartedTime ~= nil
         and math.max(0, completed_time - self.DodgeStartedTime)
@@ -605,7 +605,7 @@ end
 
 ---处理 Walk 修饰键按下，把当前非 Sprint 移动档位切换为 Walk。
 ---@return boolean handled 始终返回 true，表示 Walk 修饰键按下已处理。
-function SKInputManager:OnWalkModifierStarted()
+function SKInputManager:HandleWalkModifierStarted()
     self:SetHeldFlag("Walk", true)
     if tostring(self:GetMovementTierName()) ~= "Sprint" and not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
@@ -619,7 +619,7 @@ end
 
 ---处理 Walk 修饰键释放，按当前输入强度恢复 Run 或保持无输入档位。
 ---@return boolean handled 始终返回 true，表示 Walk 修饰键释放已处理。
-function SKInputManager:OnWalkModifierCompleted()
+function SKInputManager:HandleWalkModifierCompleted()
     self:SetHeldFlag("Walk", false)
     if is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
@@ -640,7 +640,7 @@ end
 
 ---处理蹲姿键按下，在站立与 Crouch 之间切换并同步 MovementTier。
 ---@return boolean handled 始终返回 true，表示蹲姿切换已处理。
-function SKInputManager:OnCrouchStarted()
+function SKInputManager:HandleCrouchStarted()
     if is_action_restricted(self) then
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
@@ -664,7 +664,7 @@ end
 
 ---处理攻击键按下，写入攻击意图并尝试消费对应动作缓冲。
 ---@return boolean handled 始终返回 true，表示攻击按下已处理。
-function SKInputManager:OnAttackStarted()
+function SKInputManager:HandleAttackStarted()
     if is_combat_restricted(self) then
         self:SetHeldFlag("Attack", false)
         self:SetAttackHoldTime(0)
@@ -686,7 +686,7 @@ end
 
 ---处理攻击键释放，清除持续攻击意图。
 ---@return boolean handled 始终返回 true，表示攻击释放已处理。
-function SKInputManager:OnAttackCompleted()
+function SKInputManager:HandleAttackCompleted()
     self:SetHeldFlag("Attack", false)
     self:SetAttackHoldTime(0)
     return true
@@ -694,7 +694,7 @@ end
 
 ---处理防御键按下，写入 Guard 意图供战斗系统消费。
 ---@return boolean handled 始终返回 true，表示防御按下已处理。
-function SKInputManager:OnGuardStarted()
+function SKInputManager:HandleGuardStarted()
     if is_combat_restricted(self) then
         self:SetHeldFlag("Guard", false)
         return true
@@ -707,14 +707,14 @@ end
 
 ---处理防御键释放，结束持续 Guard 意图。
 ---@return boolean handled 始终返回 true，表示防御释放已处理。
-function SKInputManager:OnGuardCompleted()
+function SKInputManager:HandleGuardCompleted()
     self:SetHeldFlag("Guard", false)
     return true
 end
 
 ---处理锁定键按下，切换或搜索锁定目标并让相机组件接管目标视角。
 ---@return boolean handled 始终返回 true，表示锁定输入已处理。
-function SKInputManager:OnLockOnStarted()
+function SKInputManager:HandleLockOnStarted()
     if is_action_restricted(self) then
         return true
     end
@@ -726,7 +726,7 @@ end
 
 ---处理义手键按下，写入 Prosthetic 动作意图。
 ---@return boolean handled 始终返回 true，表示义手按下已处理。
-function SKInputManager:OnProstheticStarted()
+function SKInputManager:HandleProstheticStarted()
     if is_combat_restricted(self) then
         self:SetHeldFlag("Prosthetic", false)
         self:SetProstheticHoldTime(0)
@@ -742,7 +742,7 @@ end
 
 ---处理义手键释放，清除持续 Prosthetic 意图。
 ---@return boolean handled 始终返回 true，表示义手释放已处理。
-function SKInputManager:OnProstheticCompleted()
+function SKInputManager:HandleProstheticCompleted()
     self:SetHeldFlag("Prosthetic", false)
     self:SetProstheticHoldTime(0)
     return true
@@ -750,7 +750,7 @@ end
 
 ---处理钩绳键按下，提交 Grapple 动作意图。
 ---@return boolean handled 始终返回 true，表示钩绳输入已处理。
-function SKInputManager:OnGrappleStarted()
+function SKInputManager:HandleGrappleStarted()
     if is_combat_restricted(self) then
         return true
     end
@@ -762,7 +762,7 @@ end
 
 ---处理交互键按下，提交 Interact 动作意图。
 ---@return boolean handled 始终返回 true，表示交互输入已处理。
-function SKInputManager:OnInteractStarted()
+function SKInputManager:HandleInteractStarted()
     if is_action_restricted(self) then
         return true
     end
@@ -774,7 +774,7 @@ end
 
 ---处理使用道具键按下，提交 UseItem 动作意图。
 ---@return boolean handled 始终返回 true，表示道具输入已处理。
-function SKInputManager:OnUseItemStarted()
+function SKInputManager:HandleUseItemStarted()
     if is_action_restricted(self) then
         return true
     end
@@ -786,7 +786,7 @@ end
 
 ---处理伤药葫芦快捷键，提交 HealingGourd 动作意图。
 ---@return boolean handled 始终返回 true，表示治疗道具输入已处理。
-function SKInputManager:OnHealingGourdStarted()
+function SKInputManager:HandleHealingGourdStarted()
     if is_action_restricted(self) then
         return true
     end
@@ -798,7 +798,7 @@ end
 
 ---处理下一个道具输入，通知物品系统向后切换当前快捷道具。
 ---@return boolean handled 始终返回 true，表示道具切换输入已处理。
-function SKInputManager:OnCycleItemNextStarted()
+function SKInputManager:HandleCycleItemNextStarted()
     if is_action_restricted(self) then
         return true
     end
@@ -809,7 +809,7 @@ end
 
 ---处理上一个道具输入，通知物品系统向前切换当前快捷道具。
 ---@return boolean handled 始终返回 true，表示道具切换输入已处理。
-function SKInputManager:OnCycleItemPrevStarted()
+function SKInputManager:HandleCycleItemPrevStarted()
     if is_action_restricted(self) then
         return true
     end
@@ -820,14 +820,14 @@ end
 
 ---处理暂停键按下，提交 Pause 菜单意图。
 ---@return boolean handled 始终返回 true，表示暂停输入已处理。
-function SKInputManager:OnPauseStarted()
+function SKInputManager:HandlePauseStarted()
     self:SetPressedFlag("Pause", true)
     return true
 end
 
 ---处理主菜单键按下，提交 Menu UI 意图。
 ---@return boolean handled 始终返回 true，表示菜单输入已处理。
-function SKInputManager:OnMenuStarted()
+function SKInputManager:HandleMenuStarted()
     self:SetPressedFlag("Menu", true)
     return true
 end

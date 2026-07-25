@@ -4,49 +4,9 @@
 #include "Input/SKInputManager.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Controller.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
 
 namespace
 {
-    static UnLua::FLuaRetValues RequireSKMovementLuaModule(
-        UnLua::FLuaEnv* LuaEnv,
-        const FString& LuaModuleName,
-        bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKMovementComponent Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKMovementComponent Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-
-    static bool ReadSKMovementLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName)
-    {
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0 || ReturnValues[0].GetType() == LUA_TNIL) return false;
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN) return ReturnValues[0].Value<bool>();
-
-        UE_LOG(LogTemp, Warning, TEXT("SKMovementComponent Lua Tick should return boolean. Module=%s"), *LuaModuleName);
-        return false;
-    }
-
     static float InterpSKMovementYawShortest(float CurrentYaw, float TargetYaw, float DeltaTime, float InterpSpeed)
     {
         if (InterpSpeed <= 0.f) return FMath::UnwindDegrees(TargetYaw);
@@ -339,51 +299,20 @@ void USKMovementComponent::TickComponent(
     FActorComponentTickFunction* ThisTickFunction)
 {
     RefreshCachedComponents();
-    TryCallLuaMovementTick(DeltaTime);
+    if (bUseLuaMovementLogic) UpdateMovementLogic(DeltaTime);
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 }
 
 /**
- * require 当前 Movement 模块并调用其 Tick(context, delta_seconds) 导出入口。
- * 只能在游戏线程调用；返回值仅表示 Lua 是否处理策略，不代表原生移动是否成功。
+ * 提供未被 Blueprint 或 UnLua 覆盖时的默认移动策略入口。
+ * TickComponent 在游戏线程、原生 CharacterMovement 求值前调用此反射事件；
+ * 默认实现刻意不编排 Gameplay 规则，使关闭 Lua 策略或未绑定脚本时仍由原生组件负责物理、碰撞和 Root Motion。
  *
  * @param DeltaTime 当前帧时长，单位为秒。
- * @return Lua 返回 true 时为 true；模块、环境、函数或返回值无效时为 false。
  */
-bool USKMovementComponent::TryCallLuaMovementTick(float DeltaTime)
+void USKMovementComponent::UpdateMovementLogic_Implementation(float DeltaTime)
 {
-    const FString ModuleName = ResolveLuaMovementModuleName();
-    if (!bUseLuaMovementLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKMovementLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-    const bool bHandled = ReadSKMovementLuaHandled(FunctionReturnValues, ModuleName);
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-/** 解析 UnLua 接口覆盖后的模块名，接口未提供值时回退到组件配置。 */
-FString USKMovementComponent::ResolveLuaMovementModuleName() const
-{
-    if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
-    {
-        const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<USKMovementComponent*>(this));
-        if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
-    }
-
-    return LuaMovementModuleName;
+    static_cast<void>(DeltaTime);
 }
 
 /** 刷新角色、输入和相机组件缓存；发现输入组件时建立一次 Tick 前置关系。 */

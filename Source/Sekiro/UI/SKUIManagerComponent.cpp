@@ -3,53 +3,6 @@
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/HUD.h"
 #include "GameFramework/PlayerController.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
-
-namespace
-{
-    static UnLua::FLuaRetValues RequireSKUIManagerLuaModule(UnLua::FLuaEnv* LuaEnv, const FString& LuaModuleName, bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKUIManager Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKUIManager Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-
-    static bool ReadSKUIManagerLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName)
-    {
-        if (!ReturnValues.IsValid()) return false;
-        if (ReturnValues.Num() == 0) return false;
-        if (ReturnValues[0].GetType() == LUA_TNIL) return false;
-
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN)
-        {
-            return ReturnValues[0].Value<bool>();
-        }
-
-        UE_LOG(LogTemp, Warning, TEXT("SKUIManager Lua Tick should return boolean. Module=%s"), *LuaModuleName);
-        return false;
-    }
-}
-
 USKUIManagerComponent::USKUIManagerComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
@@ -86,6 +39,17 @@ FString USKUIManagerComponent::GetLuaUIManagerModuleName() const
 FString USKUIManagerComponent::GetModuleName_Implementation() const
 {
     return LuaUIManagerModuleName;
+}
+
+/**
+ * 提供未绑定 Lua 时的空 UI 管理 Tick 回退，避免 C++ 依赖模块名手写调用脚本。
+ * 同名 Lua override 负责 UI 的逐帧业务编排；仅由组件 Tick 在游戏线程调用。
+ *
+ * @param DeltaTime 当前帧步长，单位秒；默认实现不消费该值。
+ */
+void USKUIManagerComponent::HandleUIManagerTick_Implementation(float DeltaTime)
+{
+    (void)DeltaTime;
 }
 
 void USKUIManagerComponent::RefreshCachedUIOwner()
@@ -287,42 +251,10 @@ void USKUIManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
     RefreshCachedOwner();
-    TryCallLuaUIManagerTick(DeltaTime);
-}
-
-bool USKUIManagerComponent::TryCallLuaUIManagerTick(float DeltaTime)
-{
-    const FString ModuleName = ResolveLuaUIManagerModuleName();
-    if (!bUseLuaUIManagerLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKUIManagerLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-    const bool bHandled = ReadSKUIManagerLuaHandled(FunctionReturnValues, ModuleName);
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-FString USKUIManagerComponent::ResolveLuaUIManagerModuleName() const
-{
-    if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
+    if (bUseLuaUIManagerLogic)
     {
-        const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<USKUIManagerComponent*>(this));
-        if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
+        HandleUIManagerTick(DeltaTime);
     }
-
-    return LuaUIManagerModuleName;
 }
 
 void USKUIManagerComponent::RefreshCachedOwner()

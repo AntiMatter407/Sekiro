@@ -10,49 +10,6 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Input/SKInputManager.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
-
-namespace
-{
-    /**
-     * 显式 require 战斗 Lua 模块，并验证其返回值是可调用函数表。
-     * 本函数只操作传入 LuaEnv 的主状态，不缓存栈引用；必须在游戏线程调用。
-     *
-     * @param LuaEnv 当前战斗组件所属的 UnLua 环境，可为空。
-     * @param LuaModuleName 要加载的模块稳定名称，不是文件系统路径。
-     * @param bOutSucceeded 成功得到模块表时输出 true，其他情况输出 false。
-     * @return require 调用的返回值容器；失败时可能为空，所有权由调用方栈对象管理。
-     */
-    static UnLua::FLuaRetValues RequireSKCombatLuaModule(
-        UnLua::FLuaEnv* LuaEnv,
-        const FString& LuaModuleName,
-        bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKCombatComponent Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKCombatComponent Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-}
 
 /**
  * 创建可由 Lua 编排的战斗动作宿主并启用 PrePhysics Tick。
@@ -73,6 +30,17 @@ USKCombatComponent::USKCombatComponent()
 FString USKCombatComponent::GetModuleName_Implementation() const
 {
     return LuaModuleName;
+}
+
+/**
+ * 提供没有 Lua 覆盖时的空战斗 Tick 回退，避免 C++ 依赖脚本模块名或手写 Lua 调用。
+ * 实际战斗状态机由 UnLua 以同名函数覆盖；仅由组件的 PrePhysics Tick 在游戏线程调用。
+ *
+ * @param DeltaTime 当前帧步长，单位秒；默认实现不消费该值。
+ */
+void USKCombatComponent::HandleCombatTick_Implementation(float DeltaTime)
+{
+    (void)DeltaTime;
 }
 
 /**
@@ -559,7 +527,7 @@ void USKCombatComponent::TickComponent(
     FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-    TryCallLuaCombatTick(DeltaTime);
+    HandleCombatTick(DeltaTime);
 
     if (IncomingAttackContext.ContextSerial > 0
         && !IncomingAttackContext.bConsumed
@@ -580,36 +548,6 @@ UAnimInstance* USKCombatComponent::ResolveAnimInstance() const
     const ACharacter* Character = Cast<ACharacter>(GetOwner());
     USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
     return Mesh ? Mesh->GetAnimInstance() : nullptr;
-}
-
-/**
- * 显式 require 配置的战斗 Lua 模块并调用其 Tick(self, DeltaTime) 导出函数。
- * 该路径不依赖原生 UActorComponent 的 ReceiveTick 派发，因此纯原生组件也能稳定运行 Lua 状态机；
- * 本函数不解释 Lua 返回值，只以是否找到并完成调用作为结果，且仅允许游戏线程调用。
- *
- * @param DeltaTime 当前组件 Tick 步长，单位秒，原样传给 Lua。
- * @return Lua 环境、模块表和 Tick 函数均有效且调用完成时返回 true，否则返回 false。
- */
-bool USKCombatComponent::TryCallLuaCombatTick(float DeltaTime)
-{
-    if (LuaModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKCombatLuaModule(LuaEnv, LuaModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-    FunctionReturnValues.Pop();
-    return true;
 }
 
 /**

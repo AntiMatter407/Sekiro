@@ -13,54 +13,8 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
-
 namespace
 {
-	static UnLua::FLuaRetValues RequireSKInputLuaModule(UnLua::FLuaEnv* LuaEnv, const FString& LuaModuleName, bool& bOutSucceeded)
-	{
-		bOutSucceeded = false;
-		if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-		lua_State* LuaState = LuaEnv->GetMainState();
-		if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-		const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-		UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-		if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SKInputManager Lua require failed. Module=%s"), *LuaModuleName);
-			return ReturnValues;
-		}
-
-		if (ReturnValues[0].GetType() != LUA_TTABLE)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SKInputManager Lua module must return a table. Module=%s"), *LuaModuleName);
-			return ReturnValues;
-		}
-
-		bOutSucceeded = true;
-		return ReturnValues;
-	}
-
-	static bool ReadSKInputLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName, FName FunctionName)
-	{
-		if (!ReturnValues.IsValid()) return false;
-		if (ReturnValues.Num() == 0) return false;
-		if (ReturnValues[0].GetType() == LUA_TNIL) return false;
-
-		if (ReturnValues[0].GetType() == LUA_TBOOLEAN)
-		{
-			return ReturnValues[0].Value<bool>();
-		}
-
-		UE_LOG(LogTemp, Warning, TEXT("SKInputManager Lua function should return boolean. Module=%s Function=%s"),
-			*LuaModuleName,
-			*FunctionName.ToString());
-		return false;
-	}
-
 	static bool ResolveSKScreenInputWorldDirection(const ACharacter* Owner, float InputX, float InputY, FVector& OutDirection)
 	{
 		OutDirection = FVector::ZeroVector;
@@ -114,43 +68,43 @@ void USKInputManager::SetupInput(UEnhancedInputComponent* Input)
 	if (!Input) return;
 
 	// ── 移动/视角 ──
-	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &USKInputManager::OnMove);
-	Input->BindAction(MoveAction, ETriggerEvent::Completed, this, &USKInputManager::OnMoveCompleted);
-	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &USKInputManager::OnLook);
+	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &USKInputManager::OnMoveInput);
+	Input->BindAction(MoveAction, ETriggerEvent::Completed, this, &USKInputManager::OnMoveCompletedInput);
+	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &USKInputManager::OnLookInput);
 
 	// ── 跳跃 ──
-	Input->BindAction(JumpAction, ETriggerEvent::Started,   this, &USKInputManager::OnJumpStarted);
-	Input->BindAction(JumpAction, ETriggerEvent::Completed, this, &USKInputManager::OnJumpCompleted);
+	Input->BindAction(JumpAction, ETriggerEvent::Started,   this, &USKInputManager::OnJumpStartedInput);
+	Input->BindAction(JumpAction, ETriggerEvent::Completed, this, &USKInputManager::OnJumpCompletedInput);
 
 	// ── 闪避/冲刺 ──
-	Input->BindAction(DodgeAction, ETriggerEvent::Started,   this, &USKInputManager::OnDodgeStarted);
-	Input->BindAction(DodgeAction, ETriggerEvent::Completed, this, &USKInputManager::OnDodgeCompleted);
-	Input->BindAction(WalkModifierAction, ETriggerEvent::Started, this, &USKInputManager::OnWalkModifierStarted);
-	Input->BindAction(WalkModifierAction, ETriggerEvent::Completed, this, &USKInputManager::OnWalkModifierCompleted);
+	Input->BindAction(DodgeAction, ETriggerEvent::Started,   this, &USKInputManager::OnDodgeStartedInput);
+	Input->BindAction(DodgeAction, ETriggerEvent::Completed, this, &USKInputManager::OnDodgeCompletedInput);
+	Input->BindAction(WalkModifierAction, ETriggerEvent::Started, this, &USKInputManager::OnWalkModifierStartedInput);
+	Input->BindAction(WalkModifierAction, ETriggerEvent::Completed, this, &USKInputManager::OnWalkModifierCompletedInput);
 
 	// ── 蹲下 ──
-	Input->BindAction(CrouchAction, ETriggerEvent::Started, this, &USKInputManager::OnCrouchStarted);
+	Input->BindAction(CrouchAction, ETriggerEvent::Started, this, &USKInputManager::OnCrouchStartedInput);
 
 	// ── 战斗 ──
-	Input->BindAction(AttackAction,     ETriggerEvent::Started,   this, &USKInputManager::OnAttackStarted);
-	Input->BindAction(AttackAction,     ETriggerEvent::Completed, this, &USKInputManager::OnAttackCompleted);
-	Input->BindAction(GuardAction,      ETriggerEvent::Started,   this, &USKInputManager::OnGuardStarted);
-	Input->BindAction(GuardAction,      ETriggerEvent::Completed, this, &USKInputManager::OnGuardCompleted);
-	Input->BindAction(LockOnAction,     ETriggerEvent::Started,   this, &USKInputManager::OnLockOnStarted);
-	Input->BindAction(ProstheticAction, ETriggerEvent::Started,   this, &USKInputManager::OnProstheticStarted);
-	Input->BindAction(ProstheticAction, ETriggerEvent::Completed, this, &USKInputManager::OnProstheticCompleted);
-	Input->BindAction(GrappleAction,    ETriggerEvent::Started,   this, &USKInputManager::OnGrappleStarted);
+	Input->BindAction(AttackAction,     ETriggerEvent::Started,   this, &USKInputManager::OnAttackStartedInput);
+	Input->BindAction(AttackAction,     ETriggerEvent::Completed, this, &USKInputManager::OnAttackCompletedInput);
+	Input->BindAction(GuardAction,      ETriggerEvent::Started,   this, &USKInputManager::OnGuardStartedInput);
+	Input->BindAction(GuardAction,      ETriggerEvent::Completed, this, &USKInputManager::OnGuardCompletedInput);
+	Input->BindAction(LockOnAction,     ETriggerEvent::Started,   this, &USKInputManager::OnLockOnStartedInput);
+	Input->BindAction(ProstheticAction, ETriggerEvent::Started,   this, &USKInputManager::OnProstheticStartedInput);
+	Input->BindAction(ProstheticAction, ETriggerEvent::Completed, this, &USKInputManager::OnProstheticCompletedInput);
+	Input->BindAction(GrappleAction,    ETriggerEvent::Started,   this, &USKInputManager::OnGrappleStartedInput);
 
 	// ── 交互/道具 ──
-	Input->BindAction(InteractAction,      ETriggerEvent::Started, this, &USKInputManager::OnInteractStarted);
-	Input->BindAction(UseItemAction,       ETriggerEvent::Started, this, &USKInputManager::OnUseItemStarted);
-	Input->BindAction(HealingGourdAction,  ETriggerEvent::Started, this, &USKInputManager::OnHealingGourdStarted);
-	Input->BindAction(CycleItemNextAction, ETriggerEvent::Started, this, &USKInputManager::OnCycleItemNextStarted);
-	Input->BindAction(CycleItemPrevAction, ETriggerEvent::Started, this, &USKInputManager::OnCycleItemPrevStarted);
+	Input->BindAction(InteractAction,      ETriggerEvent::Started, this, &USKInputManager::OnInteractStartedInput);
+	Input->BindAction(UseItemAction,       ETriggerEvent::Started, this, &USKInputManager::OnUseItemStartedInput);
+	Input->BindAction(HealingGourdAction,  ETriggerEvent::Started, this, &USKInputManager::OnHealingGourdStartedInput);
+	Input->BindAction(CycleItemNextAction, ETriggerEvent::Started, this, &USKInputManager::OnCycleItemNextStartedInput);
+	Input->BindAction(CycleItemPrevAction, ETriggerEvent::Started, this, &USKInputManager::OnCycleItemPrevStartedInput);
 
 	// ── 系统 ──
-	Input->BindAction(PauseAction, ETriggerEvent::Started, this, &USKInputManager::OnPauseStarted);
-	Input->BindAction(MenuAction,  ETriggerEvent::Started, this, &USKInputManager::OnMenuStarted);
+	Input->BindAction(PauseAction, ETriggerEvent::Started, this, &USKInputManager::OnPauseStartedInput);
+	Input->BindAction(MenuAction,  ETriggerEvent::Started, this, &USKInputManager::OnMenuStartedInput);
 }
 
 void USKInputManager::AddMappingContext(APlayerController* PC)
@@ -507,16 +461,6 @@ float USKInputManager::GetTimeSinceLastAttack() const
 
 //////////////////////////////////////////////////////////////////////////
 // Lua 输入宿主
-
-void USKInputManager::SetUseLuaInputLogic(bool bNewUseLuaInputLogic)
-{
-	bUseLuaInputLogic = bNewUseLuaInputLogic;
-}
-
-bool USKInputManager::IsUsingLuaInputLogic() const
-{
-	return bUseLuaInputLogic;
-}
 
 void USKInputManager::SetLuaInputModuleName(const FString& ModuleName)
 {
@@ -974,8 +918,19 @@ void USKInputManager::BeginPlay()
 void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	HandleInputTick(DeltaTime);
+}
 
-	if (TryCallLuaInputTick(DeltaTime)) return;
+/**
+ * 执行输入组件每帧的原生回退维护，包括长按计时、输入缓冲清理、冲刺状态和一次性标记清零。
+ * Lua 未覆盖 HandleInputTick 时由反射系统调用；覆盖时 Lua 负责以等价时机维护这些状态。
+ *
+ * @param DeltaTime 本帧游戏线程 Tick 的间隔秒数。
+ * @return 无返回值。
+ * @thread 仅在游戏线程的 UActorComponent Tick 阶段调用，可访问角色和移动组件状态。
+ */
+void USKInputManager::HandleInputTick_Implementation(float DeltaTime)
+{
 
 	// ── 长按计时 ──
 	if (bAttackHeld)
@@ -1064,10 +1019,89 @@ void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 //////////////////////////////////////////////////////////////////////////
 // 移动/视角回调
 
-void USKInputManager::OnMove(const FInputActionValue& Value)
+/**
+ * Enhanced Input 适配器：将引擎专用 FInputActionValue 转换为反射入口所需的基础数值。
+ * 其余 OnXxxInput 适配器遵循相同边界：不包含 Gameplay 决策，只在游戏线程将输入边沿分发给 HandleXxx。
+ *
+ * @param Value Enhanced Input 本次触发的动作值。
+ * @return 无返回值。
+ * @thread 仅在游戏线程的 Enhanced Input 分发阶段调用。
+ */
+void USKInputManager::OnMoveInput(const FInputActionValue& Value)
 {
-	const FVector2D LuaInput = Value.Get<FVector2D>();
-	if (TryCallLuaInputAxisEvent(TEXT("OnMove"), LuaInput)) return;
+	const FVector2D Input = Value.Get<FVector2D>();
+	HandleMoveInput(Input.X, Input.Y);
+}
+
+void USKInputManager::OnMoveCompletedInput(const FInputActionValue& /*Value*/) { HandleMoveCompleted(); }
+void USKInputManager::OnLookInput(const FInputActionValue& Value)
+{
+	const FVector2D Input = Value.Get<FVector2D>();
+	HandleLookInput(Input.X, Input.Y);
+}
+void USKInputManager::OnJumpStartedInput(const FInputActionValue& /*Value*/) { HandleJumpStarted(); }
+void USKInputManager::OnJumpCompletedInput(const FInputActionValue& /*Value*/) { HandleJumpCompleted(); }
+void USKInputManager::OnDodgeStartedInput(const FInputActionValue& /*Value*/) { HandleDodgeStarted(); }
+void USKInputManager::OnDodgeCompletedInput(const FInputActionValue& /*Value*/) { HandleDodgeCompleted(); }
+void USKInputManager::OnWalkModifierStartedInput(const FInputActionValue& /*Value*/) { HandleWalkModifierStarted(); }
+void USKInputManager::OnWalkModifierCompletedInput(const FInputActionValue& /*Value*/) { HandleWalkModifierCompleted(); }
+void USKInputManager::OnCrouchStartedInput(const FInputActionValue& /*Value*/) { HandleCrouchStarted(); }
+
+void USKInputManager::OnAttackStartedInput(const FInputActionValue& /*Value*/)
+{
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	++NextCombatInputSerial;
+	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
+	ActiveAttackInputSerial = NextCombatInputSerial;
+	AttackPressedTimeSeconds = EventTimeSeconds;
+	PublishCombatInputEvent(ESKCombatInputAction::Attack, ESKCombatInputPhase::Started, ActiveAttackInputSerial, EventTimeSeconds, 0.f);
+	HandleAttackStarted();
+}
+
+void USKInputManager::OnAttackCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	const float HoldDuration = ActiveAttackInputSerial > 0 ? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - AttackPressedTimeSeconds)) : 0.f;
+	PublishCombatInputEvent(ESKCombatInputAction::Attack, ESKCombatInputPhase::Completed, ActiveAttackInputSerial, EventTimeSeconds, HoldDuration);
+	ActiveAttackInputSerial = 0;
+	HandleAttackCompleted();
+}
+
+void USKInputManager::OnGuardStartedInput(const FInputActionValue& /*Value*/)
+{
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	++NextCombatInputSerial;
+	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
+	ActiveGuardInputSerial = NextCombatInputSerial;
+	GuardPressedTimeSeconds = EventTimeSeconds;
+	PublishCombatInputEvent(ESKCombatInputAction::Guard, ESKCombatInputPhase::Started, ActiveGuardInputSerial, EventTimeSeconds, 0.f);
+	HandleGuardStarted();
+}
+
+void USKInputManager::OnGuardCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
+	const float HoldDuration = ActiveGuardInputSerial > 0 ? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - GuardPressedTimeSeconds)) : 0.f;
+	PublishCombatInputEvent(ESKCombatInputAction::Guard, ESKCombatInputPhase::Completed, ActiveGuardInputSerial, EventTimeSeconds, HoldDuration);
+	ActiveGuardInputSerial = 0;
+	HandleGuardCompleted();
+}
+
+void USKInputManager::OnLockOnStartedInput(const FInputActionValue& /*Value*/) { HandleLockOnStarted(); }
+void USKInputManager::OnProstheticStartedInput(const FInputActionValue& /*Value*/) { HandleProstheticStarted(); }
+void USKInputManager::OnProstheticCompletedInput(const FInputActionValue& /*Value*/) { HandleProstheticCompleted(); }
+void USKInputManager::OnGrappleStartedInput(const FInputActionValue& /*Value*/) { HandleGrappleStarted(); }
+void USKInputManager::OnInteractStartedInput(const FInputActionValue& /*Value*/) { HandleInteractStarted(); }
+void USKInputManager::OnUseItemStartedInput(const FInputActionValue& /*Value*/) { HandleUseItemStarted(); }
+void USKInputManager::OnHealingGourdStartedInput(const FInputActionValue& /*Value*/) { HandleHealingGourdStarted(); }
+void USKInputManager::OnCycleItemNextStartedInput(const FInputActionValue& /*Value*/) { HandleCycleItemNextStarted(); }
+void USKInputManager::OnCycleItemPrevStartedInput(const FInputActionValue& /*Value*/) { HandleCycleItemPrevStarted(); }
+void USKInputManager::OnPauseStartedInput(const FInputActionValue& /*Value*/) { HandlePauseStarted(); }
+void USKInputManager::OnMenuStartedInput(const FInputActionValue& /*Value*/) { HandleMenuStarted(); }
+
+void USKInputManager::HandleMoveInput_Implementation(float InputX, float InputY)
+{
+	const FVector2D LuaInput(InputX, InputY);
 
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
@@ -1124,9 +1158,8 @@ void USKInputManager::OnMove(const FInputActionValue& Value)
  * @return 无返回值；Lua 返回 true 时由脚本完成清理，否则执行原生回退逻辑。
  * @thread 仅在游戏线程的 Enhanced Input 分发阶段调用，可安全访问角色、移动组件与 UnLua。
  */
-void USKInputManager::OnMoveCompleted(const FInputActionValue& /*Value*/)
+void USKInputManager::HandleMoveCompleted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnMoveCompleted"))) return;
 
 	MoveIntent = FVector2D::ZeroVector;
 	MoveInputAmount = 0.f;
@@ -1137,10 +1170,9 @@ void USKInputManager::OnMoveCompleted(const FInputActionValue& /*Value*/)
 	ApplyDesiredMovementTier(0.f);
 }
 
-void USKInputManager::OnLook(const FInputActionValue& Value)
+void USKInputManager::HandleLookInput_Implementation(float InputX, float InputY)
 {
-	const FVector2D LuaInput = Value.Get<FVector2D>();
-	if (TryCallLuaInputAxisEvent(TEXT("OnLook"), LuaInput)) return;
+	const FVector2D LuaInput(InputX, InputY);
 
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
@@ -1162,9 +1194,8 @@ void USKInputManager::OnLook(const FInputActionValue& Value)
 //////////////////////////////////////////////////////////////////////////
 // 跳跃回调
 
-void USKInputManager::OnJumpStarted(const FInputActionValue& Value)
+void USKInputManager::HandleJumpStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnJumpStarted"))) return;
 
 	bJumpPressed = true;
 
@@ -1183,9 +1214,8 @@ void USKInputManager::OnJumpStarted(const FInputActionValue& Value)
 	}
 }
 
-void USKInputManager::OnJumpCompleted(const FInputActionValue& Value)
+void USKInputManager::HandleJumpCompleted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnJumpCompleted"))) return;
 
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (Owner)
@@ -1197,9 +1227,8 @@ void USKInputManager::OnJumpCompleted(const FInputActionValue& Value)
 //////////////////////////////////////////////////////////////////////////
 // 闪避/冲刺回调
 
-void USKInputManager::OnDodgeStarted(const FInputActionValue& Value)
+void USKInputManager::HandleDodgeStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnDodgeStarted"))) return;
 
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
@@ -1214,9 +1243,8 @@ void USKInputManager::OnDodgeStarted(const FInputActionValue& Value)
 	}
 }
 
-void USKInputManager::OnDodgeCompleted(const FInputActionValue& Value)
+void USKInputManager::HandleDodgeCompleted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnDodgeCompleted"))) return;
 
 	const bool bWasShortPress = DodgeHoldTime < SprintHoldThreshold;
 	bDodgeHeld = false;
@@ -1237,9 +1265,8 @@ void USKInputManager::OnDodgeCompleted(const FInputActionValue& Value)
 	DodgeHoldTime = 0.f;
 }
 
-void USKInputManager::OnWalkModifierStarted(const FInputActionValue& Value)
+void USKInputManager::HandleWalkModifierStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnWalkModifierStarted"))) return;
 
 	bWalkHeld = true;
 
@@ -1255,9 +1282,8 @@ void USKInputManager::OnWalkModifierStarted(const FInputActionValue& Value)
 	}
 }
 
-void USKInputManager::OnWalkModifierCompleted(const FInputActionValue& Value)
+void USKInputManager::HandleWalkModifierCompleted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnWalkModifierCompleted"))) return;
 
 	bWalkHeld = false;
 
@@ -1276,9 +1302,8 @@ void USKInputManager::OnWalkModifierCompleted(const FInputActionValue& Value)
 //////////////////////////////////////////////////////////////////////////
 // 蹲下回调
 
-void USKInputManager::OnCrouchStarted(const FInputActionValue& Value)
+void USKInputManager::HandleCrouchStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnCrouchStarted"))) return;
 
 	bCrouchToggled = true;
 
@@ -1306,22 +1331,8 @@ void USKInputManager::OnCrouchStarted(const FInputActionValue& Value)
 //////////////////////////////////////////////////////////////////////////
 // 战斗回调
 
-void USKInputManager::OnAttackStarted(const FInputActionValue& Value)
+void USKInputManager::HandleAttackStarted_Implementation()
 {
-	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
-	++NextCombatInputSerial;
-	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
-	ActiveAttackInputSerial = NextCombatInputSerial;
-	AttackPressedTimeSeconds = EventTimeSeconds;
-	PublishCombatInputEvent(
-		ESKCombatInputAction::Attack,
-		ESKCombatInputPhase::Started,
-		ActiveAttackInputSerial,
-		EventTimeSeconds,
-		0.f);
-
-	if (TryCallLuaInputEvent(TEXT("OnAttackStarted"))) return;
-
 	bAttackPressed = true;
 	bAttackHeld = true;
 	AttackHoldTime = 0.f;
@@ -1347,42 +1358,14 @@ void USKInputManager::OnAttackStarted(const FInputActionValue& Value)
 	TimeSinceLastAttack = 0.f;
 }
 
-void USKInputManager::OnAttackCompleted(const FInputActionValue& Value)
+void USKInputManager::HandleAttackCompleted_Implementation()
 {
-	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
-	const float CompletedHoldDuration = ActiveAttackInputSerial > 0
-		? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - AttackPressedTimeSeconds))
-		: 0.f;
-	PublishCombatInputEvent(
-		ESKCombatInputAction::Attack,
-		ESKCombatInputPhase::Completed,
-		ActiveAttackInputSerial,
-		EventTimeSeconds,
-		CompletedHoldDuration);
-	ActiveAttackInputSerial = 0;
-
-	if (TryCallLuaInputEvent(TEXT("OnAttackCompleted"))) return;
-
 	bAttackHeld = false;
 	AttackHoldTime = 0.f;
 }
 
-void USKInputManager::OnGuardStarted(const FInputActionValue& Value)
+void USKInputManager::HandleGuardStarted_Implementation()
 {
-	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
-	++NextCombatInputSerial;
-	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
-	ActiveGuardInputSerial = NextCombatInputSerial;
-	GuardPressedTimeSeconds = EventTimeSeconds;
-	PublishCombatInputEvent(
-		ESKCombatInputAction::Guard,
-		ESKCombatInputPhase::Started,
-		ActiveGuardInputSerial,
-		EventTimeSeconds,
-		0.f);
-
-	if (TryCallLuaInputEvent(TEXT("OnGuardStarted"))) return;
-
 	bGuardHeld = true;
 
 	// Guard 也入缓冲，但消费方优先使用 IsGuardHeld 持续状态
@@ -1394,28 +1377,13 @@ void USKInputManager::OnGuardStarted(const FInputActionValue& Value)
 	InputBuffer.Add(Entry);
 }
 
-void USKInputManager::OnGuardCompleted(const FInputActionValue& Value)
+void USKInputManager::HandleGuardCompleted_Implementation()
 {
-	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
-	const float CompletedHoldDuration = ActiveGuardInputSerial > 0
-		? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - GuardPressedTimeSeconds))
-		: 0.f;
-	PublishCombatInputEvent(
-		ESKCombatInputAction::Guard,
-		ESKCombatInputPhase::Completed,
-		ActiveGuardInputSerial,
-		EventTimeSeconds,
-		CompletedHoldDuration);
-	ActiveGuardInputSerial = 0;
-
-	if (TryCallLuaInputEvent(TEXT("OnGuardCompleted"))) return;
-
 	bGuardHeld = false;
 }
 
-void USKInputManager::OnLockOnStarted(const FInputActionValue& Value)
+void USKInputManager::HandleLockOnStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnLockOnStarted"))) return;
 
 	bLockOnPressed = true;
 
@@ -1428,9 +1396,8 @@ void USKInputManager::OnLockOnStarted(const FInputActionValue& Value)
 	}
 }
 
-void USKInputManager::OnProstheticStarted(const FInputActionValue& Value)
+void USKInputManager::HandleProstheticStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnProstheticStarted"))) return;
 
 	bProstheticPressed = true;
 	bProstheticHeld = true;
@@ -1445,17 +1412,15 @@ void USKInputManager::OnProstheticStarted(const FInputActionValue& Value)
 	InputBuffer.Add(Entry);
 }
 
-void USKInputManager::OnProstheticCompleted(const FInputActionValue& Value)
+void USKInputManager::HandleProstheticCompleted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnProstheticCompleted"))) return;
 
 	bProstheticHeld = false;
 	ProstheticHoldTime = 0.f;
 }
 
-void USKInputManager::OnGrappleStarted(const FInputActionValue& Value)
+void USKInputManager::HandleGrappleStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnGrappleStarted"))) return;
 
 	bGrapplePressed = true;
 
@@ -1471,9 +1436,8 @@ void USKInputManager::OnGrappleStarted(const FInputActionValue& Value)
 //////////////////////////////////////////////////////////////////////////
 // 交互/道具回调
 
-void USKInputManager::OnInteractStarted(const FInputActionValue& Value)
+void USKInputManager::HandleInteractStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnInteractStarted"))) return;
 
 	bInteractPressed = true;
 
@@ -1486,9 +1450,8 @@ void USKInputManager::OnInteractStarted(const FInputActionValue& Value)
 	InputBuffer.Add(Entry);
 }
 
-void USKInputManager::OnUseItemStarted(const FInputActionValue& Value)
+void USKInputManager::HandleUseItemStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnUseItemStarted"))) return;
 
 	bUseItemPressed = true;
 
@@ -1501,9 +1464,8 @@ void USKInputManager::OnUseItemStarted(const FInputActionValue& Value)
 	InputBuffer.Add(Entry);
 }
 
-void USKInputManager::OnHealingGourdStarted(const FInputActionValue& Value)
+void USKInputManager::HandleHealingGourdStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnHealingGourdStarted"))) return;
 
 	bHealingGourdPressed = true;
 
@@ -1516,16 +1478,14 @@ void USKInputManager::OnHealingGourdStarted(const FInputActionValue& Value)
 	InputBuffer.Add(Entry);
 }
 
-void USKInputManager::OnCycleItemNextStarted(const FInputActionValue& Value)
+void USKInputManager::HandleCycleItemNextStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnCycleItemNextStarted"))) return;
 
 	bCycleItemNext = true;
 }
 
-void USKInputManager::OnCycleItemPrevStarted(const FInputActionValue& Value)
+void USKInputManager::HandleCycleItemPrevStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnCycleItemPrevStarted"))) return;
 
 	bCycleItemPrev = true;
 }
@@ -1533,105 +1493,16 @@ void USKInputManager::OnCycleItemPrevStarted(const FInputActionValue& Value)
 //////////////////////////////////////////////////////////////////////////
 // 系统回调
 
-void USKInputManager::OnPauseStarted(const FInputActionValue& Value)
+void USKInputManager::HandlePauseStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnPauseStarted"))) return;
 
 	bPausePressed = true;
 }
 
-void USKInputManager::OnMenuStarted(const FInputActionValue& Value)
+void USKInputManager::HandleMenuStarted_Implementation()
 {
-	if (TryCallLuaInputEvent(TEXT("OnMenuStarted"))) return;
 
 	bMenuPressed = true;
-}
-
-bool USKInputManager::TryCallLuaInputEvent(FName FunctionName)
-{
-	const FString ModuleName = ResolveLuaInputModuleName();
-	if (!bUseLuaInputLogic || ModuleName.IsEmpty()) return false;
-
-	IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-	UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-	if (!LuaEnv) return false;
-
-	bool bRequireSucceeded = false;
-	UnLua::FLuaRetValues RequireReturnValues = RequireSKInputLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-	if (!bRequireSucceeded) return false;
-
-	UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-	const FString DirectFunctionNameText = FunctionName.ToString();
-	const FTCHARToUTF8 DirectFunctionNameUtf8(*DirectFunctionNameText);
-	UnLua::FLuaValue FunctionValue = ModuleTable[DirectFunctionNameUtf8.Get()];
-	if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-	UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-	UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this);
-	const bool bHandled = ReadSKInputLuaHandled(FunctionReturnValues, ModuleName, FunctionName);
-	FunctionReturnValues.Pop();
-	return bHandled;
-}
-
-bool USKInputManager::TryCallLuaInputAxisEvent(FName FunctionName, const FVector2D& AxisValue)
-{
-	const FString ModuleName = ResolveLuaInputModuleName();
-	if (!bUseLuaInputLogic || ModuleName.IsEmpty()) return false;
-
-	IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-	UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-	if (!LuaEnv) return false;
-
-	bool bRequireSucceeded = false;
-	UnLua::FLuaRetValues RequireReturnValues = RequireSKInputLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-	if (!bRequireSucceeded) return false;
-
-	UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-	const FString DirectFunctionNameText = FunctionName.ToString();
-	const FTCHARToUTF8 DirectFunctionNameUtf8(*DirectFunctionNameText);
-	UnLua::FLuaValue FunctionValue = ModuleTable[DirectFunctionNameUtf8.Get()];
-	if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-	UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-	UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, AxisValue.X, AxisValue.Y);
-	const bool bHandled = ReadSKInputLuaHandled(FunctionReturnValues, ModuleName, FunctionName);
-	FunctionReturnValues.Pop();
-	return bHandled;
-}
-
-bool USKInputManager::TryCallLuaInputTick(float DeltaTime)
-{
-	const FString ModuleName = ResolveLuaInputModuleName();
-	if (!bUseLuaInputLogic || ModuleName.IsEmpty()) return false;
-
-	IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-	UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-	if (!LuaEnv) return false;
-
-	bool bRequireSucceeded = false;
-	UnLua::FLuaRetValues RequireReturnValues = RequireSKInputLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-	if (!bRequireSucceeded) return false;
-
-	UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-	UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-	if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-	UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-	UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-	const bool bHandled = ReadSKInputLuaHandled(FunctionReturnValues, ModuleName, FName(TEXT("Tick")));
-	FunctionReturnValues.Pop();
-	return bHandled;
-}
-
-FString USKInputManager::ResolveLuaInputModuleName() const
-{
-	if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
-	{
-		const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<USKInputManager*>(this));
-		if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
-	}
-
-	return LuaInputModuleName;
 }
 
 /**

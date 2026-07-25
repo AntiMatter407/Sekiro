@@ -5,52 +5,9 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
 
 namespace
 {
-    static UnLua::FLuaRetValues RequireSKCameraLuaModule(UnLua::FLuaEnv* LuaEnv, const FString& LuaModuleName, bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKCameraManager Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKCameraManager Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-
-    static bool ReadSKCameraLuaHandled(UnLua::FLuaRetValues& ReturnValues, const FString& LuaModuleName)
-    {
-        if (!ReturnValues.IsValid()) return false;
-        if (ReturnValues.Num() == 0) return false;
-        if (ReturnValues[0].GetType() == LUA_TNIL) return false;
-
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN)
-        {
-            return ReturnValues[0].Value<bool>();
-        }
-
-        UE_LOG(LogTemp, Warning, TEXT("SKCameraManager Lua Tick should return boolean. Module=%s"), *LuaModuleName);
-        return false;
-    }
-
     static float InterpSKYawShortest(float CurrentYaw, float TargetYaw, float DeltaTime, float InterpSpeed)
     {
         if (InterpSpeed <= 0.f) return FMath::UnwindDegrees(TargetYaw);
@@ -338,43 +295,20 @@ void USKCameraManagerComponent::TickComponent(float DeltaTime, ELevelTick TickTy
         return;
     }
 
-    TryCallLuaCameraTick(DeltaTime);
+    if (bUseLuaCameraLogic) UpdateCameraLogic(DeltaTime);
     PendingLookInput = FVector2D::ZeroVector;
 }
 
-bool USKCameraManagerComponent::TryCallLuaCameraTick(float DeltaTime)
+/**
+ * 提供未被 Blueprint 或 UnLua 覆盖时的默认相机策略入口。
+ * TickComponent 在游戏线程且角色缓存有效时调用此反射事件；默认实现不消费视角输入，
+ * 以便关闭 Lua 策略或缺少脚本绑定时仍维持原生组件状态，并由 TickComponent 统一清理本帧输入。
+ *
+ * @param DeltaTime 当前帧时长，单位为秒。
+ */
+void USKCameraManagerComponent::UpdateCameraLogic_Implementation(float DeltaTime)
 {
-    const FString ModuleName = ResolveLuaCameraModuleName();
-    if (!bUseLuaCameraLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKCameraLuaModule(LuaEnv, ModuleName, bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-    const bool bHandled = ReadSKCameraLuaHandled(FunctionReturnValues, ModuleName);
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-FString USKCameraManagerComponent::ResolveLuaCameraModuleName() const
-{
-    if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
-    {
-        const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(const_cast<USKCameraManagerComponent*>(this));
-        if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
-    }
-
-    return LuaCameraModuleName;
+    static_cast<void>(DeltaTime);
 }
 
 ESKCameraMode USKCameraManagerComponent::ResolveCameraModeByName(FName ModeName) const

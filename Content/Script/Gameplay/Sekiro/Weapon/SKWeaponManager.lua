@@ -187,7 +187,7 @@ end
 ---@param event_name string 动画资产中配置的 WeaponEvent 名称。
 ---@param _animation UAnimSequenceBase|nil 触发事件的动画资产；当前仅保留给诊断扩展使用。
 ---@return boolean handled 事件与当前切换动作匹配且展示状态已提交时返回 true。
-function SKWeaponManager:OnWeaponAnimationEvent(event_name, _animation)
+function SKWeaponManager:HandleWeaponAnimationEvent(event_name, _animation)
     local transition = self.ActiveTransition
     if transition == nil or event_name ~= transition.Config.EventName then
         return false
@@ -220,10 +220,10 @@ function SKWeaponManager:OnWeaponAnimationEvent(event_name, _animation)
     return true
 end
 
----推进动画预览计时；正式的合并和分离只由 OnWeaponAnimationEvent 处理。
+---推进动画预览计时；正式的合并和分离只由 HandleWeaponAnimationEvent 处理。
 ---@param delta_seconds number|nil C++ Tick 传入的本帧秒数；nil 时按 0 处理。
 ---@return boolean handled 始终返回 true，表示 Lua 已消费 WeaponManager 本帧编排。
-function SKWeaponManager:Tick(delta_seconds)
+function SKWeaponManager:HandleWeaponManagerTick(delta_seconds)
     local restricted = self:IsRestrictedZoneActive() == true
     if restricted ~= self.bRestrictedZoneObserved then
         self.bRestrictedZoneObserved = restricted

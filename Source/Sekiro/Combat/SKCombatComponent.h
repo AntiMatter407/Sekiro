@@ -27,6 +27,10 @@ public:
 
     virtual FString GetModuleName_Implementation() const override;
 
+    /** Lua 可覆盖的战斗逐帧编排入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "Combat|Gameplay")
+    void HandleCombatTick(float DeltaTime);
+
     // ── 状态与序列号 ──────────────────────────────────────────
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
@@ -143,7 +147,6 @@ private:
     // ── 动画内部 ──────────────────────────────────────────────
 
     UAnimInstance* ResolveAnimInstance() const;
-    bool TryCallLuaCombatTick(float DeltaTime);
     bool ResolveSequencePosition(float MontagePosition, float& OutSequencePosition) const;
     float EvaluateSequenceCurve(FName CurveName, float SequencePosition) const;
     void HandleCombatMontageEnded(UAnimMontage* Montage, bool bInterrupted, int32 EndedActionSerial);

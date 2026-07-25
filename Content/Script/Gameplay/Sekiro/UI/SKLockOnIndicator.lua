@@ -109,7 +109,7 @@ end
 ---执行本模块的逐帧更新，把最新输入、状态或 UI 结果同步到 C++ 运行时。
 ---@param delta_seconds number|nil 本帧增量时间，单位为秒；缺失时按 0 处理。
 ---@return boolean handled 始终返回 true；目标无效时会先隐藏锁定点。
-function SKLockOnIndicator:Tick(delta_seconds)
+function SKLockOnIndicator:HandleLockOnIndicatorTick(delta_seconds)
     self:RefreshCachedLockOnComponents()
     if not self:HasOwnerCharacter() or not self:IsLocalPlayerControlled() then
         self:HideIndicator()

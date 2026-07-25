@@ -33,6 +33,10 @@ public:
 
     virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
 
+    /** Lua 可覆盖的锁定指示器逐帧入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "UI|LockOn|Gameplay")
+    bool HandleLockOnIndicatorTick(float DeltaTime);
+
     UFUNCTION(BlueprintCallable, Category = "UI|LockOn|Lua")
     void RefreshCachedLockOnComponents();                // 刷新锁定 UI 依赖组件
 
@@ -137,8 +141,6 @@ private:
     float IndicatorThickness = 2.0f;                   // 当前锁定点线条粗细
     FLinearColor IndicatorColor = FLinearColor(1.0f, 0.35f, 0.05f, 1.0f); // 当前锁定点颜色
 
-    bool TryCallLuaLockOnIndicatorTick(float DeltaTime); // 调用 Lua 锁定 UI Tick
-    FString ResolveLuaLockOnIndicatorModuleName() const; // 解析 Lua 锁定 UI 模块名
     void RefreshCachedComponents();                    // 刷新依赖组件缓存
     FVector GetLockTargetAnchorLocation(float TargetHeightOffset) const; // 获取锁定点世界锚点
     bool IsScreenPositionInViewport(const FVector2D& ScreenPosition) const; // 判断屏幕点是否在可见范围

@@ -39,6 +39,10 @@ public:
 
     virtual FString GetModuleName_Implementation() const override; // UnLua 接口模块名
 
+    /** Lua 可覆盖的武器管理逐帧编排入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "Weapon|Gameplay")
+    void HandleWeaponManagerTick(float DeltaTime);
+
     // ── 输入限制区域 ─────────────────────────────────────────────────────────
 
     UFUNCTION(BlueprintCallable, Category = "Weapon|Restriction")
@@ -78,6 +82,10 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Weapon|Animation")
     bool DispatchWeaponAnimationEvent(FName EventName, UAnimSequenceBase* Animation); // 将动画事件转发给 Lua
+
+    /** Lua 可覆盖的武器动画通知处理入口。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "Weapon|Gameplay")
+    bool HandleWeaponAnimationEvent(const FString& EventName, UAnimSequenceBase* Animation);
 
     UFUNCTION(BlueprintCallable, Category = "Weapon|Animation")
     bool PlayCharacterAnimationByPath(
@@ -150,8 +158,6 @@ protected:
 private:
     USkeletalMeshComponent* ResolveCharacterMesh();    // 解析并缓存角色网格
     UAnimSequence* LoadAnimation(const FString& AnimationPath) const; // 加载动画软路径
-    bool TryCallLuaWeaponManagerTick(float DeltaTime); // 调用 Lua 武器 Tick
-    FString ResolveLuaWeaponManagerModuleName() const; // 解析 UnLua 模块名
     void FinishCharacterAnimationPreview();            // 处理单次动画结束状态
 
     TWeakObjectPtr<USkeletalMeshComponent> CachedCharacterMesh; // 缓存的角色网格

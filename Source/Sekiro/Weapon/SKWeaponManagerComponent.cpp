@@ -15,93 +15,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "TimerManager.h"
-#include "UnLua.h"
-#include "UnLuaModule.h"
 #include "UObject/UnrealType.h"
-
-namespace
-{
-    /**
-     * 在指定 UnLua 环境中 require 武器管理模块，并校验模块返回表。
-     * 本函数只读 Lua 模块状态，必须在游戏线程调用；不保留 Lua 值或环境引用。
-     *
-     * @param LuaEnv 当前组件所属的 UnLua 环境，不可为空且不转移所有权。
-     * @param LuaModuleName require 使用的非空模块名。
-     * @param bOutSucceeded 输出模块表是否成功取得；失败时为 false。
-     * @return require 的返回值容器；调用方在使用完函数返回值后负责按 UnLua 约定释放栈值。
-     */
-    static UnLua::FLuaRetValues RequireSKWeaponManagerLuaModule(
-        UnLua::FLuaEnv* LuaEnv,
-        const FString& LuaModuleName,
-        bool& bOutSucceeded)
-    {
-        bOutSucceeded = false;
-        if (!LuaEnv || LuaModuleName.IsEmpty()) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        lua_State* LuaState = LuaEnv->GetMainState();
-        if (!LuaState) return UnLua::FLuaRetValues(LuaEnv, INDEX_NONE);
-
-        const FTCHARToUTF8 LuaModuleNameUtf8(*LuaModuleName);
-        UnLua::FLuaRetValues ReturnValues = UnLua::Call(LuaState, "require", LuaModuleNameUtf8.Get());
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager Lua require failed. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        if (ReturnValues[0].GetType() != LUA_TTABLE)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager Lua module must return a table. Module=%s"), *LuaModuleName);
-            return ReturnValues;
-        }
-
-        bOutSucceeded = true;
-        return ReturnValues;
-    }
-
-    /**
-     * 将 Lua Tick 的首个返回值解析为是否完成处理。
-     * 本函数只读返回值且必须在游戏线程调用，不弹出 Lua 栈内容。
-     *
-     * @param ReturnValues Lua Tick 返回值容器，由调用方持有并负责弹栈。
-     * @param LuaModuleName 日志上下文所用模块名。
-     * @return 首个返回值为 true 时返回 true；无返回、nil、false 或类型错误时返回 false。
-     */
-    static bool ReadSKWeaponManagerLuaHandled(
-        UnLua::FLuaRetValues& ReturnValues,
-        const FString& LuaModuleName)
-    {
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0) return false;
-        if (ReturnValues[0].GetType() == LUA_TNIL) return false;
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN) return ReturnValues[0].Value<bool>();
-
-        UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager Lua Tick should return boolean. Module=%s"), *LuaModuleName);
-        return false;
-    }
-
-    /**
-     * 将 Lua 武器动画事件函数的首个返回值解析为 handled 状态。
-     * 本函数只读返回值且必须在游戏线程调用，不弹出 Lua 栈内容。
-     *
-     * @param ReturnValues Lua 事件函数返回值容器，由调用方持有并负责弹栈。
-     * @param LuaModuleName 日志上下文所用模块名。
-     * @return 首个返回值为 boolean 时返回其值；无返回、nil 或类型错误时返回 false。
-     */
-    static bool ReadSKWeaponAnimationEventHandled(
-        UnLua::FLuaRetValues& ReturnValues,
-        const FString& LuaModuleName)
-    {
-        if (!ReturnValues.IsValid() || ReturnValues.Num() == 0)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager Lua event returned no handled value. Module=%s"), *LuaModuleName);
-            return false;
-        }
-        if (ReturnValues[0].GetType() == LUA_TBOOLEAN) return ReturnValues[0].Value<bool>();
-
-        UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager Lua event should return boolean handled. Module=%s"), *LuaModuleName);
-        return false;
-    }
-}
 
 /**
  * 创建原生武器管理组件并声明 PrePhysics Tick 能力，但保持 Tick 默认禁用。
@@ -169,6 +83,17 @@ FString USKWeaponManagerComponent::GetLuaWeaponManagerModuleName() const
 FString USKWeaponManagerComponent::GetModuleName_Implementation() const
 {
     return LuaWeaponManagerModuleName;
+}
+
+/**
+ * 提供未绑定 Lua 时的空武器管理 Tick 回退，避免 C++ 手写查找和调用 Lua 模块。
+ * 同名 Lua override 负责武器玩法编排；仅由组件 PrePhysics Tick 在游戏线程调用。
+ *
+ * @param DeltaTime 当前帧步长，单位秒；默认实现不消费该值。
+ */
+void USKWeaponManagerComponent::HandleWeaponManagerTick_Implementation(float DeltaTime)
+{
+    (void)DeltaTime;
 }
 
 /**
@@ -344,59 +269,41 @@ bool USKWeaponManagerComponent::SetWeaponPresentationByName(FName PresentationNa
 }
 
 /**
- * 将 AnimNotify 提供的通用事件转发给当前绑定 Lua 模块的 OnWeaponAnimationEvent。
- * 函数不解释事件名、不切换武器状态，也不保留动画引用；Lua 不可用时保持当前状态。
+ * 将 AnimNotify 提供的通用事件转发给可由 Blueprint 或 UnLua 覆盖的反射入口。
+ * 函数不解释事件名、不切换武器状态，也不保留动画引用；未启用脚本逻辑时保持当前状态。
  * 必须在游戏线程调用。
  *
  * @param EventName 由动画资产配置的非空事件语义名称，转换为稳定字符串后传给 Lua。
  * @param Animation 触发通知的动画资源，允许为空且不转移所有权。
- * @return 找到并成功调用 Lua 事件函数时返回 true；Lua 被禁用、模块或函数缺失、调用失败时返回 false。
+ * @return 覆盖入口成功处理事件时返回 true；脚本逻辑被禁用、事件名为空或未处理时返回 false。
  */
 bool USKWeaponManagerComponent::DispatchWeaponAnimationEvent(
     FName EventName,
     UAnimSequenceBase* Animation)
 {
-    const FString ModuleName = ResolveLuaWeaponManagerModuleName();
-    if (!bUseLuaWeaponManagerLogic || ModuleName.IsEmpty() || EventName.IsNone())
+    if (!bUseLuaWeaponManagerLogic || EventName.IsNone())
     {
-        UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager dispatch rejected before Lua lookup. Module=%s"), *ModuleName);
         return false;
     }
 
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager dispatch Lua environment missing. Module=%s"), *ModuleName);
-        return false;
-    }
+    return HandleWeaponAnimationEvent(EventName.ToString(), Animation);
+}
 
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKWeaponManagerLuaModule(
-        LuaEnv,
-        ModuleName,
-        bRequireSucceeded);
-    if (!bRequireSucceeded)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager dispatch module require failed. Module=%s"), *ModuleName);
-        return false;
-    }
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["OnWeaponAnimationEvent"];
-    const bool bFunctionFound = FunctionValue.GetType() == LUA_TFUNCTION;
-    if (!bFunctionFound)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager dispatch Lua function missing. Module=%s"), *ModuleName);
-        return false;
-    }
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    const FString EventNameString = EventName.ToString();
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, EventNameString, Animation);
-    const bool bHandled = ReadSKWeaponAnimationEventHandled(FunctionReturnValues, ModuleName);
-    FunctionReturnValues.Pop();
-    return bHandled;
+/**
+ * 提供未被 Blueprint 或 UnLua 覆盖时的武器动画通知回退。
+ * 默认实现不解释事件、不改变展示状态，也不保留动画引用；仅由游戏线程上的通知转发入口调用。
+ *
+ * @param EventName 动画资产配置的事件语义名称；默认实现不消费。
+ * @param Animation 触发通知的动画资源，允许为空且不转移所有权；默认实现不消费。
+ * @return 默认返回 false，表示没有原生业务处理该事件。
+ */
+bool USKWeaponManagerComponent::HandleWeaponAnimationEvent_Implementation(
+    const FString& EventName,
+    UAnimSequenceBase* Animation)
+{
+    (void)EventName;
+    (void)Animation;
+    return false;
 }
 
 /**
@@ -704,7 +611,10 @@ void USKWeaponManagerComponent::TickComponent(
     FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-    TryCallLuaWeaponManagerTick(DeltaTime);
+    if (bUseLuaWeaponManagerLogic)
+    {
+        HandleWeaponManagerTick(DeltaTime);
+    }
 }
 
 /**
@@ -747,57 +657,6 @@ UAnimSequence* USKWeaponManagerComponent::LoadAnimation(const FString& Animation
         UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager failed to load animation: %s"), *AnimationPath);
     }
     return Animation;
-}
-
-/**
- * require 当前武器模块并调用其 Tick(Self, DeltaTime)，不提供任何原生失败回退行为。
- * 必须在游戏线程调用；函数不保留 Lua 环境、表或返回值引用。
- *
- * @param DeltaTime 本帧游戏时间增量，单位秒。
- * @return Lua Tick 明确返回 true 时返回 true；禁用、模块不可用或调用失败时返回 false。
- */
-bool USKWeaponManagerComponent::TryCallLuaWeaponManagerTick(float DeltaTime)
-{
-    const FString ModuleName = ResolveLuaWeaponManagerModuleName();
-    if (!bUseLuaWeaponManagerLogic || ModuleName.IsEmpty()) return false;
-
-    IUnLuaModule& UnLuaModule = IUnLuaModule::Get();
-    UnLua::FLuaEnv* LuaEnv = UnLuaModule.GetEnv(this);
-    if (!LuaEnv) return false;
-
-    bool bRequireSucceeded = false;
-    UnLua::FLuaRetValues RequireReturnValues = RequireSKWeaponManagerLuaModule(
-        LuaEnv,
-        ModuleName,
-        bRequireSucceeded);
-    if (!bRequireSucceeded) return false;
-
-    UnLua::FLuaTable ModuleTable(LuaEnv, RequireReturnValues[0]);
-    UnLua::FLuaValue FunctionValue = ModuleTable["Tick"];
-    if (FunctionValue.GetType() != LUA_TFUNCTION) return false;
-
-    UnLua::FLuaFunction LuaFunction(LuaEnv, FunctionValue);
-    UnLua::FLuaRetValues FunctionReturnValues = LuaFunction.Call(this, DeltaTime);
-    const bool bHandled = ReadSKWeaponManagerLuaHandled(FunctionReturnValues, ModuleName);
-    FunctionReturnValues.Pop();
-    return bHandled;
-}
-
-/**
- * 解析接口返回的 UnLua 模块名，接口未提供名称时回退到组件属性。
- * 必须在游戏线程调用，不执行 require。
- *
- * @return 可用于 require 的模块名；两处均未配置时为空。
- */
-FString USKWeaponManagerComponent::ResolveLuaWeaponManagerModuleName() const
-{
-    if (GetClass()->ImplementsInterface(UUnLuaInterface::StaticClass()))
-    {
-        const FString InterfaceModuleName = IUnLuaInterface::Execute_GetModuleName(
-            const_cast<USKWeaponManagerComponent*>(this));
-        if (!InterfaceModuleName.IsEmpty()) return InterfaceModuleName;
-    }
-    return LuaWeaponManagerModuleName;
 }
 
 /**
