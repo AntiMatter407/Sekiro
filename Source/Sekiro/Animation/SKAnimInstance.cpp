@@ -337,6 +337,13 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 
     ActorYaw = ActorRotation.Yaw;
     bHasDesiredMoveYaw = OwnerMovement && OwnerMovement->HasDesiredMoveYawSnapshot();
+    bHasLockOnLocomotionSnapshot = OwnerMovement && OwnerMovement->HasLockOnLocomotionSnapshot();
+    LockOnCardinalDirection = bHasLockOnLocomotionSnapshot
+        ? OwnerMovement->GetLockOnCardinalDirectionSnapshot()
+        : 0;
+    LockOnSpineYawCompensation = bHasLockOnLocomotionSnapshot
+        ? OwnerMovement->GetLockOnSpineYawCompensationSnapshot()
+        : 0.f;
     if (bHasDesiredMoveYaw)
     {
         DesiredMoveYaw = OwnerMovement->GetDesiredMoveYawSnapshot();

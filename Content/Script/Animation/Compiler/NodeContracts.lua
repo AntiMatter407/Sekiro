@@ -146,6 +146,20 @@ local contracts = {
             { Name = "RotationInterpSpeed", ValueType = "Float", bRequired = false },
         },
     },
+    SpineYawCompensation = {
+        NodeType = "SpineYawCompensation",
+        GraphTypes = { Pose = true, StatePose = true },
+        Pins = {
+            { Name = "ComponentPose", Direction = "Input", DataType = "ComponentPose", bAllowMultipleConnections = false },
+            { Name = "YawAngle", Direction = "Input", DataType = "Float", bAllowMultipleConnections = false },
+            { Name = "Alpha", Direction = "Input", DataType = "Float", bAllowMultipleConnections = false },
+            { Name = "Pose", Direction = "Output", DataType = "ComponentPose", bAllowMultipleConnections = true },
+        },
+        Properties = {
+            { Name = "SpineBones", ValueType = "String", bRequired = true },
+            { Name = "RotationAxis", ValueType = "Name", bRequired = false, DefaultValue = "Z" },
+        },
+    },
     FootPlacement = {
         NodeType = "FootPlacement",
         GraphTypes = { Pose = true, StatePose = true },

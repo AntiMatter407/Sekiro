@@ -16,6 +16,7 @@ const FName SekiroAnimGraphIRNames::InertializationNode(TEXT("Inertialization"))
 const FName SekiroAnimGraphIRNames::LocalToComponentSpaceNode(TEXT("LocalToComponentSpace"));
 const FName SekiroAnimGraphIRNames::ComponentToLocalSpaceNode(TEXT("ComponentToLocalSpace"));
 const FName SekiroAnimGraphIRNames::OrientationWarpingNode(TEXT("OrientationWarping"));
+const FName SekiroAnimGraphIRNames::SpineYawCompensationNode(TEXT("SpineYawCompensation"));
 const FName SekiroAnimGraphIRNames::FootPlacementNode(TEXT("FootPlacement"));
 const FName SekiroAnimGraphIRNames::LegIKNode(TEXT("LegIK"));
 const FName SekiroAnimGraphIRNames::TwoBoneIKNode(TEXT("TwoBoneIK"));

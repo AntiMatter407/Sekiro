@@ -41,7 +41,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `CanEnterLoop` | 使用中 | `int bool` | Start 或锁定 Jump InAir 过渡段已进入可衔接循环姿势的窗口 | Locomotion Start、非锁定/原地 Jump Start、锁定 Jump InAir Sequence | Lua GroundLocomotion 的 Start 到 Cycle；Jump Start/InAir 到 Loop |
 | `CanEnterStop` | 使用中 | `int bool` | 当前 Start/Loop 帧可进入匹配的 Stop | Start Sequence、BlendSpace 使用的 Loop 样本 Sequence | Lua GroundLocomotion 的 Start/Cycle 到 Stop |
 | `CanEnterIdle` | 使用中 | `int bool` | Stop 已进入可回 Idle 或退出外层 Sprint 的窗口 | Walk/Run/Sprint Stop Sequence | Stop 到 Idle；外层 Sprint 到 Standing/Crouching |
-| `StopTurnDirectionAlignment` | 使用中 | `float` | StopTurn 换脚期间保留方向补偿的连续权重，并在动作结束前回落到 0 | Standing/Crouching 左右 Idle Turn Sequence | `ABP_Sekiro` 更新 `StopTurnWarpingAlpha`，StopTurn 的 Orientation Warping 消费 |
+| `StopTurnDirectionAlignment` | 使用中 | `float` | StopTurn 换脚期间保留脊柱回正的连续权重，并在动作结束前回落到 0 | Standing/Crouching 左右 Idle Turn Sequence | `ABP_Sekiro` 更新 `StopTurnSpineYawCompensationAlpha`，StopTurn 的脊柱补偿节点消费 |
 | `WeaponHandIK` | 使用中 | `float` | 收拔刀换挂点附近约束右手到刀柄目标的权重，动作前段和换挂完成后为 0 | `Anim_Sekiro_a000_700500_Additive`、`Anim_Sekiro_a000_700510_Additive` | `ABP_Sekiro` 的 `WeaponHandIK` TwoBoneIK |
 | `CanExitStep` | 使用中 | `int bool` | Step 已进入可返回普通地面移动的尾部窗口 | 四方向 Step Sequence | 外层 Step 到 Standing/Crouching |
 | `CanExitTurn` | 使用中 | `int bool` | 原地 Turn 已进入可返回 Idle 的尾部窗口 | 站立/蹲姿左右 Idle Turn Sequence | Lua GroundLocomotion 的 Turn 到 Idle |
@@ -118,7 +118,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 ### StopTurnDirectionAlignment
 
-含义：锁定斜向移动释放输入后，Stop 继续沿锁存的真实移动方向完成制动；残差角达到阈值时进入专用 StopTurn，利用左右 Turn 动画的真实换脚过程撤销 Orientation Warping，使下半身回到锁定目标朝向。
+含义：锁定斜向移动释放输入后，Stop 保持释放前的 Actor 朝向与四向素材，使原始 Root Motion 继续沿锁存方向完成制动；残差角达到阈值时进入专用 StopTurn，利用左右 Turn 动画的真实换脚过程逐步撤销脊柱回正。
 
 生成方式：
 
@@ -128,7 +128,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 4. `CanExitTurn` 在第 17 帧开启，因此回正至少提前 2 帧完成。
 5. 曲线使用 `float` 线性插值，不得改成 `int bool`。
 
-`BlueprintUpdateAnimation` 读取的是上一轮 Graph 求值后的曲线。为避免 Stop→StopTurn 的首个混合帧把“尚未出现的曲线”误当成零，运行时先保持输入释放时的权重；当曲线达到 `0.9` 后锁存为已接管，随后才持续用曲线值更新 `StopTurnWarpingAlpha`。旧 `StopDirectionAlignment` 已从 16 个 Stop Sequence 删除，禁止在没有换脚动作的 Stop 尾段直接撤销角度。
+`BlueprintUpdateAnimation` 读取的是上一轮 Graph 求值后的曲线。为避免 Stop→StopTurn 的首个混合帧把“尚未出现的曲线”误当成零，运行时先保持输入释放时的权重；当曲线达到 `0.9` 后锁存为已接管，随后才持续用曲线值更新 `StopTurnSpineYawCompensationAlpha`。旧 `StopDirectionAlignment` 已从 16 个 Stop Sequence 删除，禁止在没有换脚动作的 Stop 尾段直接撤销角度。
 
 ### Step、Turn 与 Jump 曲线
 

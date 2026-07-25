@@ -79,17 +79,13 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("PoseGait", "Enum", 2, GaitEnum)
     self:Variable("LatchedActionGait", "Enum", 2, GaitEnum)
     self:Variable("bPoseCrouching", "Bool", false)
-    self:Variable("CycleForwardResidualAngle", "Float", 0.0)
-    self:Variable("CycleBackResidualAngle", "Float", 0.0)
-    self:Variable("CycleLeftResidualAngle", "Float", 0.0)
-    self:Variable("CycleRightResidualAngle", "Float", 0.0)
-    self:Variable("LockOnWarpingAlpha", "Float", 0.0)
-    self:Variable("StartDirectionResidualAngle", "Float", 0.0)
-    self:Variable("StartWarpingAlpha", "Float", 0.0)
+    self:Variable("LockOnSpineYawCompensationAngle", "Float", 0.0)
+    self:Variable("LatchedLockOnSpineYawCompensationAngle", "Float", 0.0)
+    self:Variable("LockOnSpineYawCompensationAlpha", "Float", 0.0)
     self:Variable("StopDirectionResidualAngle", "Float", 0.0)
-    self:Variable("StopWarpingAlpha", "Float", 0.0)
+    self:Variable("StopSpineYawCompensationAlpha", "Float", 0.0)
     self:Variable("StopTurnDirection", "Enum", Direction.Cardinal.Right, DirectionEnum)
-    self:Variable("StopTurnWarpingAlpha", "Float", 0.0)
+    self:Variable("StopTurnSpineYawCompensationAlpha", "Float", 0.0)
     self:Variable("bStopTurnRequested", "Bool", false)
     self:Variable("bStopTurnAlignmentCurveSeen", "Bool", false)
     -- 预留锁定模式切换边沿；当前只记录上一帧状态，尚无 Graph 或规则消费者。
@@ -249,24 +245,11 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     Inst.RootMotionMode = Inst.bIsInAir == true
         and RootMotionMode.Ignore
         or RootMotionMode.Everything
-    local direction = Direction.Cardinal.Forward
-    if locked_on and has_input then
-        -- 基础素材按锁定输入意图立即选区；真实轨迹与 ActorYaw 的偏差由每条 Sequence 自己的 Warping 残差承担。
-        local input_direction_angle = Direction.GetAngleFromAxes(
-            Inst.MoveInputY,
-            Inst.MoveInputX)
-        direction = Direction.ResolveCardinalWithHysteresis(
-            input_direction_angle,
-            Inst.CycleDirection,
-            Tuning.LockedDirectionHysteresisAngle,
-            Tuning.LockedDirectionForwardBoundaryAngle,
-            Tuning.LockedDirectionBackBoundaryAngle)
-    end
-    local ground_direction_alignment_enabled = locked_on
-        and has_input
-        and Inst.bIsInAir ~= true
-        and Inst.bIsDodging ~= true
-        and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
+    -- Movement 是锁定四方向的唯一权威；没有有效快照时按自由/冲刺的前向素材处理。
+    local lock_on_locomotion_active = Inst.bHasLockOnLocomotionSnapshot == true
+    local direction = lock_on_locomotion_active
+        and Inst.LockOnCardinalDirection
+        or Direction.Cardinal.Forward
 
     Inst.bPoseCrouching = crouching
     local turn_in_place_requested = locked_on
@@ -282,36 +265,40 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     Inst.bTurnInPlaceRequested = turn_in_place_requested
     if has_input then
         Inst.CycleDirection = direction
+        Inst.LatchedActionDirection = direction
         -- Cycle 直接追随输入目标步态；Movement 的实际加减速不应让 Shift/Alt 松开后继续停留在 Sprint Pose。
         Inst.PoseGait = pose_gait
+        if lock_on_locomotion_active then
+            -- Start 与 Cycle 必须和 Movement 用同一条四向素材；输入释放后该角度继续供 Stop 使用。
+            Inst.LatchedLockOnSpineYawCompensationAngle =
+                Inst.LockOnSpineYawCompensation or 0.0
+        end
         if Inst.bHadMovementInput ~= true then
-            Inst.LatchedActionDirection = locked_on and direction or Direction.Cardinal.Forward
             Inst.LatchedFreeStartDirection = Direction.ResolveFreeTurnDirection(
                 Inst.MoveDirectionAngleBeforeRotation)
             Inst.LatchedActionGait = pose_gait
-            Inst.bLatchedActionLockedOn = locked_on
+            Inst.bLatchedActionLockedOn = lock_on_locomotion_active
         end
     elseif Inst.bHadMovementInput == true then
-        Inst.LatchedActionDirection = locked_on and Inst.CycleDirection or Direction.Cardinal.Forward
+        Inst.LatchedActionDirection = Inst.bLatchedActionLockedOn == true
+            and Inst.CycleDirection
+            or Direction.Cardinal.Forward
         -- 输入释放后 PoseGait 保留上一帧活动步态，使 Stop 能选择与离开 Cycle 一致的资产。
         Inst.LatchedActionGait = Inst.PoseGait
-        Inst.bLatchedActionLockedOn = locked_on
-        local stop_direction = locked_on and Inst.CycleDirection or Direction.Cardinal.Forward
-        Inst.StopDirectionResidualAngle = locked_on
-            and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
-            and clamp_direction_residual(
-                Direction.GetCardinalResidual(Inst.MoveDirectionAngle, stop_direction),
-                Tuning.LockOnWarpingMaxAngle)
+        Inst.StopDirectionResidualAngle = Inst.bLatchedActionLockedOn == true
+            and Inst.LatchedLockOnSpineYawCompensationAngle
             or 0.0
-        local stop_direction_alignment_enabled = locked_on
+        local stop_direction_alignment_enabled = Inst.bLatchedActionLockedOn == true
             and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
-        Inst.StopWarpingAlpha = stop_direction_alignment_enabled and 1.0 or 0.0
+        Inst.StopSpineYawCompensationAlpha =
+            stop_direction_alignment_enabled and 1.0 or 0.0
         Inst.bStopTurnRequested = stop_direction_alignment_enabled
             and math.abs(Inst.StopDirectionResidualAngle) >= Tuning.StopTurnMinResidualAngle
         Inst.StopTurnDirection = Inst.StopDirectionResidualAngle < 0.0
             and Direction.Cardinal.Left
             or Direction.Cardinal.Right
-        Inst.StopTurnWarpingAlpha = Inst.bStopTurnRequested and 1.0 or 0.0
+        Inst.StopTurnSpineYawCompensationAlpha =
+            Inst.bStopTurnRequested and 1.0 or 0.0
         -- Stop 保持斜向姿势；等 StopTurn 的换脚动画完整接管后，才允许专用曲线撤销补偿。
         Inst.bStopTurnAlignmentCurveSeen = false
     end
@@ -325,7 +312,7 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         Inst.bStopTurnAlignmentCurveSeen = true
     end
     if Inst.bStopTurnAlignmentCurveSeen == true then
-        Inst.StopTurnWarpingAlpha = Inst.bStopTurnRequested == true
+        Inst.StopTurnSpineYawCompensationAlpha = Inst.bStopTurnRequested == true
             and stop_turn_alignment_curve
             or 0.0
     end
@@ -370,35 +357,16 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         Inst.JumpWarpingAlpha = locked_on and directional_jump and 1.0 or 0.0
     end
 
-    -- Start 的基础四向素材必须保持进入时锁存，避免中途切换 Sequence 导致起步重播；
-    -- 但量化残差要持续追随输入，否则 W 起步后追加 D 会在整个 Start 期间保持 0 度，直到 Cycle 才突然转向。
-    local start_direction_alignment_enabled = ground_direction_alignment_enabled
-        and Inst.bLatchedActionLockedOn == true
-    local start_residual_angle = start_direction_alignment_enabled
-        and Direction.GetCardinalResidual(
-            Inst.MoveDirectionAngle,
-            Inst.LatchedActionDirection)
+    Inst.LockOnSpineYawCompensationAngle = lock_on_locomotion_active
+        and (Inst.LockOnSpineYawCompensation or 0.0)
         or 0.0
-    Inst.StartDirectionResidualAngle = clamp_direction_residual(
-        start_residual_angle,
-        Tuning.LockOnWarpingMaxAngle)
-    Inst.StartWarpingAlpha = start_direction_alignment_enabled and 1.0 or 0.0
-
-    -- Cycle 混合期间新旧方向分支会同时求值；必须分别保存各自主轴残差，不能在选择器后共用当前方向残差。
-    local cycle_direction_angle = Inst.MoveDirectionAngle or 0.0
-    Inst.CycleForwardResidualAngle = clamp_direction_residual(
-        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Forward),
-        Tuning.LockOnWarpingMaxAngle)
-    Inst.CycleBackResidualAngle = clamp_direction_residual(
-        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Back),
-        Tuning.LockOnWarpingMaxAngle)
-    Inst.CycleLeftResidualAngle = clamp_direction_residual(
-        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Left),
-        Tuning.LockOnWarpingMaxAngle)
-    Inst.CycleRightResidualAngle = clamp_direction_residual(
-        Direction.GetCardinalResidual(cycle_direction_angle, Direction.Cardinal.Right),
-        Tuning.LockOnWarpingMaxAngle)
-    Inst.LockOnWarpingAlpha = ground_direction_alignment_enabled and 1.0 or 0.0
+    Inst.LockOnSpineYawCompensationAlpha = lock_on_locomotion_active
+        and locked_on
+        and Inst.bIsInAir ~= true
+        and Inst.bIsDodging ~= true
+        and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
+        and 1.0
+        or 0.0
     Inst.bWasLockedOn = locked_on
     Inst.bHadMovementInput = has_input
     Inst.bWasDodging = Inst.bIsDodging == true

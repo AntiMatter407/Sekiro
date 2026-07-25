@@ -136,11 +136,12 @@ function Direction.ClassifyLockedCardinal(angle, forward_boundary_angle, back_bo
     return normalized_angle < 0 and Direction.Cardinal.Left or Direction.Cardinal.Right
 end
 
----在锁定四方向边界加入前后优先的非对称滞回，避免抖动且不让侧向素材侵入前后主扇区。
----Forward/Back 离开自身扇区时保留容差；Left/Right 进入前后基础扇区时立即交出方向。
+---优先保持当前四向素材，避免斜向输入同时触发方向换腿和 ActorYaw 转向。
+---Forward/Back 按配置扇区加滞回保持；Left/Right 以相邻主轴中点 45 度加滞回保持。
+---当前素材超出允许残差后才重新分类，因此纯后退仍会切 Back，而后左/后右可以沿用进入斜向前的素材。
 ---@param angle number|nil 角色局部移动角，单位为度。
 ---@param current_direction SekiroCardinalDirection|nil 上一帧已选择的四方向；nil 时直接分类。
----@param hysteresis_angle number|nil Forward/Back 离开自身扇区时保留的容差；nil 使用 10 度。
+---@param hysteresis_angle number|nil 当前素材离开基础范围时额外保留的容差；nil 使用 10 度。
 ---@param forward_boundary_angle number|nil Forward 扇区的绝对角上限；nil 使用传统 45 度。
 ---@param back_boundary_angle number|nil Back 扇区的绝对角下限；nil 使用传统 135 度。
 ---@return SekiroCardinalDirection direction 本帧稳定后的四方向枚举值。
@@ -158,23 +159,19 @@ function Direction.ResolveCardinalWithHysteresis(
         forward_boundary,
         math.min(back_boundary_angle or 135, 180))
 
-    if current_direction == Direction.Cardinal.Forward
-        and absolute_angle <= forward_boundary + hysteresis then
-        return current_direction
-    end
-    if current_direction == Direction.Cardinal.Back
-        and absolute_angle >= back_boundary - hysteresis then
-        return current_direction
-    end
-    if current_direction == Direction.Cardinal.Left
-        and normalized_angle < -forward_boundary
-        and normalized_angle > -back_boundary then
-        return current_direction
-    end
-    if current_direction == Direction.Cardinal.Right
-        and normalized_angle > forward_boundary
-        and normalized_angle < back_boundary then
-        return current_direction
+    local current_axis = Direction.CardinalAngle[current_direction]
+    if current_axis ~= nil then
+        local current_residual = math.abs(
+            Direction.NormalizeAngle(normalized_angle - current_axis))
+        local retained_residual = 45 + hysteresis
+        if current_direction == Direction.Cardinal.Forward then
+            retained_residual = forward_boundary + hysteresis
+        elseif current_direction == Direction.Cardinal.Back then
+            retained_residual = 180 - back_boundary + hysteresis
+        end
+        if current_residual <= retained_residual then
+            return current_direction
+        end
     end
 
     return Direction.ClassifyLockedCardinal(

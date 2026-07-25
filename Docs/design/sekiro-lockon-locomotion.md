@@ -1,7 +1,7 @@
 # Sekiro 锁定状态 Locomotion 设计
 
 > 状态：历史实现方案。四方向资源选择和输入语义仍有效，但本文所述 BlendSpace、MovePhase 匹配和 Stop 轨迹冻结等旧动态 Pose Graph 机制已经删除；Orientation Warping 后来以原生生成节点重新接入。
-> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + 分支级 Orientation Warping + Inertialization；四条方向残差只驱动锁定 Walk/Run 的姿势补偿，不修改 CharacterMovement 的物理轨迹。
+> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + Inertialization；Movement 选择四向素材并用剩余角旋转 Actor，使原始 Root Motion 对齐输入轨迹，AnimGraph 只对脊柱链做反向回正。
 > 日期：2026-07-11  
 > 关联文档：[角色摄像头与 Locomotion 方案](sekiro-camera-locomotion.md)、[动画曲线生成与使用手册](../animation-curve-authoring-guide.md)
 
@@ -102,7 +102,7 @@ Cycle 的素材选区与轨迹对齐承担不同职责：`MoveInputX/MoveInputY`
 | `(-120°, -60°)` | Left |
 | `[120°, 180°]` 或 `[-180°, -120°]` | Back |
 
-必须加入前后优先的非对称滞回。Forward 离开自身扇区需要超过约 `70°`，但 Left/Right 进入 Forward 时到达 `60°` 基础边界就立即切换；Back 离开自身扇区需要小于约 `110°`，但 Left/Right 进入 Back 时到达 `120°` 基础边界就立即切换。这样既保留 Forward/Back 边缘的 `10°` 防抖范围，也不会让侧向素材侵入更自然的前后主扇区。Start、Stop 或 Step 的基础动画方向一旦进入状态就锁定到动作结束；Cycle 可以更新基础动画方向。Start 的方向残差例外：它持续根据最新输入相对锁存基础方向计算，使起步中追加斜向输入时下半身立即开始对齐，同时不重启一次性动画。
+方向解析必须优先保持当前素材，避免斜向输入同时触发换腿与 ActorYaw 转向。四方向按相邻主轴中点使用 `45°/135°` 初始分类；当前素材相对输入方向的残差不超过基础 `45°` 加 `10°` 滞回时继续保持，超过 `55°` 才重新分类。这样先向左再加入后退时仍使用 Left，并由 ActorYaw 平滑形成后左轨迹；只有接近纯后退、当前素材残差超过保持范围时才切换 Back。Start、Stop 或 Step 的基础动画方向一旦进入状态就锁定到动作结束；Cycle 可以在超出保持范围后更新基础动画方向。
 
 四向分区只决定播放哪条 Sequence，不得量化真实移动轨迹。Lua 为四条分支同时计算 `实际移动角 - 各素材主方向角`：Forward、Back、Left、Right 分别以 `0°/180°/-90°/90°` 为主轴。每条 Sequence 先通过自己的 Orientation Warping 对齐，再由 `BlendListByEnum` 混合；因此 Left 淡出和 Forward 淡入期间不会误用同一个残差。分支内部角度立即应用，平滑只由方向 Pose 混合承担；`Spine/Spine1/Spine2` 继续反向补偿，使角色胸口朝向锁定目标。
 
@@ -138,7 +138,7 @@ Cycle 的素材选区与轨迹对齐承担不同职责：`MoveInputX/MoveInputY`
 
 - 输入释放时锁定最后一个有效 Cycle 方向。
 - 同时冻结输入释放前的精确角度。Stop Root Motion 在整个动作中继续沿该斜向轨迹，不能退化为四向直线。
-- Stop 全程保持锁定方向补偿，禁止在没有换脚动作时直接把 Orientation Warping 收回到零。
+- Stop 全程保持释放时的 Actor 朝向、方向素材和脊柱回正，禁止在没有换脚动作时直接把补偿收回到零。
 - 残差角绝对值达到 `StopTurnMinResidualAngle` 时，Stop 在 `CanEnterIdle` 窗口进入专用 StopTurn；站立/蹲姿分别播放对应左右 Idle Turn，并由 `StopTurnDirectionAlignment` 在换脚阶段撤销补偿。
 - 残差角较小时直接进入 Idle，避免很小的角度也播放完整转身动作。
 - 输入释放时把角度和权重分别锁存到 Stop 专用变量。后续重新输入只更新 Start/Cycle，不得改写仍在混合退出的 Stop 方向。

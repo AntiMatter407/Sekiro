@@ -19,6 +19,7 @@
 #include "AnimGraphNode_LegIK.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
 #include "AnimGraph/AnimGraphNode_OrientationWarping.h"
+#include "AnimGraphNodes/AnimGraphNode_SekiroSpineYawCompensation.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
@@ -587,6 +588,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
             || NodeClass == UAnimGraphNode_LocalToComponentSpace::StaticClass()
             || NodeClass == UAnimGraphNode_ComponentToLocalSpace::StaticClass()
             || NodeClass == UAnimGraphNode_OrientationWarping::StaticClass()
+            || NodeClass == UAnimGraphNode_SekiroSpineYawCompensation::StaticClass()
             || NodeClass == UAnimGraphNode_FootPlacement::StaticClass()
             || NodeClass == UAnimGraphNode_LegIK::StaticClass()
             || NodeClass == UAnimGraphNode_TwoBoneIK::StaticClass()
@@ -2299,6 +2301,54 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
                 OrientationNode->ReconstructNode();
                 NativeNodes.Add(Node.Id, OrientationNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_SekiroSpineYawCompensation::StaticClass())
+            {
+                UAnimGraphNode_SekiroSpineYawCompensation* CompensationNode =
+                    CreateNativeNode<UAnimGraphNode_SekiroSpineYawCompensation>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
+                const FSekiroAnimIRProperty* SpineBonesProperty =
+                    FindProperty(Node, TEXT("SpineBones"));
+                if (CompensationNode == nullptr || SpineBonesProperty == nullptr)
+                {
+                    return ReportNodeCreationFailure(Node);
+                }
+
+                CompensationNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                CompensationNode->Node.SpineBones.Reset();
+                TArray<FString> SpineBoneNames;
+                SpineBonesProperty->Value.StringValue.ParseIntoArray(
+                    SpineBoneNames,
+                    TEXT("|"),
+                    true);
+                for (const FString& SpineBoneName : SpineBoneNames)
+                {
+                    const FName TrimmedBoneName(*SpineBoneName.TrimStartAndEnd());
+                    if (!TrimmedBoneName.IsNone())
+                    {
+                        CompensationNode->Node.SpineBones.Add(FBoneReference(TrimmedBoneName));
+                    }
+                }
+
+                const FSekiroAnimIRProperty* RotationAxisProperty =
+                    FindProperty(Node, TEXT("RotationAxis"));
+                if (RotationAxisProperty != nullptr)
+                {
+                    const FName RotationAxis = RotationAxisProperty->Value.NameValue;
+                    CompensationNode->Node.RotationAxis = RotationAxis == TEXT("X")
+                        ? ESekiroSpineYawAxis::X
+                        : RotationAxis == TEXT("Y")
+                            ? ESekiroSpineYawAxis::Y
+                            : ESekiroSpineYawAxis::Z;
+                }
+
+                CompensationNode->ReconstructNode();
+                NativeNodes.Add(Node.Id, CompensationNode);
                 return true;
             }
 

@@ -546,6 +546,7 @@ namespace SekiroAnimGraphIRNames
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LocalToComponentSpaceNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName ComponentToLocalSpaceNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName OrientationWarpingNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName SpineYawCompensationNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName FootPlacementNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LegIKNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName TwoBoneIKNode;

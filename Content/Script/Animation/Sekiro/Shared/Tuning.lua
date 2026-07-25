@@ -57,11 +57,10 @@
 ---@field JumpBlendDuration number Jump Start、InAir 与 Land 之间的过渡时长，单位为秒。
 ---@field JumpDirectionalSpeedThreshold number 离地时判定有向 Jump 的最小实际水平速度，单位 cm/s。
 ---@field JumpWarpingMaxAngle number Jump 八方向素材允许的最大量化残差，单位为度。
----@field LockOnWarpingMaxAngle number 锁定地面 Start/Cycle/Stop 允许的最大方向补偿角，单位为度。
----@field LockOnWarpingInterpSpeed number Start、Stop 和 Jump 等单节点方向补偿的默认原生插值速度。
+---@field LockOnWarpingInterpSpeed number Jump 等单节点 Orientation Warping 的默认原生插值速度。
 ---@field StopTurnMinResidualAngle number Stop 结束后需要播放换脚回正动作的最小残差角，单位为度。
 ---@field StopTurnAlignmentCurveReadyThreshold number StopTurn 曲线被视为已由当前 Turn Sequence 完整接管的权重阈值。
----@field LockOnOrientationWarping SekiroLockOnOrientationWarpingSettings 锁定 Cycle 使用的骨骼与轴配置。
+---@field LockOnOrientationWarping SekiroLockOnOrientationWarpingSettings Jump 等方向扭曲节点使用的骨骼与轴配置。
 ---@field FootIK SekiroFootIKSettings 最终 Locomotion Pose 使用的原生双脚落地与腿部求解配置。
 ---@field UpperBody SekiroUpperBodySettings 收拔刀等上半身动作使用的 Slot 与骨骼范围。
 ---@field WeaponIK SekiroWeaponIKSettings 收拔刀换挂窗口使用的右手 IK 骨骼与目标 Socket。
@@ -87,8 +86,6 @@ local Tuning = {
     JumpBlendDuration = 0.08,
     JumpDirectionalSpeedThreshold = 3.0,
     JumpWarpingMaxAngle = 22.5,
-    -- 限制分支级 Warping 的最大扭转，避免 ActorYaw 与锁定输入参考暂时偏离时产生过度骨骼变形。
-    LockOnWarpingMaxAngle = 70.0,
     LockOnWarpingInterpSpeed = 12.0,
     StopTurnMinResidualAngle = 15.0,
     StopTurnAlignmentCurveReadyThreshold = 0.9,

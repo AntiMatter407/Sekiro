@@ -8,6 +8,7 @@ public class SekiroAnimBlueprintExt : ModuleRules
 
         PublicDependencyModuleNames.AddRange(new string[]
         {
+            "AnimGraphRuntime",
             "Core",
             "CoreUObject",
             "Engine",

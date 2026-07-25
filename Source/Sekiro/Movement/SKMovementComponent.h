@@ -115,11 +115,17 @@ public:
     void ClearMoveFacingSnapshotForScript();                       // 清空转向前移动快照
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
-    void SetRootMotionMoveDirectionForScript(bool bEnabled, float TargetWorldYaw); // 设置动画根运动的水平目标方向
+    void SetLockOnLocomotionSnapshotForScript(bool bEnabled, int32 CardinalDirection, float SpineYawCompensation); // 发布锁定四方向素材与朝向快照
+
+    UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
+    float GetHorizontalSpeedForScript() const;                    // 获取所属角色当前水平速度
 
     bool HasDesiredMoveYawSnapshot() const;                       // 动画采集是否可读取移动目标 Yaw
     float GetDesiredMoveYawSnapshot() const;                      // 动画采集读取移动目标 Yaw
     float GetMoveDirectionAngleBeforeRotationSnapshot() const;    // 动画采集读取转身前相对角
+    bool HasLockOnLocomotionSnapshot() const;                     // 动画采集是否可读取锁定移动快照
+    int32 GetLockOnCardinalDirectionSnapshot() const;             // 动画采集读取锁定四方向枚举值
+    float GetLockOnSpineYawCompensationSnapshot() const;          // 动画采集读取上半身回正角
 
 protected:
     virtual void BeginPlay() override;
@@ -145,13 +151,13 @@ private:
 
     float DesiredMoveYawSnapshot = 0.f;                          // Lua 发布的输入目标世界 Yaw
     float MoveDirectionAngleBeforeRotationSnapshot = 0.f;        // Lua 发布的转身前角色局部方向角
-    float RootMotionMoveDirectionYaw = 0.f;                      // Lua 发布的动画根运动水平目标世界 Yaw
+    int32 LockOnCardinalDirectionSnapshot = 0;                   // Lua 发布的锁定四方向素材枚举值
+    float LockOnSpineYawCompensationSnapshot = 0.f;              // Lua 发布的上半身回正 Yaw
     uint32 bHasDesiredMoveYawSnapshot : 1;                        // 当前是否存在有效移动目标快照
-    uint32 bRootMotionMoveDirectionEnabled : 1;                   // 是否把动画根运动水平位移对齐到 Lua 目标方向
+    uint32 bHasLockOnLocomotionSnapshot : 1;                      // 当前是否存在有效锁定移动快照
 
     // ── 通用执行 ──────────────────────────────────────────────
 
     void RefreshCachedComponents();                              // 刷新角色相关组件缓存
     void ApplyActorYaw(float TargetYaw, float InterpSpeed, float DeltaTime); // 原生执行最短路径 Yaw 插值
-    FTransform RedirectRootMotionTranslation(const FTransform& WorldRootMotion, UCharacterMovementComponent* SourceMovementComponent, float DeltaSeconds) const; // 对齐世界根运动水平位移
 };

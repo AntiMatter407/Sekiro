@@ -3,6 +3,8 @@
 -- Lua 选择速度档位对应速度、角色朝向目标和插值参数；UE CharacterMovement 继续负责物理、碰撞、Root Motion 与网络预测。
 
 local LuaLog = require("Gameplay.Base.LuaLog")
+local Direction = require("Animation.Sekiro.Shared.Direction")
+local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
 ---@class SKMovementComponent: USKMovementComponent
 local SKMovementComponent = UnLua.Class()
@@ -32,6 +34,8 @@ function SKMovementComponent:Initialize(_initializer)
     self.TurnInPlaceExitAngle = 3.0
     self.MoveInputFacingThreshold = 0.1
     self.bTurningInPlace = false
+    self.LockedCycleDirection = Direction.Cardinal.Forward
+    self.LastLockedSpineYawCompensation = 0.0
     LuaLog.Debug(Debug, "SKMovementComponent", "Initialize", "movement lua host initialized")
 end
 
@@ -137,7 +141,7 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:RefreshCachedMovementComponents()
     if not self:HasOwnerCharacter() then
         self:ClearMoveFacingSnapshotForScript()
-        self:SetRootMotionMoveDirectionForScript(false, 0)
+        self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward, 0)
         return true
     end
 
@@ -148,11 +152,50 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:SetMovementRotationSettingsForScript(false, false)
 
     local has_desired_yaw, desired_move_yaw = self:PublishMoveFacingSnapshot()
-    -- 锁定 Walk/Run 的 Actor 继续面向目标，但 Root Motion 平移必须精确沿下半身输入方向。
-    local redirect_root_motion = self:IsLockedOn()
+    -- Actor 朝向承担“输入方向 - 四向动画轴”的剩余角，并平滑追向该结果。
+    -- 过渡期间原始 Root Motion 会随 Actor 逐渐转弯；脊柱按实际 ActorYaw 逐帧反向补偿，
+    -- 因此下半身有转向过程，而上半身仍持续看向锁定目标。
+    local locked_locomotion = self:IsLockedOn()
+        and self:HasLockTargetYaw()
         and has_desired_yaw
         and not self:IsMovementTierSprint()
-    self:SetRootMotionMoveDirectionForScript(redirect_root_motion, desired_move_yaw)
+    if locked_locomotion then
+        local target_yaw = self:GetLockTargetYawOrFallback(self:GetOwnerYaw())
+        local desired_relative_angle = self:NormalizeDeltaYaw(target_yaw, desired_move_yaw)
+        self.LockedCycleDirection = Direction.ResolveCardinalWithHysteresis(
+            desired_relative_angle,
+            self.LockedCycleDirection,
+            Tuning.LockedDirectionHysteresisAngle,
+            Tuning.LockedDirectionForwardBoundaryAngle,
+            Tuning.LockedDirectionBackBoundaryAngle)
+        local cardinal_axis = Direction.CardinalAngle[self.LockedCycleDirection] or 0
+        local residual = Direction.NormalizeAngle(desired_relative_angle - cardinal_axis)
+        local target_actor_yaw = normalize_angle(target_yaw + residual)
+        self:ApplyActorYawForScript(
+            target_actor_yaw,
+            self.LockOnActorInterpSpeed,
+            delta_seconds or 0)
+        local actual_actor_yaw = self:GetOwnerYaw()
+        local spine_yaw_compensation =
+            self:NormalizeDeltaYaw(actual_actor_yaw, target_yaw)
+        self:SetLockOnLocomotionSnapshotForScript(
+            true,
+            self.LockedCycleDirection,
+            spine_yaw_compensation)
+        self.LastLockedSpineYawCompensation = spine_yaw_compensation
+        return true
+    end
+    if self:IsLockedOn()
+        and not self:IsMovementTierSprint()
+        and self:GetHorizontalSpeedForScript() > 3.0
+    then
+        self:SetLockOnLocomotionSnapshotForScript(
+            true,
+            self.LockedCycleDirection,
+            self.LastLockedSpineYawCompensation)
+        return true
+    end
+    self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward, 0)
     local has_facing_target, target_yaw, interp_speed = self:ResolveActorFacing(
         has_desired_yaw,
         desired_move_yaw)

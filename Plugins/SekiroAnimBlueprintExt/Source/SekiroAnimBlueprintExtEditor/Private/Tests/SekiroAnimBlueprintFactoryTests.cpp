@@ -15,6 +15,7 @@
 #include "AnimGraphNode_LegIK.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
 #include "AnimGraph/AnimGraphNode_OrientationWarping.h"
+#include "AnimGraphNodes/AnimGraphNode_SekiroSpineYawCompensation.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
@@ -501,6 +502,77 @@ namespace SekiroAnimBlueprintFactoryTests
         ToLocalLink.Target.PinName = TEXT("ComponentPose");
         ToLocalLink.SourceLocation = SourceLocation;
 
+        return true;
+    }
+
+    /**
+     * 在现有组件空间控制链末端与 ComponentToLocalSpace 之间插入脊柱 Yaw 补偿节点。
+     * 函数仅修改调用方独占的 IR，不访问 UObject；输入骨骼名由测试 Skeleton 提供。
+     *
+     * @param Graph 已包含 Link.Move.ToComponentToLocal 的 StatePose Graph。
+     * @param BoneName 写入 SpineBones 配置的测试骨骼名，必须非 None。
+     * @param SourceLocation 复制到新增节点与连接的 Lua 源位置。
+     * @return 找到目标连接且骨骼名有效时返回 true，否则不修改 IR 并返回 false。
+     */
+    bool AddSpineYawCompensationChain(
+        FSekiroAnimIRGraph& Graph,
+        const FName BoneName,
+        const FSekiroAnimIRSourceLocation& SourceLocation)
+    {
+        FSekiroAnimIRLink* ToLocalLink = nullptr;
+        for (FSekiroAnimIRLink& Link : Graph.Links)
+        {
+            if (Link.Id == TEXT("Link.Move.ToComponentToLocal"))
+            {
+                ToLocalLink = &Link;
+                break;
+            }
+        }
+        if (ToLocalLink == nullptr || BoneName.IsNone()) return false;
+
+        const FSekiroAnimIRPinEndpoint OriginalSource = ToLocalLink->Source;
+        const FString CompensationId(TEXT("Node.Move.SpineYawCompensation"));
+        ToLocalLink->Source.NodeId = CompensationId;
+        ToLocalLink->Source.PinName = TEXT("Pose");
+
+        FSekiroAnimIRNode& Compensation = Graph.Nodes.AddDefaulted_GetRef();
+        Compensation.Id = CompensationId;
+        Compensation.NodeType = SekiroAnimGraphIRNames::SpineYawCompensationNode;
+        Compensation.DisplayName = TEXT("Spine Yaw Compensation");
+        Compensation.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& ComponentPose = Compensation.Pins.AddDefaulted_GetRef();
+        ComponentPose.Name = TEXT("ComponentPose");
+        ComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
+        ComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        FSekiroAnimIRPin& YawAngle = Compensation.Pins.AddDefaulted_GetRef();
+        YawAngle.Name = TEXT("YawAngle");
+        YawAngle.Direction = ESekiroAnimIRPinDirection::Input;
+        YawAngle.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& Alpha = Compensation.Pins.AddDefaulted_GetRef();
+        Alpha.Name = TEXT("Alpha");
+        Alpha.Direction = ESekiroAnimIRPinDirection::Input;
+        Alpha.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& Pose = Compensation.Pins.AddDefaulted_GetRef();
+        Pose.Name = TEXT("Pose");
+        Pose.Direction = ESekiroAnimIRPinDirection::Output;
+        Pose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
+        Pose.bAllowMultipleConnections = true;
+
+        FSekiroAnimIRProperty& SpineBones = Compensation.Properties.AddDefaulted_GetRef();
+        SpineBones.Name = TEXT("SpineBones");
+        SpineBones.Value.Type = ESekiroAnimIRValueType::String;
+        SpineBones.Value.StringValue = FString::Printf(TEXT(" %s "), *BoneName.ToString());
+        FSekiroAnimIRProperty& RotationAxis = Compensation.Properties.AddDefaulted_GetRef();
+        RotationAxis.Name = TEXT("RotationAxis");
+        RotationAxis.Value.Type = ESekiroAnimIRValueType::Name;
+        RotationAxis.Value.NameValue = TEXT("Y");
+
+        FSekiroAnimIRLink& ToCompensation = Graph.Links.AddDefaulted_GetRef();
+        ToCompensation.Id = TEXT("Link.Move.ToSpineYawCompensation");
+        ToCompensation.Source = OriginalSource;
+        ToCompensation.Target.NodeId = CompensationId;
+        ToCompensation.Target.PinName = TEXT("ComponentPose");
+        ToCompensation.SourceLocation = SourceLocation;
         return true;
     }
 
@@ -1254,6 +1326,13 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
                 *OrientationGraph,
                 OrientationTestBone,
                 BlueprintIR.SourceLocation));
+    TestTrue(
+        TEXT("Test IR adds SpineYawCompensation at the component-space chain tail"),
+        OrientationGraph != nullptr
+            && AddSpineYawCompensationChain(
+                *OrientationGraph,
+                OrientationTestBone,
+                BlueprintIR.SourceLocation));
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
     UAnimBlueprint* FirstBlueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
         BlueprintIR,
@@ -1420,6 +1499,8 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         FindFirstNode<UAnimGraphNode_LocalToComponentSpace>(MoveGraph);
     UAnimGraphNode_OrientationWarping* OrientationWarping =
         FindFirstNode<UAnimGraphNode_OrientationWarping>(MoveGraph);
+    UAnimGraphNode_SekiroSpineYawCompensation* SpineYawCompensation =
+        FindFirstNode<UAnimGraphNode_SekiroSpineYawCompensation>(MoveGraph);
     UAnimGraphNode_FootPlacement* FootPlacement =
         FindFirstNode<UAnimGraphNode_FootPlacement>(MoveGraph);
     UAnimGraphNode_LegIK* LegIK = FindFirstNode<UAnimGraphNode_LegIK>(MoveGraph);
@@ -1449,6 +1530,7 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         1);
     TestNotNull(TEXT("LocalToComponentSpace node is explicitly created"), LocalToComponent);
     TestNotNull(TEXT("OrientationWarping node is created"), OrientationWarping);
+    TestNotNull(TEXT("SpineYawCompensation node is created"), SpineYawCompensation);
     TestNotNull(TEXT("FootPlacement node is created"), FootPlacement);
     TestNotNull(TEXT("LegIK node is created"), LegIK);
     TestNotNull(TEXT("TwoBoneIK node is created"), TwoBoneIK);
@@ -1546,6 +1628,26 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         TEXT("OrientationWarping receives interpolation speed"),
         OrientationWarping != nullptr ? OrientationWarping->Node.RotationInterpSpeed : 0.0f,
         8.0f);
+    TestEqual(
+        TEXT("SpineYawCompensation receives SpineBones"),
+        SpineYawCompensation != nullptr && !SpineYawCompensation->Node.SpineBones.IsEmpty()
+            ? SpineYawCompensation->Node.SpineBones[0].BoneName
+            : NAME_None,
+        OrientationTestBone);
+    TestEqual(
+        TEXT("SpineYawCompensation receives rotation axis"),
+        SpineYawCompensation != nullptr
+            ? SpineYawCompensation->Node.RotationAxis
+            : ESekiroSpineYawAxis::Z,
+        ESekiroSpineYawAxis::Y);
+    UEdGraphPin* SpineYawAnglePin = SpineYawCompensation != nullptr
+        ? SpineYawCompensation->FindPin(TEXT("YawAngle"), EGPD_Input)
+        : nullptr;
+    UEdGraphPin* SpineYawAlphaPin = SpineYawCompensation != nullptr
+        ? SpineYawCompensation->FindPin(TEXT("Alpha"), EGPD_Input)
+        : nullptr;
+    TestNotNull(TEXT("SpineYawCompensation exposes YawAngle Pin"), SpineYawAnglePin);
+    TestNotNull(TEXT("SpineYawCompensation exposes Alpha Pin"), SpineYawAlphaPin);
     TestEqual(
         TEXT("FootPlacement defaults PlantSpeedMode to Graph"),
         FootPlacement != nullptr ? FootPlacement->Node.PlantSpeedMode : EWarpingEvaluationMode::Manual,

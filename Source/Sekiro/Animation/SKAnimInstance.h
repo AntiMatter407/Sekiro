@@ -168,6 +168,15 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Rotation")
     uint32 bHasDesiredMoveYaw : 1;                // 当前是否存在可用的绝对移动目标 Yaw
 
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|LockOn")
+    int32 LockOnCardinalDirection = 0;             // Movement Lua 发布的锁定四方向素材枚举值
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|LockOn")
+    float LockOnSpineYawCompensation = 0.f;        // 仅脊柱回正到锁定目标的局部 Yaw
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|LockOn")
+    uint32 bHasLockOnLocomotionSnapshot : 1;       // 是否使用 Movement Lua 发布的锁定素材快照
+
     // ── Dodge（Blueprint 读取） ─────────────────────────────────
 
     UPROPERTY(BlueprintReadOnly, Category = "Dodge")

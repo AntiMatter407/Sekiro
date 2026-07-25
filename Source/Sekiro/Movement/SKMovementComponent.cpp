@@ -27,7 +27,7 @@ namespace
 USKMovementComponent::USKMovementComponent()
 {
     bHasDesiredMoveYawSnapshot = false;
-    bRootMotionMoveDirectionEnabled = false;
+    bHasLockOnLocomotionSnapshot = false;
     MaxWalkSpeed = RunSpeed;
 }
 
@@ -234,23 +234,53 @@ void USKMovementComponent::ClearMoveFacingSnapshotForScript()
 }
 
 /**
- * 设置动画 Root Motion 转为世界空间后的水平目标方向。
- * Lua 负责决定何时启用以及目标世界 Yaw；本函数只保存当前帧策略，不改变位移长度、垂直分量或旋转。
- * 只能在游戏线程、CharacterMovement 求值前调用；后续由原生 Root Motion 转换委托读取。
+ * 保存锁定普通移动的四方向素材和上半身回正快照。
+ * Lua 已按锁定目标相对输入选择主轴，并把 ActorYaw 瞬时设为 TargetYaw + Residual；
+ * 本函数不重定向 Root Motion，只为同帧 AnimInstance 提供与 Movement 完全一致的素材选择和脊柱补偿数据。
+ * 只能在游戏线程、CharacterMovement 求值前调用。
  *
- * @param bEnabled 是否启用水平位移方向校正；false 时原样保留动画根运动。
- * @param TargetWorldYaw 期望水平位移指向的世界 Yaw，单位为度。
+ * @param bEnabled 是否存在有效锁定普通移动快照。
+ * @param CardinalDirection Direction.lua 使用的四方向枚举值。
+ * @param SpineYawCompensation 脊柱应回正到锁定目标的局部 Yaw，单位度。
  */
-void USKMovementComponent::SetRootMotionMoveDirectionForScript(bool bEnabled, float TargetWorldYaw)
+void USKMovementComponent::SetLockOnLocomotionSnapshotForScript(
+    bool bEnabled,
+    int32 CardinalDirection,
+    float SpineYawCompensation)
 {
-    bRootMotionMoveDirectionEnabled = bEnabled;
-    RootMotionMoveDirectionYaw = FMath::UnwindDegrees(TargetWorldYaw);
+    bHasLockOnLocomotionSnapshot = bEnabled;
+    LockOnCardinalDirectionSnapshot = CardinalDirection;
+    LockOnSpineYawCompensationSnapshot = FMath::UnwindDegrees(SpineYawCompensation);
+}
+
+/** 返回所属角色当前世界速度的水平长度；只能在游戏线程读取，角色无效时返回 0。 */
+float USKMovementComponent::GetHorizontalSpeedForScript() const
+{
+    return OwnerCharacter ? OwnerCharacter->GetVelocity().Size2D() : 0.f;
 }
 
 /** 查询 Lua 本帧是否发布了有效移动目标 Yaw；供动画数据采集只读调用。 */
 bool USKMovementComponent::HasDesiredMoveYawSnapshot() const
 {
     return bHasDesiredMoveYawSnapshot;
+}
+
+/** 查询 Lua 本帧是否发布了有效锁定四方向移动快照；只读，供 AnimInstance 在游戏线程采集。 */
+bool USKMovementComponent::HasLockOnLocomotionSnapshot() const
+{
+    return bHasLockOnLocomotionSnapshot;
+}
+
+/** 返回 Lua 发布的锁定四方向素材枚举值；调用方应先检查快照有效标记。 */
+int32 USKMovementComponent::GetLockOnCardinalDirectionSnapshot() const
+{
+    return LockOnCardinalDirectionSnapshot;
+}
+
+/** 返回 Lua 发布的上半身回正局部 Yaw，单位度；调用方应先检查快照有效标记。 */
+float USKMovementComponent::GetLockOnSpineYawCompensationSnapshot() const
+{
+    return LockOnSpineYawCompensationSnapshot;
 }
 
 /** 返回 Lua 最近发布的移动目标世界 Yaw；调用方应先检查快照有效标记。 */
@@ -278,7 +308,6 @@ void USKMovementComponent::BeginPlay()
         || !GetClass()->HasAnyClassFlags(CLASS_Native);
 
     Super::BeginPlay();
-    ProcessRootMotionPostConvertToWorld.BindUObject(this, &USKMovementComponent::RedirectRootMotionTranslation);
     RefreshCachedComponents();
     if (InputManager) AddTickPrerequisiteComponent(InputManager);
 
@@ -346,35 +375,4 @@ void USKMovementComponent::ApplyActorYaw(float TargetYaw, float InterpSpeed, flo
     const FRotator CurrentRotation = OwnerCharacter->GetActorRotation();
     const float NewYaw = InterpSKMovementYawShortest(CurrentRotation.Yaw, TargetYaw, DeltaTime, InterpSpeed);
     OwnerCharacter->SetActorRotation(FRotator(0.f, NewYaw, 0.f));
-}
-
-/**
- * 把已转换到世界空间的动画 Root Motion 水平位移旋转到 Lua 发布的目标方向。
- * 本函数由 CharacterMovement 的 PostConvert 委托在游戏线程调用；只重定向 XY，保留原始水平长度、Z、旋转和缩放。
- * 非本组件调用、策略关闭或水平位移近似为零时原样返回，避免影响空中、原地动作和其他移动组件。
- *
- * @param WorldRootMotion UE 已完成组件空间到世界空间转换的根运动变换。
- * @param SourceMovementComponent 发起转换的 CharacterMovement；必须等于当前组件才会处理，可为空。
- * @param DeltaSeconds 当前根运动求值步长，单位为秒；方向重定向不依赖该值，仅保留委托契约。
- * @return 校正后的世界根运动变换；不满足处理条件时返回输入值。
- */
-FTransform USKMovementComponent::RedirectRootMotionTranslation(
-    const FTransform& WorldRootMotion,
-    UCharacterMovementComponent* SourceMovementComponent,
-    float DeltaSeconds) const
-{
-    static_cast<void>(DeltaSeconds);
-    if (!bRootMotionMoveDirectionEnabled || SourceMovementComponent != this) return WorldRootMotion;
-
-    const FVector OriginalTranslation = WorldRootMotion.GetTranslation();
-    const float HorizontalDistance = FVector2D(OriginalTranslation.X, OriginalTranslation.Y).Size();
-    if (HorizontalDistance <= UE_SMALL_NUMBER) return WorldRootMotion;
-
-    const FVector TargetDirection = FRotator(0.f, RootMotionMoveDirectionYaw, 0.f).Vector();
-    FTransform RedirectedRootMotion = WorldRootMotion;
-    RedirectedRootMotion.SetTranslation(FVector(
-        TargetDirection.X * HorizontalDistance,
-        TargetDirection.Y * HorizontalDistance,
-        OriginalTranslation.Z));
-    return RedirectedRootMotion;
 }

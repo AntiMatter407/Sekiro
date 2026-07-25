@@ -1564,6 +1564,54 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
         }
     }
 
+    const FSekiroAnimIRNodeContract* SpineYawCompensation =
+        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::SpineYawCompensationNode);
+    TestNotNull(TEXT("SpineYawCompensation contract is registered"), SpineYawCompensation);
+    if (SpineYawCompensation)
+    {
+        TestEqual(
+            TEXT("SpineYawCompensation keeps the plugin editor class path"),
+            SpineYawCompensation->EditorNodeClassPath.ToString(),
+            FString(TEXT(
+                "/Script/SekiroAnimBlueprintExtEditor.AnimGraphNode_SekiroSpineYawCompensation")));
+        TestEqual(TEXT("SpineYawCompensation has four Pins"), SpineYawCompensation->Pins.Num(), 4);
+        TestEqual(
+            TEXT("SpineYawCompensation has bone and axis properties"),
+            SpineYawCompensation->Properties.Num(),
+            2);
+        if (SpineYawCompensation->Pins.Num() == 4)
+        {
+            TestEqual(
+                TEXT("SpineYawCompensation consumes component Pose"),
+                SpineYawCompensation->Pins[0].DataType,
+                SekiroAnimGraphIRNames::ComponentPoseData);
+            TestEqual(
+                TEXT("SpineYawCompensation exposes YawAngle"),
+                SpineYawCompensation->Pins[1].Name,
+                FString(TEXT("YawAngle")));
+            TestEqual(
+                TEXT("SpineYawCompensation exposes Float YawAngle"),
+                SpineYawCompensation->Pins[1].DataType,
+                SekiroAnimGraphIRNames::FloatData);
+            TestEqual(
+                TEXT("SpineYawCompensation exposes Alpha"),
+                SpineYawCompensation->Pins[2].Name,
+                FString(TEXT("Alpha")));
+            TestEqual(
+                TEXT("SpineYawCompensation exposes Float Alpha"),
+                SpineYawCompensation->Pins[2].DataType,
+                SekiroAnimGraphIRNames::FloatData);
+            TestEqual(
+                TEXT("SpineYawCompensation produces component Pose"),
+                SpineYawCompensation->Pins[3].DataType,
+                SekiroAnimGraphIRNames::ComponentPoseData);
+        }
+        TestTrue(
+            TEXT("SpineYawCompensation requires SpineBones"),
+            !SpineYawCompensation->Properties.IsEmpty()
+                && SpineYawCompensation->Properties[0].bRequired);
+    }
+
     const FSekiroAnimIRNodeContract* FootPlacement =
         FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::FootPlacementNode);
     TestNotNull(TEXT("FootPlacement contract is registered"), FootPlacement);
