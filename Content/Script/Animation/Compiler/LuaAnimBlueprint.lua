@@ -18,7 +18,6 @@ local IRValue = require("Animation.Compiler.IRValue")
 ---@field TargetSkeleton string 普通 AnimBlueprint 必填的目标 Skeleton 资产软路径。
 ---@field Layers LuaAnimLayer[] 本次编译声明的 Graph 所有权作用域；当前 Factory 仅支持一个 Main Layer。
 ---@field LayerNames table<string, LuaAnimLayer> 按语义名称索引的 Graph 所有权作用域。
----@field RuntimeFunctions table<string, function> 兼容旧模块时导出的运行时 Transition 函数；纯原生 Rule 不登记。
 ---@field SourceLocation SekiroAnimIRSourceLocation 动画蓝图源码位置。
 ---@field AnimGraph fun(self: LuaAnimBlueprint, graph: LuaAnimGraph):nil 子类必须 override 的主动画图函数。
 local LuaAnimBlueprint = CompilerClass:Extend("LuaAnimBlueprint", {
@@ -62,7 +61,6 @@ end
 function LuaAnimBlueprint:Initialize(_config)
     self.Layers = {}
     self.LayerNames = {}
-    self.RuntimeFunctions = {}
     self.Variables = {}
     self.VariableNames = {}
     self.SourceLocation = IRSchema.CaptureSourceLocation(self.SourceModule, 3)
@@ -124,20 +122,8 @@ function LuaAnimBlueprint:AnimationLayer(name, build_function)
     return layer
 end
 
----登记兼容旧状态机文件提供的运行时函数；纯原生 Rule 不调用本入口。
----@param function_name string IR 中引用的完整 CanEnter_<状态机>_<过渡键> 函数名。
----@param runtime_function function 运行时以真实 UAnimInstance 代理作为显式 Inst 参数调用的规则函数。
----@return nil result 该函数只登记本次编译需要导出的函数。
-function LuaAnimBlueprint:RegisterRuntimeFunction(function_name, runtime_function)
-    local existing = self.RuntimeFunctions[function_name]
-    assert(existing == nil or existing == runtime_function, string.format(
-        "Runtime function '%s' is registered by more than one StateMachine",
-        function_name))
-    self.RuntimeFunctions[function_name] = runtime_function
-end
-
----根据内联约定或独立状态机类，构建 StateMachine 拓扑、每个 State Pose Graph 和可选旧式运行时规则映射。
----强类型 Rule 不登记运行时函数；旧式独立文件使用 CanEnter_<Key>，内联写法增加节点名前缀。
+---根据内联约定或独立状态机类，构建 StateMachine 拓扑和每个 State Pose Graph。
+---Transition 必须声明强类型原生 Rule；运行时不再从独立状态机导出 CanEnter_* 函数。
 ---@param machine LuaStateMachineNode 已创建且拥有内部 StateMachine Graph 的节点。
 ---@param definition LuaAnimStateMachine|nil 可复用状态机描述类；为空时使用当前 AnimBlueprint 类。
 ---@return nil result 该函数完成状态机的全部编译期展开。
@@ -165,21 +151,6 @@ function LuaAnimBlueprint:ConfigureStateMachine(machine, definition)
             state.Name,
             state_graph_name))
         state_graph_function(state.PoseGraph)
-    end
-
-    for _, transition in ipairs(machine.OwnedGraph.Transitions) do
-        if transition.RuleFunctionName ~= "" then
-            local local_rule_name = is_external
-                and "CanEnter_" .. transition.Key
-                or transition.RuleFunctionName
-            local runtime_function = owner[local_rule_name]
-            assert(type(runtime_function) == "function", string.format(
-                "Transition '%s.%s' requires function '%s'",
-                machine.Name,
-                transition.Key,
-                local_rule_name))
-            self:RegisterRuntimeFunction(transition.RuleFunctionName, runtime_function)
-        end
     end
 end
 
@@ -218,35 +189,20 @@ function LuaAnimBlueprint:CompileIR()
     }
 end
 
----导出供 C++ require 的模块表；CompileIR 闭包每次都从干净实例重新构建。
+---导出供 C++ require 的模块表；CompileIR 闭包每次都从干净实例重新构建并返回 IR。
 ---@return LuaAnimBlueprintExport exported_module 包含无参 CompileIR 函数的模块表。
 function LuaAnimBlueprint:Export()
     local class = self
     ---@type LuaAnimBlueprintExport
     local exported_module = setmetatable({}, { __index = class })
 
-    local exported_runtime_function_names = {}
-
-    ---创建独立编译实例，并把状态机文件中的规则函数同步到当前导出模块。
+    ---创建独立编译实例，避免热重载或重复编译残留上一次的 Graph 与变量声明。
     ---@return SekiroAnimBlueprintIR blueprint_ir 与 FSekiroAnimBlueprintIR 对应的纯 Lua 表。
     function exported_module.CompileIR()
-        for function_name in pairs(exported_runtime_function_names) do
-            rawset(exported_module, function_name, nil)
-        end
-        exported_runtime_function_names = {}
-
         ---@type LuaAnimBlueprint
         local instance = class:New()
-        local blueprint_ir = instance:CompileIR()
-        for function_name, runtime_function in pairs(instance.RuntimeFunctions) do
-            rawset(exported_module, function_name, runtime_function)
-            exported_runtime_function_names[function_name] = true
-        end
-        return blueprint_ir
+        return instance:CompileIR()
     end
-
-    -- require 主模块只发布类方法和 CompileIR 闭包，不展开动画图。
-    -- 原生 Rule 运行时因此不会承担编译成本；兼容 CanEnter_* 仅由旧式 Transition 桥接按需调用 CompileIR。
 
     return exported_module
 end

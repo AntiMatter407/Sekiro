@@ -1,5 +1,6 @@
 /.claude/settings.local.json
 /Binaries/
+/DerivedDataCache/
 /Intermediate/
 /Saved/
 /TempBuild/
@@ -20,8 +21,6 @@
 
 # UE5 auto-generated
 /Tools/
-/Content/__ExternalActors__/
-/Content/__ExternalObjects__/
 
 # UE template content (not project assets)
 /Content/StarterContent/

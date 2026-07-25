@@ -19,9 +19,7 @@ local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 ---@field bAlwaysResetOnEntry boolean|nil 重新进入状态时是否重置 Pose Graph。
 
 ---@class LuaAnimTransitionSettings
----@field Rule LuaTransitionGateExpression|nil 完整的强类型原生规则；设置后不生成或调用 Lua CanEnter 函数。
----@field Gate LuaTransitionGateExpression|nil 与 Lua CanEnter 返回值额外组合的旧式原生 Gate。
----@field RuleFunctionName string|nil 自定义 Lua 规则函数名；仅旧式 Runtime Lua 规则使用。
+---@field Rule LuaTransitionGateExpression 完整的强类型原生规则；Factory 会将其生成为原生 Transition Rule Graph。
 ---@field BlendDuration number|nil 过渡混合时长，单位为秒。
 ---@field PriorityOrder number|nil 同一源状态下的显式过渡优先级整数。
 ---@field BlendMode string|nil UE 过渡混合模式注册名。
@@ -141,7 +139,7 @@ end
 ---@param key string 状态机内唯一的 Transition Key，同时参与稳定 ID 与默认规则函数名生成。
 ---@param source_state_name string 起始状态语义名。
 ---@param target_state_name string 目标状态语义名。
----@param settings LuaAnimTransitionSettings|nil BlendDuration、PriorityOrder、BlendMode 和可选 RuleFunctionName。
+---@param settings LuaAnimTransitionSettings Rule、BlendDuration、PriorityOrder 和 BlendMode。
 ---@return LuaAnimTransition transition 新建且可直接配置混合属性的 Transition 对象。
 function LuaAnimStateMachineGraph:Transition(key, source_state_name, target_state_name, settings)
     local transition_key = IRSchema.RequireLuaIdentifier(key, "Transition Key")
@@ -151,28 +149,20 @@ function LuaAnimStateMachineGraph:Transition(key, source_state_name, target_stat
         transition_key))
     local source_name = IRSchema.RequireSemanticName(source_state_name, "Transition Source State")
     local target_name = IRSchema.RequireSemanticName(target_state_name, "Transition Target State")
-    ---@type LuaAnimTransitionSettings
-    local transition_settings = settings or {}
-    assert(transition_settings.Rule == nil or transition_settings.Gate == nil,
-        "Transition cannot declare both Rule and legacy Gate")
-    local rule_function_name = ""
-    if transition_settings.Rule == nil then
-        rule_function_name = string.format("CanEnter_%s_%s", self.OwnerNode.Name, transition_key)
-    end
-    if transition_settings.RuleFunctionName ~= nil then
-        assert(transition_settings.Rule == nil,
-            "Transition RuleFunctionName cannot be combined with a complete native Rule")
-        rule_function_name = IRSchema.RequireLuaIdentifier(
-            transition_settings.RuleFunctionName,
-            "Transition Rule Function")
-    end
+    local transition_settings = assert(settings, string.format(
+        "Transition '%s.%s' requires settings with a native Rule",
+        self.OwnerNode.Name,
+        transition_key))
+    assert(transition_settings.Rule ~= nil, string.format(
+        "Transition '%s.%s' requires a native Rule",
+        self.OwnerNode.Name,
+        transition_key))
     ---@type LuaAnimTransition
     local transition = LuaAnimTransition:New({
         Id = IRSchema.MakeStableId(self.Id, "Transition", transition_key),
         Key = transition_key,
         SourceStateId = IRSchema.MakeStableId(self.Id, "State", source_name),
         TargetStateId = IRSchema.MakeStableId(self.Id, "State", target_name),
-        RuleFunctionName = rule_function_name,
         Settings = transition_settings,
         DeclarationOrder = #self.Transitions,
         SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 4),

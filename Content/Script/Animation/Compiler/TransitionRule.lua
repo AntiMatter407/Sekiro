@@ -26,12 +26,6 @@ local function expression(node_type, name, threshold, children, expected_bool)
     }
 end
 
----读取 EventGraph 在游戏线程发布的 Lua Transition bool。
----@return LuaTransitionGateExpression gate Lua bool 叶节点。
-function Rule.LuaBool()
-    return expression("LuaBool")
-end
-
 ---比较当前 AnimInstance 上的原生 Bool 属性。
 ---该叶节点会被 C++ Factory 物化为 Blueprint Property Getter 与期望值比较，不进入 Lua Runtime。
 ---@param property_name string AnimInstance 或其生成类上公开给蓝图的 Bool 属性名。

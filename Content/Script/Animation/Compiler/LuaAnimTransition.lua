@@ -8,8 +8,7 @@ local CompilerClass = require("Animation.Compiler.CompilerClass")
 ---@field Key string 状态机内唯一语义键。
 ---@field SourceStateId string 起始状态稳定 ID。
 ---@field TargetStateId string 目标状态稳定 ID。
----@field RuleFunctionName string|nil 导出给运行时桥接的完整 Lua 函数名；纯原生 Rule 为空。
----@field Settings LuaAnimTransitionSettings|nil 初始过渡设置。
+---@field Settings LuaAnimTransitionSettings 初始过渡设置，必须包含原生 Rule。
 ---@field DeclarationOrder number 源码声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Lua 源码位置。
 
@@ -18,17 +17,17 @@ local CompilerClass = require("Animation.Compiler.CompilerClass")
 ---@field Key string 状态机内唯一语义键。
 ---@field SourceStateId string 起始状态稳定 ID。
 ---@field TargetStateId string 目标状态稳定 ID。
----@field RuleFunctionName string 导出给运行时桥接的完整 Lua 函数名；空字符串表示只使用原生 Rule AST。
+---@field RuleFunctionName string IR 兼容字段；Lua DSL 只生成原生 Rule，因此固定为空字符串。
 ---@field BlendDuration number 原生 Transition 混合时长，单位秒。
 ---@field PriorityOrder number 同源 Transition 的优先级整数。
 ---@field BlendMode string 原生 AlphaBlend 模式注册名。
----@field Gate LuaTransitionGateExpression|nil 完整原生 Rule AST，或与旧式 Lua Rule 组合的附加 Gate。
+---@field Gate LuaTransitionGateExpression 完整原生 Rule AST。
 ---@field DeclarationOrder number 源码声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Lua 源码位置。
 local LuaAnimTransition = CompilerClass:Extend("LuaAnimTransition")
 
 ---初始化可直接配置的 Transition 对象，并提供与 UE 默认设置一致的稳定默认值。
----@param config LuaAnimTransitionConfig Transition 身份、端点、规则名和可选初始设置。
+---@param config LuaAnimTransitionConfig Transition 身份、端点和初始设置。
 ---@return nil result 该函数只保存编译期 Transition 数据。
 function LuaAnimTransition:Initialize(config)
     local settings = config.Settings or {}
@@ -36,12 +35,11 @@ function LuaAnimTransition:Initialize(config)
     self.Key = assert(config.Key, "LuaAnimTransition requires Key")
     self.SourceStateId = assert(config.SourceStateId, "LuaAnimTransition requires SourceStateId")
     self.TargetStateId = assert(config.TargetStateId, "LuaAnimTransition requires TargetStateId")
-    self.RuleFunctionName = config.RuleFunctionName or ""
+    self.RuleFunctionName = ""
     self.BlendDuration = settings.BlendDuration or 0.2
     self.PriorityOrder = settings.PriorityOrder or config.DeclarationOrder
     self.BlendMode = settings.BlendMode or "Linear"
-    assert(settings.Rule == nil or settings.Gate == nil, "Transition cannot declare both Rule and legacy Gate")
-    self.Gate = settings.Rule or settings.Gate
+    self.Gate = assert(settings.Rule, "LuaAnimTransition requires a native Rule")
     self.DeclarationOrder = config.DeclarationOrder or 0
     self.SourceLocation = assert(config.SourceLocation, "LuaAnimTransition requires SourceLocation")
 end

@@ -2,7 +2,7 @@
 
 本文说明如何使用 `SekiroAnimBlueprintExt` 的 Lua AnimGraph Function API 编写动画蓝图。
 
-Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；推荐使用强类型 `Rule` AST 生成原生 Transition Rule Graph，只有兼容旧模块时才运行 `CanEnter_*` Lua 函数。
+Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；Transition 必须使用强类型 `Rule` AST 生成原生 Transition Rule Graph。
 
 ## 一、核心写法
 
@@ -138,14 +138,7 @@ StateMachine
 StateGraph_<StateName>
 ```
 
-Transition 推荐直接在拓扑旁声明完整的强类型 `Rule`。旧模块仍可省略 `Rule` 并提供 `CanEnter_<TransitionKey>`；主动画蓝图实例化时使用的节点名会自动加入最终运行时规则名：
-
-```text
-状态机文件：CanEnter_Idle_Start
-生成的规则：CanEnter_GroundLocomotion_Idle_Start
-```
-
-这个重命名和导出由基类完成，状态机业务文件不需要写转发函数。
+Transition 必须直接在拓扑旁声明完整的强类型 `Rule`。规则会进入 IR，并由 C++ Factory 生成为原生 Transition Rule Graph；状态机业务文件不声明或导出运行时 `CanEnter_*` 函数。
 
 ## 五、State Graph
 
@@ -286,7 +279,7 @@ Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
 })
 ```
 
-`Gate = ...` 与 `CanEnter_*` 的组合仅用于兼容旧模块：Lua 返回值会与 Gate 再做 AND。新代码不要同时声明 `Rule` 和 `Gate/RuleFunctionName`。原生状态机按优先级检查当前状态的出边，找到第一条原生 Rule 为 true 的过渡后开始混合。
+原生状态机按优先级检查当前状态的出边，找到第一条原生 Rule 为 true 的过渡后开始混合。
 
 ## 九、Cached Pose
 
@@ -398,7 +391,7 @@ UAnimInstance 更新
     -> 输出最终 Pose
 ```
 
-Lua 来源动画蓝图会按 Transition 类型决定 `bUseMultiThreadedAnimationUpdate`：全部 Transition 使用强类型原生 Rule AST 时启用并行动画更新；只要存在兼容 `CanEnter_*` Lua Rule 就自动回退单线程。`BlueprintUpdateAnimation` 仍先在游戏线程采集并写入变量，Sequence Player、混合、状态机、Root Motion、Curve 和 Notify 随后由 UE 原生 AnimNode 求值。启用 `RootMotionFromEverything` 时，引擎仍可能为需要即时根运动的帧选择同步更新。
+Lua 来源动画蓝图的 Transition 全部使用强类型原生 Rule AST，可保持并行动画更新。`BlueprintUpdateAnimation` 仍先在游戏线程采集并写入变量，Sequence Player、混合、状态机、Root Motion、Curve 和 Notify 随后由 UE 原生 AnimNode 求值。启用 `RootMotionFromEverything` 时，引擎仍可能为需要即时根运动的帧选择同步更新。
 
 角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前用 Lua 决定速度和 ActorYaw，并发布转向前输入角；`ABP_Sekiro.BlueprintUpdateAnimation` 用 `MoveInputX/MoveInputY` 即时选择锁定 Cycle 基础素材，用 Movement 快照的 `MoveDirectionAngle` 对齐实际轨迹。自由移动的 Back 输入必须映射到 Left/Right Turn 后让角色转向移动方向，Back Sequence 仅表示角色身体朝前时向后退，适用于锁定移动。锁定地面移动使用前后扇区扩宽的四向动画：Forward 覆盖 `0°..60°`，Back 覆盖 `120°..180°`，中间使用 Left/Right；Forward/Back 离开时保留 `10°` 防抖容差，侧向进入前后扇区时在基础边界立即切换。Cycle 的四条 Sequence 必须在方向选择器之前分别应用各自主轴残差，再混合已经对齐的 Pose；禁止在选择器后用当前方向残差旋转新旧混合结果。Jump 仍使用最近八向动画。方向对齐通过 `Animation.Sekiro.Shared.DirectionalPose` 的原生 Orientation Warping 完成，并由原生节点反向补偿脊柱以保持上半身朝向目标。
 
@@ -406,11 +399,11 @@ Lua 来源动画蓝图会按 Transition 类型决定 `bUseMultiThreadedAnimation
 
 ### 调试 Transition
 
-强类型 `Rule` 生成普通原生 Transition Graph，使用 UE AnimBP Debugger 查看属性值、State Weight、Transition Blend Alpha 和 Pose 结果。兼容旧模块的 `CanEnter_*` 仍可在 Rider 中设置 Lua 断点；只有原生状态机检查对应出边时才会命中。
+强类型 `Rule` 生成普通原生 Transition Graph，使用 UE AnimBP Debugger 查看属性值、State Weight、Transition Blend Alpha 和 Pose 结果。
 
 需要连续观察运行时真实层级、动画来源、混合权重与 Transition 实参时，使用 `Sekiro.LuaAnim.Debug` 或 `Sekiro.LuaAnim.Snapshot [IntervalSeconds]`，再从编辑器 `Window > Lua Anim Snapshot Viewer` 打开时间轴回放。完整命令和操作说明见 [Lua 动画蓝图层级调试与快照回放](lua-anim-snapshot-debugger.md)。
 
-`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Generate From Lua` 或 Lua 源码编译流程中命中，不会在 PIE 每帧执行。Lua 调试器继续负责 `BlueprintUpdateAnimation` 和旧式规则；强类型 Transition Rule 不进入 Lua Runtime。
+`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Generate From Lua` 或 Lua 源码编译流程中命中，不会在 PIE 每帧执行。Lua 调试器只负责 `BlueprintUpdateAnimation` 等运行时 Lua；强类型 Transition Rule 不进入 Lua Runtime。
 
 动画蓝图编辑器工具栏的 `Editor Debug: Off/On` 是按用户持久化的 Lua 调试端口开关：
 
@@ -438,13 +431,13 @@ State 'GroundLocomotion.Cycle' requires function 'StateGraph_Cycle'
 
 每个 State 必须存在对应函数，函数名大小写必须与 State 名完全一致。
 
-### 旧式 Transition 函数缺失
+### Transition 缺少原生 Rule
 
 ```text
-Transition 'GroundLocomotion.Idle_Start' requires function 'CanEnter_Idle_Start'
+Transition 'GroundLocomotion.Idle_Start' requires a native Rule
 ```
 
-该错误只会出现在没有声明完整 `Rule` 的兼容旧模块。独立状态机文件不要添加状态机节点名前缀；基类会在导出时自动补上。新代码应直接在 `Machine:Transition` 设置 `Rule`。
+每条 Transition 都必须在 `Machine:Transition` 的设置表中提供 `Rule`。
 
 ### Pin 方向错误
 
