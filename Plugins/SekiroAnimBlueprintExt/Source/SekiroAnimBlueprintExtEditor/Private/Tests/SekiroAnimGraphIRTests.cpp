@@ -1549,67 +1549,39 @@ bool FSekiroAnimGraphIRNodeRegistryTest::RunTest(const FString& Parameters)
             TEXT("OrientationWarping keeps the AnimationWarping editor class path"),
             OrientationWarping->EditorNodeClassPath.ToString(),
             FString(TEXT("/Script/AnimationWarpingEditor.AnimGraphNode_OrientationWarping")));
-        TestEqual(TEXT("OrientationWarping has four Pins"), OrientationWarping->Pins.Num(), 4);
-        TestEqual(TEXT("OrientationWarping has six properties"), OrientationWarping->Properties.Num(), 6);
-        if (OrientationWarping->Pins.Num() == 4)
+        TestEqual(TEXT("OrientationWarping has five Pins"), OrientationWarping->Pins.Num(), 5);
+        TestEqual(TEXT("OrientationWarping has twelve properties"), OrientationWarping->Properties.Num(), 12);
+        if (OrientationWarping->Pins.Num() == 5)
         {
             TestEqual(
                 TEXT("OrientationWarping input uses component Pose type"),
                 OrientationWarping->Pins[0].DataType,
                 SekiroAnimGraphIRNames::ComponentPoseData);
             TestEqual(
+                TEXT("OrientationWarping exposes Graph locomotion angle"),
+                OrientationWarping->Pins[2].Name,
+                FString(TEXT("LocomotionAngle")));
+            TestEqual(
+                TEXT("OrientationWarping locomotion angle uses Float type"),
+                OrientationWarping->Pins[2].DataType,
+                SekiroAnimGraphIRNames::FloatData);
+            TestEqual(
                 TEXT("OrientationWarping output uses component Pose type"),
-                OrientationWarping->Pins[3].DataType,
+                OrientationWarping->Pins[4].DataType,
                 SekiroAnimGraphIRNames::ComponentPoseData);
         }
-    }
-
-    const FSekiroAnimIRNodeContract* SpineYawCompensation =
-        FSekiroAnimGraphNodeRegistry::Find(SekiroAnimGraphIRNames::SpineYawCompensationNode);
-    TestNotNull(TEXT("SpineYawCompensation contract is registered"), SpineYawCompensation);
-    if (SpineYawCompensation)
-    {
         TestEqual(
-            TEXT("SpineYawCompensation keeps the plugin editor class path"),
-            SpineYawCompensation->EditorNodeClassPath.ToString(),
-            FString(TEXT(
-                "/Script/SekiroAnimBlueprintExtEditor.AnimGraphNode_SekiroSpineYawCompensation")));
-        TestEqual(TEXT("SpineYawCompensation has four Pins"), SpineYawCompensation->Pins.Num(), 4);
+            TEXT("OrientationWarping exposes evaluation Mode"),
+            OrientationWarping->Properties[6].Name,
+            FName(TEXT("Mode")));
         TestEqual(
-            TEXT("SpineYawCompensation has bone and axis properties"),
-            SpineYawCompensation->Properties.Num(),
-            2);
-        if (SpineYawCompensation->Pins.Num() == 4)
-        {
-            TestEqual(
-                TEXT("SpineYawCompensation consumes component Pose"),
-                SpineYawCompensation->Pins[0].DataType,
-                SekiroAnimGraphIRNames::ComponentPoseData);
-            TestEqual(
-                TEXT("SpineYawCompensation exposes YawAngle"),
-                SpineYawCompensation->Pins[1].Name,
-                FString(TEXT("YawAngle")));
-            TestEqual(
-                TEXT("SpineYawCompensation exposes Float YawAngle"),
-                SpineYawCompensation->Pins[1].DataType,
-                SekiroAnimGraphIRNames::FloatData);
-            TestEqual(
-                TEXT("SpineYawCompensation exposes Alpha"),
-                SpineYawCompensation->Pins[2].Name,
-                FString(TEXT("Alpha")));
-            TestEqual(
-                TEXT("SpineYawCompensation exposes Float Alpha"),
-                SpineYawCompensation->Pins[2].DataType,
-                SekiroAnimGraphIRNames::FloatData);
-            TestEqual(
-                TEXT("SpineYawCompensation produces component Pose"),
-                SpineYawCompensation->Pins[3].DataType,
-                SekiroAnimGraphIRNames::ComponentPoseData);
-        }
-        TestTrue(
-            TEXT("SpineYawCompensation requires SpineBones"),
-            !SpineYawCompensation->Properties.IsEmpty()
-                && SpineYawCompensation->Properties[0].bRequired);
+            TEXT("OrientationWarping exposes Graph minimum root motion speed"),
+            OrientationWarping->Properties[7].Name,
+            FName(TEXT("MinRootMotionSpeedThreshold")));
+        TestEqual(
+            TEXT("OrientationWarping exposes Graph warping alpha"),
+            OrientationWarping->Properties[9].Name,
+            FName(TEXT("WarpingAlpha")));
     }
 
     const FSekiroAnimIRNodeContract* FootPlacement =

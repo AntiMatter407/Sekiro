@@ -79,15 +79,13 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("PoseGait", "Enum", 2, GaitEnum)
     self:Variable("LatchedActionGait", "Enum", 2, GaitEnum)
     self:Variable("bPoseCrouching", "Bool", false)
-    self:Variable("LockOnSpineYawCompensationAngle", "Float", 0.0)
-    self:Variable("LatchedLockOnSpineYawCompensationAngle", "Float", 0.0)
-    self:Variable("LockOnSpineYawCompensationAlpha", "Float", 0.0)
-    self:Variable("StopDirectionResidualAngle", "Float", 0.0)
-    self:Variable("StopSpineYawCompensationAlpha", "Float", 0.0)
+    self:Variable("LockOnLocomotionAngle", "Float", 0.0)
+    self:Variable("LatchedLockOnLocomotionAngle", "Float", 0.0)
+    self:Variable("LockOnOrientationWarpingAlpha", "Float", 0.0)
+    self:Variable("StopOrientationWarpingAlpha", "Float", 0.0)
+    self:Variable("StepOrientationWarpingAlpha", "Float", 0.0)
     self:Variable("StopTurnDirection", "Enum", Direction.Cardinal.Right, DirectionEnum)
-    self:Variable("StopTurnSpineYawCompensationAlpha", "Float", 0.0)
     self:Variable("bStopTurnRequested", "Bool", false)
-    self:Variable("bStopTurnAlignmentCurveSeen", "Bool", false)
     -- 预留锁定模式切换边沿；当前只记录上一帧状态，尚无 Graph 或规则消费者。
     self:Variable("bWasLockedOn", "Bool", false)
     self:Variable("bLatchedActionLockedOn", "Bool", false)
@@ -257,6 +255,7 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         and Inst.bIsMoving ~= true
         and Inst.bIsInAir ~= true
         and Inst.bIsDodging ~= true
+        and Inst.bIsCombatFullBodyActionActive ~= true
         and math.abs(Inst.AimYawDelta or 0) >= Tuning.IdleTurnEnterAngle
     if turn_in_place_requested and Inst.bWasTurnInPlaceRequested ~= true then
         -- 原地转向只使用最接近的左右素材；接近 180 度时稳定选择右转，不使用 Back 动画。
@@ -269,9 +268,8 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         -- Cycle 直接追随输入目标步态；Movement 的实际加减速不应让 Shift/Alt 松开后继续停留在 Sprint Pose。
         Inst.PoseGait = pose_gait
         if lock_on_locomotion_active then
-            -- Start 与 Cycle 必须和 Movement 用同一条四向素材；输入释放后该角度继续供 Stop 使用。
-            Inst.LatchedLockOnSpineYawCompensationAngle =
-                Inst.LockOnSpineYawCompensation or 0.0
+            -- Graph 模式需要“实际移动方向相对当前 Actor”的角度；输入释放后继续供 Stop 重定向 Root Motion。
+            Inst.LatchedLockOnLocomotionAngle = Inst.MoveDirectionAngle or 0.0
         end
         if Inst.bHadMovementInput ~= true then
             Inst.LatchedFreeStartDirection = Direction.ResolveFreeTurnDirection(
@@ -285,36 +283,12 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
             or Direction.Cardinal.Forward
         -- 输入释放后 PoseGait 保留上一帧活动步态，使 Stop 能选择与离开 Cycle 一致的资产。
         Inst.LatchedActionGait = Inst.PoseGait
-        Inst.StopDirectionResidualAngle = Inst.bLatchedActionLockedOn == true
-            and Inst.LatchedLockOnSpineYawCompensationAngle
-            or 0.0
         local stop_direction_alignment_enabled = Inst.bLatchedActionLockedOn == true
             and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
-        Inst.StopSpineYawCompensationAlpha =
+        Inst.StopOrientationWarpingAlpha =
             stop_direction_alignment_enabled and 1.0 or 0.0
-        Inst.bStopTurnRequested = stop_direction_alignment_enabled
-            and math.abs(Inst.StopDirectionResidualAngle) >= Tuning.StopTurnMinResidualAngle
-        Inst.StopTurnDirection = Inst.StopDirectionResidualAngle < 0.0
-            and Direction.Cardinal.Left
-            or Direction.Cardinal.Right
-        Inst.StopTurnSpineYawCompensationAlpha =
-            Inst.bStopTurnRequested and 1.0 or 0.0
-        -- Stop 保持斜向姿势；等 StopTurn 的换脚动画完整接管后，才允许专用曲线撤销补偿。
-        Inst.bStopTurnAlignmentCurveSeen = false
-    end
-
-    local stop_turn_alignment_curve = math.max(
-        0.0,
-        math.min(Inst:GetCurveValue(CurveNames.StopTurnDirectionAlignment) or 0.0, 1.0))
-    if Inst.bStopTurnAlignmentCurveSeen ~= true
-        and stop_turn_alignment_curve >= Tuning.StopTurnAlignmentCurveReadyThreshold
-    then
-        Inst.bStopTurnAlignmentCurveSeen = true
-    end
-    if Inst.bStopTurnAlignmentCurveSeen == true then
-        Inst.StopTurnSpineYawCompensationAlpha = Inst.bStopTurnRequested == true
-            and stop_turn_alignment_curve
-            or 0.0
+        -- Actor 已持续追向锁定目标，不再残留“素材主轴驱动的 ActorYaw”，因此 Stop 后不需要专用换脚回正。
+        Inst.bStopTurnRequested = false
     end
 
     if Inst.bIsDodging == true and Inst.bWasDodging ~= true then
@@ -325,6 +299,10 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
             or Direction.Cardinal.Forward
         Inst.LatchedActionGait = pose_gait
         Inst.bLatchedActionLockedOn = locked_on
+        Inst.LatchedLockOnLocomotionAngle = locked_on
+            and (Inst.DodgeDirection or 0.0)
+            or 0.0
+        Inst.StepOrientationWarpingAlpha = locked_on and 1.0 or 0.0
     end
 
     local sprint_requested = Inst.bHasMovementInput == true and Inst.DesiredGait == UE.ESKAnimGait.Sprint
@@ -357,10 +335,10 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         Inst.JumpWarpingAlpha = locked_on and directional_jump and 1.0 or 0.0
     end
 
-    Inst.LockOnSpineYawCompensationAngle = lock_on_locomotion_active
-        and (Inst.LockOnSpineYawCompensation or 0.0)
+    Inst.LockOnLocomotionAngle = lock_on_locomotion_active
+        and (Inst.MoveDirectionAngle or 0.0)
         or 0.0
-    Inst.LockOnSpineYawCompensationAlpha = lock_on_locomotion_active
+    Inst.LockOnOrientationWarpingAlpha = lock_on_locomotion_active
         and locked_on
         and Inst.bIsInAir ~= true
         and Inst.bIsDodging ~= true

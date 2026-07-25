@@ -19,7 +19,6 @@
 #include "AnimGraphNode_LegIK.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
 #include "AnimGraph/AnimGraphNode_OrientationWarping.h"
-#include "AnimGraphNodes/AnimGraphNode_SekiroSpineYawCompensation.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
@@ -588,7 +587,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
             || NodeClass == UAnimGraphNode_LocalToComponentSpace::StaticClass()
             || NodeClass == UAnimGraphNode_ComponentToLocalSpace::StaticClass()
             || NodeClass == UAnimGraphNode_OrientationWarping::StaticClass()
-            || NodeClass == UAnimGraphNode_SekiroSpineYawCompensation::StaticClass()
             || NodeClass == UAnimGraphNode_FootPlacement::StaticClass()
             || NodeClass == UAnimGraphNode_LegIK::StaticClass()
             || NodeClass == UAnimGraphNode_TwoBoneIK::StaticClass()
@@ -2250,7 +2248,11 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     return ReportNodeCreationFailure(Node);
                 }
 
-                OrientationNode->Node.Mode = EWarpingEvaluationMode::Manual;
+                const FSekiroAnimIRProperty* ModeProperty = FindProperty(Node, TEXT("Mode"));
+                OrientationNode->Node.Mode = ModeProperty != nullptr
+                    && ModeProperty->Value.NameValue == TEXT("Graph")
+                    ? EWarpingEvaluationMode::Graph
+                    : EWarpingEvaluationMode::Manual;
                 OrientationNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
                 OrientationNode->Node.SpineBones.Reset();
                 TArray<FString> SpineBoneNames;
@@ -2299,56 +2301,57 @@ namespace SekiroAnimBlueprintFactoryPrivate
                         static_cast<float>(InterpSpeedProperty->Value.FloatValue));
                 }
 
+                const FSekiroAnimIRProperty* MinRootMotionSpeedProperty =
+                    FindProperty(Node, TEXT("MinRootMotionSpeedThreshold"));
+                if (MinRootMotionSpeedProperty != nullptr)
+                {
+                    OrientationNode->Node.MinRootMotionSpeedThreshold = FMath::Max(
+                        0.0f,
+                        static_cast<float>(MinRootMotionSpeedProperty->Value.FloatValue));
+                }
+
+                const FSekiroAnimIRProperty* LocomotionDeltaProperty =
+                    FindProperty(Node, TEXT("LocomotionAngleDeltaThreshold"));
+                if (LocomotionDeltaProperty != nullptr)
+                {
+                    OrientationNode->Node.LocomotionAngleDeltaThreshold = FMath::Clamp(
+                        static_cast<float>(LocomotionDeltaProperty->Value.FloatValue),
+                        0.0f,
+                        180.0f);
+                }
+
+                const FSekiroAnimIRProperty* WarpingAlphaProperty =
+                    FindProperty(Node, TEXT("WarpingAlpha"));
+                if (WarpingAlphaProperty != nullptr)
+                {
+                    OrientationNode->Node.WarpingAlpha = FMath::Clamp(
+                        static_cast<float>(WarpingAlphaProperty->Value.FloatValue),
+                        0.0f,
+                        1.0f);
+                }
+
+                const FSekiroAnimIRProperty* OffsetAlphaProperty =
+                    FindProperty(Node, TEXT("OffsetAlpha"));
+                if (OffsetAlphaProperty != nullptr)
+                {
+                    OrientationNode->Node.OffsetAlpha = FMath::Clamp(
+                        static_cast<float>(OffsetAlphaProperty->Value.FloatValue),
+                        0.0f,
+                        1.0f);
+                }
+
+                const FSekiroAnimIRProperty* MaxOffsetAngleProperty =
+                    FindProperty(Node, TEXT("MaxOffsetAngle"));
+                if (MaxOffsetAngleProperty != nullptr)
+                {
+                    OrientationNode->Node.MaxOffsetAngle = FMath::Clamp(
+                        static_cast<float>(MaxOffsetAngleProperty->Value.FloatValue),
+                        0.0f,
+                        180.0f);
+                }
+
                 OrientationNode->ReconstructNode();
                 NativeNodes.Add(Node.Id, OrientationNode);
-                return true;
-            }
-
-            if (*NodeClass == UAnimGraphNode_SekiroSpineYawCompensation::StaticClass())
-            {
-                UAnimGraphNode_SekiroSpineYawCompensation* CompensationNode =
-                    CreateNativeNode<UAnimGraphNode_SekiroSpineYawCompensation>(
-                        NativeGraph,
-                        Node.Id,
-                        PositionX,
-                        PositionY);
-                const FSekiroAnimIRProperty* SpineBonesProperty =
-                    FindProperty(Node, TEXT("SpineBones"));
-                if (CompensationNode == nullptr || SpineBonesProperty == nullptr)
-                {
-                    return ReportNodeCreationFailure(Node);
-                }
-
-                CompensationNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
-                CompensationNode->Node.SpineBones.Reset();
-                TArray<FString> SpineBoneNames;
-                SpineBonesProperty->Value.StringValue.ParseIntoArray(
-                    SpineBoneNames,
-                    TEXT("|"),
-                    true);
-                for (const FString& SpineBoneName : SpineBoneNames)
-                {
-                    const FName TrimmedBoneName(*SpineBoneName.TrimStartAndEnd());
-                    if (!TrimmedBoneName.IsNone())
-                    {
-                        CompensationNode->Node.SpineBones.Add(FBoneReference(TrimmedBoneName));
-                    }
-                }
-
-                const FSekiroAnimIRProperty* RotationAxisProperty =
-                    FindProperty(Node, TEXT("RotationAxis"));
-                if (RotationAxisProperty != nullptr)
-                {
-                    const FName RotationAxis = RotationAxisProperty->Value.NameValue;
-                    CompensationNode->Node.RotationAxis = RotationAxis == TEXT("X")
-                        ? ESekiroSpineYawAxis::X
-                        : RotationAxis == TEXT("Y")
-                            ? ESekiroSpineYawAxis::Y
-                            : ESekiroSpineYawAxis::Z;
-                }
-
-                CompensationNode->ReconstructNode();
-                NativeNodes.Add(Node.Id, CompensationNode);
                 return true;
             }
 

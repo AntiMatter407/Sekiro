@@ -15,7 +15,6 @@
 #include "AnimGraphNode_LegIK.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
 #include "AnimGraph/AnimGraphNode_OrientationWarping.h"
-#include "AnimGraphNodes/AnimGraphNode_SekiroSpineYawCompensation.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
@@ -399,6 +398,7 @@ namespace SekiroAnimBlueprintFactoryTests
         const FSekiroAnimIRPinEndpoint OriginalSource = ResultLink->Source;
         const FString LocalToComponentId(TEXT("Node.Move.LocalToComponent"));
         const FString OrientationId(TEXT("Node.Move.OrientationWarping"));
+        const FString LocomotionGetterId(TEXT("Node.Move.LocomotionAngle"));
         const FString ComponentToLocalId(TEXT("Node.Move.ComponentToLocal"));
         ResultLink->Source.NodeId = ComponentToLocalId;
         ResultLink->Source.PinName = TEXT("Pose");
@@ -431,6 +431,10 @@ namespace SekiroAnimBlueprintFactoryTests
         OrientationAngle.Name = TEXT("OrientationAngle");
         OrientationAngle.Direction = ESekiroAnimIRPinDirection::Input;
         OrientationAngle.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPin& LocomotionAngle = Orientation.Pins.AddDefaulted_GetRef();
+        LocomotionAngle.Name = TEXT("LocomotionAngle");
+        LocomotionAngle.Direction = ESekiroAnimIRPinDirection::Input;
+        LocomotionAngle.DataType = SekiroAnimGraphIRNames::FloatData;
         FSekiroAnimIRPin& OrientationAlpha = Orientation.Pins.AddDefaulted_GetRef();
         OrientationAlpha.Name = TEXT("Alpha");
         OrientationAlpha.Direction = ESekiroAnimIRPinDirection::Input;
@@ -465,6 +469,46 @@ namespace SekiroAnimBlueprintFactoryTests
         InterpSpeed.Name = TEXT("RotationInterpSpeed");
         InterpSpeed.Value.Type = ESekiroAnimIRValueType::Float;
         InterpSpeed.Value.FloatValue = 8.0;
+        FSekiroAnimIRProperty& Mode = Orientation.Properties.AddDefaulted_GetRef();
+        Mode.Name = TEXT("Mode");
+        Mode.Value.Type = ESekiroAnimIRValueType::Name;
+        Mode.Value.NameValue = TEXT("Graph");
+        FSekiroAnimIRProperty& MinRootMotionSpeed = Orientation.Properties.AddDefaulted_GetRef();
+        MinRootMotionSpeed.Name = TEXT("MinRootMotionSpeedThreshold");
+        MinRootMotionSpeed.Value.Type = ESekiroAnimIRValueType::Float;
+        MinRootMotionSpeed.Value.FloatValue = 12.0;
+        FSekiroAnimIRProperty& LocomotionDelta = Orientation.Properties.AddDefaulted_GetRef();
+        LocomotionDelta.Name = TEXT("LocomotionAngleDeltaThreshold");
+        LocomotionDelta.Value.Type = ESekiroAnimIRValueType::Float;
+        LocomotionDelta.Value.FloatValue = 75.0;
+        FSekiroAnimIRProperty& WarpingAlpha = Orientation.Properties.AddDefaulted_GetRef();
+        WarpingAlpha.Name = TEXT("WarpingAlpha");
+        WarpingAlpha.Value.Type = ESekiroAnimIRValueType::Float;
+        WarpingAlpha.Value.FloatValue = 0.8;
+        FSekiroAnimIRProperty& OffsetAlpha = Orientation.Properties.AddDefaulted_GetRef();
+        OffsetAlpha.Name = TEXT("OffsetAlpha");
+        OffsetAlpha.Value.Type = ESekiroAnimIRValueType::Float;
+        OffsetAlpha.Value.FloatValue = 0.25;
+        FSekiroAnimIRProperty& MaxOffsetAngle = Orientation.Properties.AddDefaulted_GetRef();
+        MaxOffsetAngle.Name = TEXT("MaxOffsetAngle");
+        MaxOffsetAngle.Value.Type = ESekiroAnimIRValueType::Float;
+        MaxOffsetAngle.Value.FloatValue = 55.0;
+
+        FSekiroAnimIRNode& LocomotionGetter = Graph.Nodes.AddDefaulted_GetRef();
+        LocomotionGetter.Id = LocomotionGetterId;
+        LocomotionGetter.NodeType = SekiroAnimGraphIRNames::FloatPropertyGetterNode;
+        LocomotionGetter.DisplayName = TEXT("Graph Locomotion Angle");
+        LocomotionGetter.SourceLocation = SourceLocation;
+        FSekiroAnimIRPin& LocomotionValue = LocomotionGetter.Pins.AddDefaulted_GetRef();
+        LocomotionValue.Name = TEXT("Value");
+        LocomotionValue.Direction = ESekiroAnimIRPinDirection::Output;
+        LocomotionValue.DataType = SekiroAnimGraphIRNames::FloatData;
+        LocomotionValue.bAllowMultipleConnections = true;
+        FSekiroAnimIRProperty& LocomotionProperty =
+            LocomotionGetter.Properties.AddDefaulted_GetRef();
+        LocomotionProperty.Name = TEXT("PropertyName");
+        LocomotionProperty.Value.Type = ESekiroAnimIRValueType::Name;
+        LocomotionProperty.Value.NameValue = TEXT("GraphLocomotionAngle");
 
         FSekiroAnimIRNode& ComponentToLocal = Graph.Nodes.AddDefaulted_GetRef();
         ComponentToLocal.Id = ComponentToLocalId;
@@ -494,6 +538,13 @@ namespace SekiroAnimBlueprintFactoryTests
         ToOrientationLink.Target.NodeId = OrientationId;
         ToOrientationLink.Target.PinName = TEXT("ComponentPose");
         ToOrientationLink.SourceLocation = SourceLocation;
+        FSekiroAnimIRLink& ToLocomotionAngle = Graph.Links.AddDefaulted_GetRef();
+        ToLocomotionAngle.Id = TEXT("Link.Move.LocomotionAngleToOrientationWarping");
+        ToLocomotionAngle.Source.NodeId = LocomotionGetterId;
+        ToLocomotionAngle.Source.PinName = TEXT("Value");
+        ToLocomotionAngle.Target.NodeId = OrientationId;
+        ToLocomotionAngle.Target.PinName = TEXT("LocomotionAngle");
+        ToLocomotionAngle.SourceLocation = SourceLocation;
         FSekiroAnimIRLink& ToLocalLink = Graph.Links.AddDefaulted_GetRef();
         ToLocalLink.Id = TEXT("Link.Move.ToComponentToLocal");
         ToLocalLink.Source.NodeId = OrientationId;
@@ -502,77 +553,6 @@ namespace SekiroAnimBlueprintFactoryTests
         ToLocalLink.Target.PinName = TEXT("ComponentPose");
         ToLocalLink.SourceLocation = SourceLocation;
 
-        return true;
-    }
-
-    /**
-     * 在现有组件空间控制链末端与 ComponentToLocalSpace 之间插入脊柱 Yaw 补偿节点。
-     * 函数仅修改调用方独占的 IR，不访问 UObject；输入骨骼名由测试 Skeleton 提供。
-     *
-     * @param Graph 已包含 Link.Move.ToComponentToLocal 的 StatePose Graph。
-     * @param BoneName 写入 SpineBones 配置的测试骨骼名，必须非 None。
-     * @param SourceLocation 复制到新增节点与连接的 Lua 源位置。
-     * @return 找到目标连接且骨骼名有效时返回 true，否则不修改 IR 并返回 false。
-     */
-    bool AddSpineYawCompensationChain(
-        FSekiroAnimIRGraph& Graph,
-        const FName BoneName,
-        const FSekiroAnimIRSourceLocation& SourceLocation)
-    {
-        FSekiroAnimIRLink* ToLocalLink = nullptr;
-        for (FSekiroAnimIRLink& Link : Graph.Links)
-        {
-            if (Link.Id == TEXT("Link.Move.ToComponentToLocal"))
-            {
-                ToLocalLink = &Link;
-                break;
-            }
-        }
-        if (ToLocalLink == nullptr || BoneName.IsNone()) return false;
-
-        const FSekiroAnimIRPinEndpoint OriginalSource = ToLocalLink->Source;
-        const FString CompensationId(TEXT("Node.Move.SpineYawCompensation"));
-        ToLocalLink->Source.NodeId = CompensationId;
-        ToLocalLink->Source.PinName = TEXT("Pose");
-
-        FSekiroAnimIRNode& Compensation = Graph.Nodes.AddDefaulted_GetRef();
-        Compensation.Id = CompensationId;
-        Compensation.NodeType = SekiroAnimGraphIRNames::SpineYawCompensationNode;
-        Compensation.DisplayName = TEXT("Spine Yaw Compensation");
-        Compensation.SourceLocation = SourceLocation;
-        FSekiroAnimIRPin& ComponentPose = Compensation.Pins.AddDefaulted_GetRef();
-        ComponentPose.Name = TEXT("ComponentPose");
-        ComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
-        ComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
-        FSekiroAnimIRPin& YawAngle = Compensation.Pins.AddDefaulted_GetRef();
-        YawAngle.Name = TEXT("YawAngle");
-        YawAngle.Direction = ESekiroAnimIRPinDirection::Input;
-        YawAngle.DataType = SekiroAnimGraphIRNames::FloatData;
-        FSekiroAnimIRPin& Alpha = Compensation.Pins.AddDefaulted_GetRef();
-        Alpha.Name = TEXT("Alpha");
-        Alpha.Direction = ESekiroAnimIRPinDirection::Input;
-        Alpha.DataType = SekiroAnimGraphIRNames::FloatData;
-        FSekiroAnimIRPin& Pose = Compensation.Pins.AddDefaulted_GetRef();
-        Pose.Name = TEXT("Pose");
-        Pose.Direction = ESekiroAnimIRPinDirection::Output;
-        Pose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
-        Pose.bAllowMultipleConnections = true;
-
-        FSekiroAnimIRProperty& SpineBones = Compensation.Properties.AddDefaulted_GetRef();
-        SpineBones.Name = TEXT("SpineBones");
-        SpineBones.Value.Type = ESekiroAnimIRValueType::String;
-        SpineBones.Value.StringValue = FString::Printf(TEXT(" %s "), *BoneName.ToString());
-        FSekiroAnimIRProperty& RotationAxis = Compensation.Properties.AddDefaulted_GetRef();
-        RotationAxis.Name = TEXT("RotationAxis");
-        RotationAxis.Value.Type = ESekiroAnimIRValueType::Name;
-        RotationAxis.Value.NameValue = TEXT("Y");
-
-        FSekiroAnimIRLink& ToCompensation = Graph.Links.AddDefaulted_GetRef();
-        ToCompensation.Id = TEXT("Link.Move.ToSpineYawCompensation");
-        ToCompensation.Source = OriginalSource;
-        ToCompensation.Target.NodeId = CompensationId;
-        ToCompensation.Target.PinName = TEXT("ComponentPose");
-        ToCompensation.SourceLocation = SourceLocation;
         return true;
     }
 
@@ -1056,6 +1036,14 @@ namespace SekiroAnimBlueprintFactoryTests
     FSekiroAnimBlueprintIR MakeFactoryIR(UAnimSequenceBase* Sequence)
     {
         FSekiroAnimBlueprintIR Blueprint = SekiroAnimGraphIRTests::MakeMinimalIR();
+        FSekiroAnimIRVariable& GraphLocomotionAngle =
+            Blueprint.Variables.AddDefaulted_GetRef();
+        GraphLocomotionAngle.Name = TEXT("GraphLocomotionAngle");
+        GraphLocomotionAngle.DataType = TEXT("Float");
+        GraphLocomotionAngle.DefaultValue.Type = ESekiroAnimIRValueType::Float;
+        GraphLocomotionAngle.DefaultValue.FloatValue = 0.0;
+        GraphLocomotionAngle.bTransient = true;
+        GraphLocomotionAngle.SourceLocation = Blueprint.SourceLocation;
         FSekiroAnimIRGraph* MainGraph = FindGraph(Blueprint, TEXT("Graph.Main"));
         if (MainGraph != nullptr)
         {
@@ -1326,13 +1314,6 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
                 *OrientationGraph,
                 OrientationTestBone,
                 BlueprintIR.SourceLocation));
-    TestTrue(
-        TEXT("Test IR adds SpineYawCompensation at the component-space chain tail"),
-        OrientationGraph != nullptr
-            && AddSpineYawCompensationChain(
-                *OrientationGraph,
-                OrientationTestBone,
-                BlueprintIR.SourceLocation));
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
     UAnimBlueprint* FirstBlueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
         BlueprintIR,
@@ -1499,8 +1480,6 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         FindFirstNode<UAnimGraphNode_LocalToComponentSpace>(MoveGraph);
     UAnimGraphNode_OrientationWarping* OrientationWarping =
         FindFirstNode<UAnimGraphNode_OrientationWarping>(MoveGraph);
-    UAnimGraphNode_SekiroSpineYawCompensation* SpineYawCompensation =
-        FindFirstNode<UAnimGraphNode_SekiroSpineYawCompensation>(MoveGraph);
     UAnimGraphNode_FootPlacement* FootPlacement =
         FindFirstNode<UAnimGraphNode_FootPlacement>(MoveGraph);
     UAnimGraphNode_LegIK* LegIK = FindFirstNode<UAnimGraphNode_LegIK>(MoveGraph);
@@ -1530,7 +1509,6 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         1);
     TestNotNull(TEXT("LocalToComponentSpace node is explicitly created"), LocalToComponent);
     TestNotNull(TEXT("OrientationWarping node is created"), OrientationWarping);
-    TestNotNull(TEXT("SpineYawCompensation node is created"), SpineYawCompensation);
     TestNotNull(TEXT("FootPlacement node is created"), FootPlacement);
     TestNotNull(TEXT("LegIK node is created"), LegIK);
     TestNotNull(TEXT("TwoBoneIK node is created"), TwoBoneIK);
@@ -1595,9 +1573,9 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         CountNodes<UAnimGraphNode_ComponentToLocalSpace>(MoveGraph),
         1);
     TestEqual(
-        TEXT("OrientationWarping uses Manual mode"),
+        TEXT("OrientationWarping uses Graph mode"),
         OrientationWarping != nullptr ? OrientationWarping->Node.Mode : EWarpingEvaluationMode::Graph,
-        EWarpingEvaluationMode::Manual);
+        EWarpingEvaluationMode::Graph);
     TestEqual(
         TEXT("OrientationWarping receives SpineBones"),
         OrientationWarping != nullptr && !OrientationWarping->Node.SpineBones.IsEmpty()
@@ -1629,25 +1607,50 @@ bool FSekiroAnimBlueprintFactoryNativeTopologyTest::RunTest(const FString& Param
         OrientationWarping != nullptr ? OrientationWarping->Node.RotationInterpSpeed : 0.0f,
         8.0f);
     TestEqual(
-        TEXT("SpineYawCompensation receives SpineBones"),
-        SpineYawCompensation != nullptr && !SpineYawCompensation->Node.SpineBones.IsEmpty()
-            ? SpineYawCompensation->Node.SpineBones[0].BoneName
-            : NAME_None,
-        OrientationTestBone);
+        TEXT("OrientationWarping receives minimum root motion speed"),
+        OrientationWarping != nullptr
+            ? OrientationWarping->Node.MinRootMotionSpeedThreshold
+            : 0.0f,
+        12.0f);
     TestEqual(
-        TEXT("SpineYawCompensation receives rotation axis"),
-        SpineYawCompensation != nullptr
-            ? SpineYawCompensation->Node.RotationAxis
-            : ESekiroSpineYawAxis::Z,
-        ESekiroSpineYawAxis::Y);
-    UEdGraphPin* SpineYawAnglePin = SpineYawCompensation != nullptr
-        ? SpineYawCompensation->FindPin(TEXT("YawAngle"), EGPD_Input)
+        TEXT("OrientationWarping receives locomotion delta threshold"),
+        OrientationWarping != nullptr
+            ? OrientationWarping->Node.LocomotionAngleDeltaThreshold
+            : 0.0f,
+        75.0f);
+    TestEqual(
+        TEXT("OrientationWarping receives graph warping alpha"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.WarpingAlpha : 0.0f,
+        0.8f);
+    TestEqual(
+        TEXT("OrientationWarping receives graph offset alpha"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.OffsetAlpha : 0.0f,
+        0.25f);
+    TestEqual(
+        TEXT("OrientationWarping receives graph max offset angle"),
+        OrientationWarping != nullptr ? OrientationWarping->Node.MaxOffsetAngle : 0.0f,
+        55.0f);
+    UEdGraphPin* OrientationLocomotionAngle = OrientationWarping != nullptr
+        ? OrientationWarping->FindPin(TEXT("LocomotionAngle"), EGPD_Input)
         : nullptr;
-    UEdGraphPin* SpineYawAlphaPin = SpineYawCompensation != nullptr
-        ? SpineYawCompensation->FindPin(TEXT("Alpha"), EGPD_Input)
-        : nullptr;
-    TestNotNull(TEXT("SpineYawCompensation exposes YawAngle Pin"), SpineYawAnglePin);
-    TestNotNull(TEXT("SpineYawCompensation exposes Alpha Pin"), SpineYawAlphaPin);
+    TestNotNull(
+        TEXT("Graph OrientationWarping exposes LocomotionAngle Pin"),
+        OrientationLocomotionAngle);
+    TestEqual(
+        TEXT("Graph OrientationWarping LocomotionAngle is connected"),
+        OrientationLocomotionAngle != nullptr
+            ? OrientationLocomotionAngle->LinkedTo.Num()
+            : 0,
+        1);
+    const UK2Node_VariableGet* LocomotionGetter =
+        OrientationLocomotionAngle != nullptr && !OrientationLocomotionAngle->LinkedTo.IsEmpty()
+            ? Cast<UK2Node_VariableGet>(
+                OrientationLocomotionAngle->LinkedTo[0]->GetOwningNode())
+            : nullptr;
+    TestEqual(
+        TEXT("Graph OrientationWarping reads the declared locomotion angle property"),
+        LocomotionGetter != nullptr ? LocomotionGetter->GetVarName() : NAME_None,
+        FName(TEXT("GraphLocomotionAngle")));
     TestEqual(
         TEXT("FootPlacement defaults PlantSpeedMode to Graph"),
         FootPlacement != nullptr ? FootPlacement->Node.PlantSpeedMode : EWarpingEvaluationMode::Manual,

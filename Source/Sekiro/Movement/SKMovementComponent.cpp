@@ -1,6 +1,7 @@
 ﻿#include "Movement/SKMovementComponent.h"
 
 #include "Camera/SKCameraManagerComponent.h"
+#include "Combat/SKCombatComponent.h"
 #include "Input/SKInputManager.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/Controller.h"
@@ -28,6 +29,7 @@ USKMovementComponent::USKMovementComponent()
 {
     bHasDesiredMoveYawSnapshot = false;
     bHasLockOnLocomotionSnapshot = false;
+    bRootMotionDirectionWarpingEnabled = false;
     MaxWalkSpeed = RunSpeed;
 }
 
@@ -234,23 +236,51 @@ void USKMovementComponent::ClearMoveFacingSnapshotForScript()
 }
 
 /**
- * 保存锁定普通移动的四方向素材和上半身回正快照。
- * Lua 已按锁定目标相对输入选择主轴，并把 ActorYaw 瞬时设为 TargetYaw + Residual；
- * 本函数不重定向 Root Motion，只为同帧 AnimInstance 提供与 Movement 完全一致的素材选择和脊柱补偿数据。
+ * 保存锁定普通移动的四方向素材和动画朝向快照。
+ * Lua 已按锁定目标相对输入选择主轴；本函数不旋转角色或 Root Motion，
+ * 只为同帧 AnimInstance 提供与 Movement 完全一致的素材选择。
  * 只能在游戏线程、CharacterMovement 求值前调用。
  *
  * @param bEnabled 是否存在有效锁定普通移动快照。
  * @param CardinalDirection Direction.lua 使用的四方向枚举值。
- * @param SpineYawCompensation 脊柱应回正到锁定目标的局部 Yaw，单位度。
  */
 void USKMovementComponent::SetLockOnLocomotionSnapshotForScript(
     bool bEnabled,
-    int32 CardinalDirection,
-    float SpineYawCompensation)
+    int32 CardinalDirection)
 {
     bHasLockOnLocomotionSnapshot = bEnabled;
     LockOnCardinalDirectionSnapshot = CardinalDirection;
-    LockOnSpineYawCompensationSnapshot = FMath::UnwindDegrees(SpineYawCompensation);
+}
+
+/**
+ * 设置最终动画 Root Motion 水平平移使用的世界方向。
+ * 只能在游戏线程、CharacterMovement 求值前调用；接口仅保存通用方向数据，
+ * 不判断锁定、步态或动画状态，也不改变 Root Motion 长度、垂直分量和旋转。
+ *
+ * @param bEnabled 是否在本帧 CharacterMovement 转换 Root Motion 时重定向水平平移。
+ * @param TargetWorldYaw 目标水平移动方向的世界 Yaw，单位为度。
+ */
+void USKMovementComponent::SetRootMotionDirectionWarpingForScript(bool bEnabled, float TargetWorldYaw)
+{
+    bRootMotionDirectionWarpingEnabled = bEnabled;
+    RootMotionDirectionWarpingWorldYaw = FMath::UnwindDegrees(TargetWorldYaw);
+}
+
+/**
+ * 查询所属角色的战斗组件当前是否正在播放全身动作。
+ *
+ * Lua 移动策略用它限制锁定移动的 Root Motion 方向修正范围，避免玩家仍按住移动输入时，
+ * 攻击、受击等全身动画的位移被误重定向。该查询只访问游戏线程上的组件状态。
+ *
+ * @return 找到战斗组件且全身战斗动作正在生效时返回 true，否则返回 false。
+ */
+bool USKMovementComponent::IsOwnerCombatFullBodyActionActiveForScript() const
+{
+    const AActor* OwnerActor = GetOwner();
+    const USKCombatComponent* CombatComponent = OwnerActor
+        ? OwnerActor->FindComponentByClass<USKCombatComponent>()
+        : nullptr;
+    return CombatComponent && CombatComponent->IsCombatFullBodyActionActive();
 }
 
 /** 返回所属角色当前世界速度的水平长度；只能在游戏线程读取，角色无效时返回 0。 */
@@ -275,12 +305,6 @@ bool USKMovementComponent::HasLockOnLocomotionSnapshot() const
 int32 USKMovementComponent::GetLockOnCardinalDirectionSnapshot() const
 {
     return LockOnCardinalDirectionSnapshot;
-}
-
-/** 返回 Lua 发布的上半身回正局部 Yaw，单位度；调用方应先检查快照有效标记。 */
-float USKMovementComponent::GetLockOnSpineYawCompensationSnapshot() const
-{
-    return LockOnSpineYawCompensationSnapshot;
 }
 
 /** 返回 Lua 最近发布的移动目标世界 Yaw；调用方应先检查快照有效标记。 */
@@ -310,6 +334,9 @@ void USKMovementComponent::BeginPlay()
     Super::BeginPlay();
     RefreshCachedComponents();
     if (InputManager) AddTickPrerequisiteComponent(InputManager);
+    ProcessRootMotionPostConvertToWorld.BindUObject(
+        this,
+        &USKMovementComponent::ProcessRootMotionDirectionWarping);
 
     if (!bEngineDispatchesReceiveBeginPlay) ReceiveBeginPlay();
 }
@@ -375,4 +402,36 @@ void USKMovementComponent::ApplyActorYaw(float TargetYaw, float InterpSpeed, flo
     const FRotator CurrentRotation = OwnerCharacter->GetActorRotation();
     const float NewYaw = InterpSKMovementYawShortest(CurrentRotation.Yaw, TargetYaw, DeltaTime, InterpSpeed);
     OwnerCharacter->SetActorRotation(FRotator(0.f, NewYaw, 0.f));
+}
+
+/**
+ * 把已经转换到世界空间的动画 Root Motion 水平平移旋转到 Lua 发布的目标方向。
+ * CharacterMovement 在游戏线程、计算动画根运动速度前通过原生委托调用；
+ * 禁用、平移近零或委托来源不是当前组件时原样返回。函数不修改输入对象，
+ * 不改变位移长度、Z 分量、旋转和缩放，因此碰撞与 Root Motion 时间尺度仍由 UE 处理。
+ *
+ * @param WorldSpaceRootMotion UE 已完成网格到世界空间转换的动画根运动增量。
+ * @param MovementComponent 发起委托的 CharacterMovement；不是当前实例时不处理。
+ * @param DeltaSeconds 当前根运动步长，单位秒；方向变换与帧长无关，仅用于满足委托契约。
+ * @return 启用且水平位移有效时返回方向已重定向的副本，否则返回原始变换。
+ */
+FTransform USKMovementComponent::ProcessRootMotionDirectionWarping(
+    const FTransform& WorldSpaceRootMotion,
+    UCharacterMovementComponent* MovementComponent,
+    float DeltaSeconds) const
+{
+    static_cast<void>(DeltaSeconds);
+    if (!bRootMotionDirectionWarpingEnabled || MovementComponent != this) return WorldSpaceRootMotion;
+
+    const FVector OriginalTranslation = WorldSpaceRootMotion.GetTranslation();
+    const float HorizontalDistance = FVector(OriginalTranslation.X, OriginalTranslation.Y, 0.f).Size();
+    if (HorizontalDistance <= UE_SMALL_NUMBER) return WorldSpaceRootMotion;
+
+    const FVector TargetDirection = FRotator(0.f, RootMotionDirectionWarpingWorldYaw, 0.f).Vector();
+    FVector WarpedTranslation = TargetDirection * HorizontalDistance;
+    WarpedTranslation.Z = OriginalTranslation.Z;
+
+    FTransform WarpedRootMotion = WorldSpaceRootMotion;
+    WarpedRootMotion.SetTranslation(WarpedTranslation);
+    return WarpedRootMotion;
 }

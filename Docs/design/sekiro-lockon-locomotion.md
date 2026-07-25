@@ -1,7 +1,7 @@
 # Sekiro 锁定状态 Locomotion 设计
 
 > 状态：历史实现方案。四方向资源选择和输入语义仍有效，但本文所述 BlendSpace、MovePhase 匹配和 Stop 轨迹冻结等旧动态 Pose Graph 机制已经删除；Orientation Warping 后来以原生生成节点重新接入。
-> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + Inertialization；Movement 选择四向素材并用剩余角旋转 Actor，使原始 Root Motion 对齐输入轨迹，AnimGraph 只对脊柱链做反向回正。
+> 当前实现：明确 SequencePlayer + `BlendListByEnum`，Cycle 使用 Sync Group + Inertialization；Movement 选择四向素材并让 Actor 平滑朝向锁定目标，Start/Cycle/Stop/Step 使用 UE5.2 标准 Orientation Warping Graph 模式同步重定向 Root Motion 与下半身，Spine 反向补偿由原生节点完成，不再在项目 Graph 中实例化自定义脊柱节点。
 > 日期：2026-07-11  
 > 关联文档：[角色摄像头与 Locomotion 方案](sekiro-camera-locomotion.md)、[动画曲线生成与使用手册](../animation-curve-authoring-guide.md)
 
@@ -229,6 +229,7 @@ Sprint Forward Cycle
 | `LockOnActorInterpSpeed` | `14`（Movement Lua） | 非 Sprint 身体跟随目标 |
 | `LockOnCameraYawInterpSpeed` | 保持 `8` | 镜头跟随目标 |
 | `SprintActorInterpSpeed` | `12`（Movement Lua） | Sprint 身体追随移动方向 |
+| `AirActorTurnSpeedMultiplier` | `0.2`（Movement Lua） | Falling 时将所有 ActorYaw 插值速度降至地面的 20%，保留空中水平惯性 |
 
 先保持现有相机参数，只在完成动画方向接入后基于日志和录像调优，避免同时改变两个系统而无法定位问题。
 

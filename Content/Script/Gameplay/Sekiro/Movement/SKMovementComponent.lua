@@ -10,17 +10,6 @@ local Tuning = require("Animation.Sekiro.Shared.Tuning")
 local SKMovementComponent = UnLua.Class()
 local Debug = true
 
----把任意角度规范到 -180..180，供世界 Yaw 和局部方向角稳定比较。
----@param angle number|nil 任意角度，单位为度；nil 按 0 处理。
----@return number normalized_angle 规范化后的有符号角度。
-local function normalize_angle(angle)
-    local normalized_angle = (angle or 0) % 360
-    if normalized_angle > 180 then
-        normalized_angle = normalized_angle - 360
-    end
-    return normalized_angle
-end
-
 ---在 UnLua 完成 UObject 绑定后初始化纯 Lua 状态。
 ---此时 UObject 仍可能处于构造阶段，因此这里只写 Lua 私有字段，不覆盖 UPROPERTY。
 ---@param _initializer table|nil UnLua 可选初始化表；当前模块不读取该参数。
@@ -30,12 +19,14 @@ function SKMovementComponent:Initialize(_initializer)
     self.SprintActorInterpSpeed = 12.0
     self.LockOnActorInterpSpeed = 14.0
     self.TurnInPlaceActorInterpSpeed = 5.0
+    self.AirActorTurnSpeedMultiplier = 0.2
     self.TurnInPlaceEnterAngle = 25.0
     self.TurnInPlaceExitAngle = 3.0
     self.MoveInputFacingThreshold = 0.1
     self.bTurningInPlace = false
     self.LockedCycleDirection = Direction.Cardinal.Forward
-    self.LastLockedSpineYawCompensation = 0.0
+    self.LastLockOnRootMotionWorldYaw = 0.0
+    self.bHasLastLockOnRootMotionWorldYaw = false
     LuaLog.Debug(Debug, "SKMovementComponent", "Initialize", "movement lua host initialized")
 end
 
@@ -82,7 +73,7 @@ function SKMovementComponent:PublishMoveFacingSnapshot()
     -- math.atan(lateral, forward) 与动画方向约定一致：正角为右，负角为左。
     local controller_yaw = self:GetControllerYawOrFallback(owner_yaw)
     local local_input_angle = math.deg(math.atan(input_x, input_y))
-    local desired_move_yaw = normalize_angle(controller_yaw + local_input_angle)
+    local desired_move_yaw = Direction.NormalizeAngle(controller_yaw + local_input_angle)
     local pre_rotation_angle = self:NormalizeDeltaYaw(owner_yaw, desired_move_yaw)
     self:SetMoveFacingSnapshotForScript(true, desired_move_yaw, pre_rotation_angle)
     return true, desired_move_yaw
@@ -134,6 +125,19 @@ function SKMovementComponent:ResolveActorFacing(has_desired_yaw, desired_move_ya
     return false, self:GetOwnerYaw(), self.FreeActorInterpSpeed
 end
 
+---按移动状态缩放角色朝向插值速度。
+---空中只降低 ActorYaw 的追踪速度，不改变 CharacterMovement 维护的水平惯性和移动输入。
+---@param ground_interp_speed number|nil 当前朝向模式选择的地面插值速度；nil 按 0 处理。
+---@return number interp_speed 当前移动状态实际使用的非负插值速度。
+function SKMovementComponent:ResolveActorYawInterpSpeed(ground_interp_speed)
+    local interp_speed = math.max(ground_interp_speed or 0.0, 0.0)
+    if self:IsFalling() == true then
+        local air_multiplier = math.max(self.AirActorTurnSpeedMultiplier or 0.0, 0.0)
+        return interp_speed * air_multiplier
+    end
+    return interp_speed
+end
+
 ---由 C++ BlueprintNativeEvent 反射分发，在原生 CharacterMovement 求值前更新速度和角色朝向。
 ---@param delta_seconds number|nil 当前帧时长，单位为秒；nil 按 0 处理。
 ---@return boolean handled 始终返回 true，表示 Lua 已处理本帧 Movement 策略。
@@ -141,7 +145,9 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:RefreshCachedMovementComponents()
     if not self:HasOwnerCharacter() then
         self:ClearMoveFacingSnapshotForScript()
-        self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward, 0)
+        self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward)
+        self:SetRootMotionDirectionWarpingForScript(false, 0.0)
+        self.bHasLastLockOnRootMotionWorldYaw = false
         return true
     end
 
@@ -152,13 +158,17 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:SetMovementRotationSettingsForScript(false, false)
 
     local has_desired_yaw, desired_move_yaw = self:PublishMoveFacingSnapshot()
-    -- Actor 朝向承担“输入方向 - 四向动画轴”的剩余角，并平滑追向该结果。
-    -- 过渡期间原始 Root Motion 会随 Actor 逐渐转弯；脊柱按实际 ActorYaw 逐帧反向补偿，
-    -- 因此下半身有转向过程，而上半身仍持续看向锁定目标。
+    -- 锁定普通移动由 Actor 平滑追向目标；四向素材只负责提供最近的基础步态。
+    -- AnimGraph 的 Graph Orientation Warping 负责下半身与脊柱姿势，
+    -- Movement 原生回调把 CharacterMovement 最终消费的 Root Motion 水平平移转到输入世界方向。
+    -- 全身战斗动作拥有自己的 Root Motion，期间必须退出锁定移动方向修正，防止按住方向键时误转攻击位移。
+    local can_warp_locomotion_root_motion =
+        self:IsOwnerCombatFullBodyActionActiveForScript() ~= true
     local locked_locomotion = self:IsLockedOn()
         and self:HasLockTargetYaw()
         and has_desired_yaw
         and not self:IsMovementTierSprint()
+        and can_warp_locomotion_root_motion
     if locked_locomotion then
         local target_yaw = self:GetLockTargetYawOrFallback(self:GetOwnerYaw())
         local desired_relative_angle = self:NormalizeDeltaYaw(target_yaw, desired_move_yaw)
@@ -168,39 +178,49 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
             Tuning.LockedDirectionHysteresisAngle,
             Tuning.LockedDirectionForwardBoundaryAngle,
             Tuning.LockedDirectionBackBoundaryAngle)
-        local cardinal_axis = Direction.CardinalAngle[self.LockedCycleDirection] or 0
-        local residual = Direction.NormalizeAngle(desired_relative_angle - cardinal_axis)
-        local target_actor_yaw = normalize_angle(target_yaw + residual)
         self:ApplyActorYawForScript(
-            target_actor_yaw,
-            self.LockOnActorInterpSpeed,
+            target_yaw,
+            self:ResolveActorYawInterpSpeed(self.LockOnActorInterpSpeed),
             delta_seconds or 0)
-        local actual_actor_yaw = self:GetOwnerYaw()
-        local spine_yaw_compensation =
-            self:NormalizeDeltaYaw(actual_actor_yaw, target_yaw)
         self:SetLockOnLocomotionSnapshotForScript(
             true,
-            self.LockedCycleDirection,
-            spine_yaw_compensation)
-        self.LastLockedSpineYawCompensation = spine_yaw_compensation
+            self.LockedCycleDirection)
+        self.LastLockOnRootMotionWorldYaw = desired_move_yaw
+        self.bHasLastLockOnRootMotionWorldYaw = true
+        self:SetRootMotionDirectionWarpingForScript(true, desired_move_yaw)
         return true
     end
     if self:IsLockedOn()
+        and self:HasLockTargetYaw()
         and not self:IsMovementTierSprint()
+        and can_warp_locomotion_root_motion
         and self:GetHorizontalSpeedForScript() > 3.0
     then
+        local target_yaw = self:GetLockTargetYawOrFallback(self:GetOwnerYaw())
+        self:ApplyActorYawForScript(
+            target_yaw,
+            self:ResolveActorYawInterpSpeed(self.LockOnActorInterpSpeed),
+            delta_seconds or 0)
         self:SetLockOnLocomotionSnapshotForScript(
             true,
-            self.LockedCycleDirection,
-            self.LastLockedSpineYawCompensation)
+            self.LockedCycleDirection)
+        local root_motion_world_yaw = self.bHasLastLockOnRootMotionWorldYaw == true
+            and self.LastLockOnRootMotionWorldYaw
+            or target_yaw
+        self:SetRootMotionDirectionWarpingForScript(true, root_motion_world_yaw)
         return true
     end
-    self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward, 0)
+    self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward)
+    self:SetRootMotionDirectionWarpingForScript(false, 0.0)
+    self.bHasLastLockOnRootMotionWorldYaw = false
     local has_facing_target, target_yaw, interp_speed = self:ResolveActorFacing(
         has_desired_yaw,
         desired_move_yaw)
     if has_facing_target then
-        self:ApplyActorYawForScript(target_yaw, interp_speed, delta_seconds or 0)
+        self:ApplyActorYawForScript(
+            target_yaw,
+            self:ResolveActorYawInterpSpeed(interp_speed),
+            delta_seconds or 0)
     end
 
     return true

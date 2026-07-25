@@ -140,6 +140,11 @@ namespace SekiroAnimGraphNodeRegistryPrivate
         OrientationAngle.Name = TEXT("OrientationAngle");
         OrientationAngle.Direction = ESekiroAnimIRPinDirection::Input;
         OrientationAngle.DataType = SekiroAnimGraphIRNames::FloatData;
+        FSekiroAnimIRPinContract& OrientationLocomotionAngle =
+            OrientationWarping.Pins.AddDefaulted_GetRef();
+        OrientationLocomotionAngle.Name = TEXT("LocomotionAngle");
+        OrientationLocomotionAngle.Direction = ESekiroAnimIRPinDirection::Input;
+        OrientationLocomotionAngle.DataType = SekiroAnimGraphIRNames::FloatData;
         FSekiroAnimIRPinContract& OrientationAlpha = OrientationWarping.Pins.AddDefaulted_GetRef();
         OrientationAlpha.Name = TEXT("Alpha");
         OrientationAlpha.Direction = ESekiroAnimIRPinDirection::Input;
@@ -176,40 +181,24 @@ namespace SekiroAnimGraphNodeRegistryPrivate
             OrientationWarping.Properties.AddDefaulted_GetRef();
         OrientationInterpSpeed.Name = TEXT("RotationInterpSpeed");
         OrientationInterpSpeed.ValueType = ESekiroAnimIRValueType::Float;
-
-        FSekiroAnimIRNodeContract& SpineYawCompensation = Contracts.AddDefaulted_GetRef();
-        SpineYawCompensation.NodeType = SekiroAnimGraphIRNames::SpineYawCompensationNode;
-        SpineYawCompensation.EditorNodeClassPath = FSoftClassPath(
-            TEXT("/Script/SekiroAnimBlueprintExtEditor.AnimGraphNode_SekiroSpineYawCompensation"));
-        SpineYawCompensation.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
-        SpineYawCompensation.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
-        FSekiroAnimIRPinContract& SpineYawComponentPose =
-            SpineYawCompensation.Pins.AddDefaulted_GetRef();
-        SpineYawComponentPose.Name = TEXT("ComponentPose");
-        SpineYawComponentPose.Direction = ESekiroAnimIRPinDirection::Input;
-        SpineYawComponentPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
-        FSekiroAnimIRPinContract& SpineYawAngle = SpineYawCompensation.Pins.AddDefaulted_GetRef();
-        SpineYawAngle.Name = TEXT("YawAngle");
-        SpineYawAngle.Direction = ESekiroAnimIRPinDirection::Input;
-        SpineYawAngle.DataType = SekiroAnimGraphIRNames::FloatData;
-        FSekiroAnimIRPinContract& SpineYawAlpha = SpineYawCompensation.Pins.AddDefaulted_GetRef();
-        SpineYawAlpha.Name = TEXT("Alpha");
-        SpineYawAlpha.Direction = ESekiroAnimIRPinDirection::Input;
-        SpineYawAlpha.DataType = SekiroAnimGraphIRNames::FloatData;
-        FSekiroAnimIRPinContract& SpineYawPose = SpineYawCompensation.Pins.AddDefaulted_GetRef();
-        SpineYawPose.Name = TEXT("Pose");
-        SpineYawPose.Direction = ESekiroAnimIRPinDirection::Output;
-        SpineYawPose.DataType = SekiroAnimGraphIRNames::ComponentPoseData;
-        SpineYawPose.bAllowMultipleConnections = true;
-        FSekiroAnimIRPropertyContract& SpineYawBones =
-            SpineYawCompensation.Properties.AddDefaulted_GetRef();
-        SpineYawBones.Name = TEXT("SpineBones");
-        SpineYawBones.ValueType = ESekiroAnimIRValueType::String;
-        SpineYawBones.bRequired = true;
-        FSekiroAnimIRPropertyContract& SpineYawAxis =
-            SpineYawCompensation.Properties.AddDefaulted_GetRef();
-        SpineYawAxis.Name = TEXT("RotationAxis");
-        SpineYawAxis.ValueType = ESekiroAnimIRValueType::Name;
+        FSekiroAnimIRPropertyContract& OrientationMode =
+            OrientationWarping.Properties.AddDefaulted_GetRef();
+        OrientationMode.Name = TEXT("Mode");
+        OrientationMode.ValueType = ESekiroAnimIRValueType::Name;
+        const TCHAR* OrientationFloatPropertyNames[] = {
+            TEXT("MinRootMotionSpeedThreshold"),
+            TEXT("LocomotionAngleDeltaThreshold"),
+            TEXT("WarpingAlpha"),
+            TEXT("OffsetAlpha"),
+            TEXT("MaxOffsetAngle"),
+        };
+        for (const TCHAR* PropertyName : OrientationFloatPropertyNames)
+        {
+            FSekiroAnimIRPropertyContract& Property =
+                OrientationWarping.Properties.AddDefaulted_GetRef();
+            Property.Name = PropertyName;
+            Property.ValueType = ESekiroAnimIRValueType::Float;
+        }
 
         FSekiroAnimIRNodeContract& FootPlacement = Contracts.AddDefaulted_GetRef();
         FootPlacement.NodeType = SekiroAnimGraphIRNames::FootPlacementNode;

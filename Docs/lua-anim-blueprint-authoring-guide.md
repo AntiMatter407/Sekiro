@@ -393,7 +393,7 @@ UAnimInstance 更新
 
 Lua 来源动画蓝图的 Transition 全部使用强类型原生 Rule AST，可保持并行动画更新。`BlueprintUpdateAnimation` 仍先在游戏线程采集并写入变量，Sequence Player、混合、状态机、Root Motion、Curve 和 Notify 随后由 UE 原生 AnimNode 求值。启用 `RootMotionFromEverything` 时，引擎仍可能为需要即时根运动的帧选择同步更新。
 
-角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前选择锁定四向素材，并把“锁定目标 Yaw + 输入相对素材主轴的残差”作为 ActorYaw 插值目标。Actor 在斜向输入变化时平滑转向，原始 Root Motion 随 Actor 朝向形成连续转弯，不再瞬间改变世界方向。Movement 同时发布方向枚举，并根据插值后的实际 ActorYaw 计算指向锁定目标的脊柱补偿；`ABP_Sekiro.BlueprintUpdateAnimation` 只消费该快照。Start、Cycle、Stop 与 StopTurn 通过 `SpineYawCompensation` 旋转 `Spine/Spine1/Spine2`，让上半身在转向过程中持续看向锁定目标。锁定四方向按相邻主轴中点使用 `45°/135°` 初始分类，并优先保持当前素材：当前素材的方向残差不超过基础 `45°` 加 `10°` 滞回时不换腿，超过 `55°` 才重新分类。这样先向左再加入后退时仍使用 Left，由 ActorYaw 平滑形成后左轨迹；只有当前素材残差超过保持范围才换到 Back。自由移动仍由 Actor 朝输入方向旋转，Back Sequence 只用于锁定后退；Jump 继续使用八方向素材与 Orientation Warping。
+角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前选择锁定四向素材，并让 ActorYaw 平滑追向锁定目标；`ABP_Sekiro.BlueprintUpdateAnimation` 把实际移动方向相对当前 Actor 的角度镜像到生成变量。锁定 Start、Cycle、Stop 与 Step 使用 UE5.2 标准 `Orientation Warping` Graph 模式：节点从输入 Pose 的 `RootMotionDelta` Attribute 读取素材原方向，把 Root Motion 位移与下半身同步重定向到 `LocomotionAngle`，再通过 `Spine/Spine1/Spine2` 反向补偿保持上半身朝向。项目 Graph 中不再实例化自定义 `SpineYawCompensation` 节点；输入释放时锁存角度供 Stop 使用，Graph 方案也不再请求旧 StopTurn 换脚回正。锁定四方向按 `45°/135°` 初始分类，并保留 `10°` 滞回避免边界换腿抖动。自由移动仍由 Actor 朝输入方向旋转；Jump 继续使用八方向素材和 Manual Orientation Warping。
 
 ## 十三、调试与常见错误
 

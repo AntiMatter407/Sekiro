@@ -341,9 +341,6 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     LockOnCardinalDirection = bHasLockOnLocomotionSnapshot
         ? OwnerMovement->GetLockOnCardinalDirectionSnapshot()
         : 0;
-    LockOnSpineYawCompensation = bHasLockOnLocomotionSnapshot
-        ? OwnerMovement->GetLockOnSpineYawCompensationSnapshot()
-        : 0.f;
     if (bHasDesiredMoveYaw)
     {
         DesiredMoveYaw = OwnerMovement->GetDesiredMoveYawSnapshot();

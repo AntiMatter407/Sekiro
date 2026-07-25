@@ -13,7 +13,6 @@ local LuaLegIKNode = require("Animation.Compiler.LuaLegIKNode")
 local LuaLayeredBlendPerBoneNode = require("Animation.Compiler.LuaLayeredBlendPerBoneNode")
 local LuaLocalToComponentSpaceNode = require("Animation.Compiler.LuaLocalToComponentSpaceNode")
 local LuaOrientationWarpingNode = require("Animation.Compiler.LuaOrientationWarpingNode")
-local LuaSpineYawCompensationNode = require("Animation.Compiler.LuaSpineYawCompensationNode")
 local LuaSaveCachedPoseNode = require("Animation.Compiler.LuaSaveCachedPoseNode")
 local LuaSequencePlayerNode = require("Animation.Compiler.LuaSequencePlayerNode")
 local LuaSlotNode = require("Animation.Compiler.LuaSlotNode")
@@ -269,19 +268,6 @@ end
 function LuaAnimGraph:OrientationWarping(name)
     ---@type LuaOrientationWarpingNode
     local node = LuaOrientationWarpingNode:New({
-        Graph = self,
-        Name = name,
-        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
-    })
-    self:AddNode(node)
-    return node
-end
-
----创建只补偿脊柱的原生 Yaw 节点，不旋转 Root 或改写 Root Motion。
----@param name string Graph 内节点语义名。
----@return LuaSpineYawCompensationNode node 提供组件空间姿势、Yaw 和 Alpha Pin 的节点。
-function LuaAnimGraph:SpineYawCompensation(name)
-    local node = LuaSpineYawCompensationNode:New({
         Graph = self,
         Name = name,
         SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),

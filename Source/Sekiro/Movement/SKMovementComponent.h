@@ -115,7 +115,13 @@ public:
     void ClearMoveFacingSnapshotForScript();                       // 清空转向前移动快照
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
-    void SetLockOnLocomotionSnapshotForScript(bool bEnabled, int32 CardinalDirection, float SpineYawCompensation); // 发布锁定四方向素材与朝向快照
+    void SetLockOnLocomotionSnapshotForScript(bool bEnabled, int32 CardinalDirection); // 发布锁定四方向素材快照
+
+    UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
+    void SetRootMotionDirectionWarpingForScript(bool bEnabled, float TargetWorldYaw); // 设置动画根位移的目标世界方向
+
+    UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
+    bool IsOwnerCombatFullBodyActionActiveForScript() const;      // 查询全身战斗动作是否正在占用 Root Motion
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
     float GetHorizontalSpeedForScript() const;                    // 获取所属角色当前水平速度
@@ -125,7 +131,6 @@ public:
     float GetMoveDirectionAngleBeforeRotationSnapshot() const;    // 动画采集读取转身前相对角
     bool HasLockOnLocomotionSnapshot() const;                     // 动画采集是否可读取锁定移动快照
     int32 GetLockOnCardinalDirectionSnapshot() const;             // 动画采集读取锁定四方向枚举值
-    float GetLockOnSpineYawCompensationSnapshot() const;          // 动画采集读取上半身回正角
 
 protected:
     virtual void BeginPlay() override;
@@ -152,12 +157,17 @@ private:
     float DesiredMoveYawSnapshot = 0.f;                          // Lua 发布的输入目标世界 Yaw
     float MoveDirectionAngleBeforeRotationSnapshot = 0.f;        // Lua 发布的转身前角色局部方向角
     int32 LockOnCardinalDirectionSnapshot = 0;                   // Lua 发布的锁定四方向素材枚举值
-    float LockOnSpineYawCompensationSnapshot = 0.f;              // Lua 发布的上半身回正 Yaw
+    float RootMotionDirectionWarpingWorldYaw = 0.f;              // Lua 发布的动画根位移目标世界 Yaw
     uint32 bHasDesiredMoveYawSnapshot : 1;                        // 当前是否存在有效移动目标快照
     uint32 bHasLockOnLocomotionSnapshot : 1;                      // 当前是否存在有效锁定移动快照
+    uint32 bRootMotionDirectionWarpingEnabled : 1;                // 是否重定向动画根位移的水平平移
 
     // ── 通用执行 ──────────────────────────────────────────────
 
     void RefreshCachedComponents();                              // 刷新角色相关组件缓存
     void ApplyActorYaw(float TargetYaw, float InterpSpeed, float DeltaTime); // 原生执行最短路径 Yaw 插值
+    FTransform ProcessRootMotionDirectionWarping(
+        const FTransform& WorldSpaceRootMotion,
+        UCharacterMovementComponent* MovementComponent,
+        float DeltaSeconds) const;                               // 重定向世界空间 Root Motion 水平平移
 };

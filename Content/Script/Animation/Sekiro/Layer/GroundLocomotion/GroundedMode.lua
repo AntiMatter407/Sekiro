@@ -84,14 +84,15 @@ function GroundedMode.StateMachine(Machine)
             Rule.BoolProperty("bHasMovementInput", true),
             Rule.BoolProperty("bIsDodging", false)),
     })
-    -- 锁定待机偏航超过阈值时进入原地 Turn。
+    -- 锁定待机偏航超过阈值时进入原地 Turn；全身战斗动作期间底层状态机继续更新，但不能抢跑一次性转身。
     Machine:Transition("Idle_Turn", "Idle", "Turn", {
         BlendDuration = Tuning.TurnBlendDuration,
         PriorityOrder = 2,
         Rule = Rule.All(
             Rule.BoolProperty("bTurnInPlaceRequested", true),
             Rule.BoolProperty("bHasMovementInput", false),
-            Rule.BoolProperty("bIsDodging", false)),
+            Rule.BoolProperty("bIsDodging", false),
+            Rule.BoolProperty("bIsCombatFullBodyActionActive", false)),
     })
     -- Turn 中 Dodge 可以立即打断到 Step。
     Machine:Transition("Turn_Step", "Turn", "Step", {
@@ -260,21 +261,21 @@ function GroundedMode.StateGraph_Turn(Graph)
     Graph.Result:Connect(turn.Pose)
 end
 
----构建共享 Start；Standing/Crouching 均选择锁定分区对应的四向起步资产，再补齐输入残差。
+---构建共享 Start；锁定四向起步由 Graph Orientation Warping 同步对齐 Root Motion 与下半身。
 ---@param Graph LuaAnimStateGraph Start 状态的原生 Pose Graph。
 ---@return nil result 姿态选择结果连接 State Result。
 function GroundedMode.StateGraph_Start(Graph)
     local start = select_stance(Graph, "Start", Standing.BuildStart(Graph), Crouching.BuildStart(Graph))
-    local compensated = DirectionalPose.SpineYawCompensation(
+    local aligned = DirectionalPose.GraphAlign(
         Graph,
-        "GroundedStartCompensation",
+        "GroundedStartGraphWarping",
         start,
-        "LockOnSpineYawCompensationAngle",
-        "LockOnSpineYawCompensationAlpha")
-    Graph.Result:Connect(compensated.Pose)
+        "LockOnLocomotionAngle",
+        "LockOnOrientationWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
 end
 
----构建共享 Cycle；Movement 已旋转 Actor 使原始四向 Root Motion 对齐轨迹，这里只回正上半身。
+---构建共享 Cycle；Graph 模式读取每帧 Root Motion，并按当前 Actor 下的真实移动角重定向。
 ---@param Graph LuaAnimStateGraph Cycle 状态的原生 Pose Graph。
 ---@return nil result 四向姿势完成脊柱回正并惯性化后连接 State Result。
 function GroundedMode.StateGraph_Cycle(Graph)
@@ -283,33 +284,33 @@ function GroundedMode.StateGraph_Cycle(Graph)
         "Cycle",
         Standing.BuildCycle(Graph, nil),
         Crouching.BuildCycle(Graph, nil))
-    local compensated = DirectionalPose.SpineYawCompensation(
+    local aligned = DirectionalPose.GraphAlign(
         Graph,
-        "GroundedCycleCompensation",
+        "GroundedCycleGraphWarping",
         cycle,
-        "LockOnSpineYawCompensationAngle",
-        "LockOnSpineYawCompensationAlpha")
+        "LockOnLocomotionAngle",
+        "LockOnOrientationWarpingAlpha")
 
     local inertialization = Graph:Inertialization("GroundedCycleInertialization")
-    inertialization.Source:Connect(compensated.Pose)
+    inertialization.Source:Connect(aligned.Pose)
     Graph.Result:Connect(inertialization.Pose)
 end
 
----构建共享 Stop；步态、锁定分区四向素材和量化残差都使用输入释放边沿的锁存值。
+---构建共享 Stop；输入释放后使用锁存移动角继续重定向制动 Root Motion，避免低速速度方向反推抖动。
 ---@param Graph LuaAnimStateGraph Stop 状态的原生 Pose Graph。
 ---@return nil result 姿态选择结果连接 State Result。
 function GroundedMode.StateGraph_Stop(Graph)
     local stop = select_stance(Graph, "Stop", Standing.BuildStop(Graph), Crouching.BuildStop(Graph))
-    local compensated = DirectionalPose.SpineYawCompensation(
+    local aligned = DirectionalPose.GraphAlign(
         Graph,
-        "GroundedStopCompensation",
+        "GroundedStopGraphWarping",
         stop,
-        "LatchedLockOnSpineYawCompensationAngle",
-        "StopSpineYawCompensationAlpha")
-    Graph.Result:Connect(compensated.Pose)
+        "LatchedLockOnLocomotionAngle",
+        "StopOrientationWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
 end
 
----构建 Stop 后的专用换脚回正动作；Turn 动画提供真实脚步，方向补偿只在动作内部逐步撤销。
+---保留旧 StopTurn 状态的原始换脚姿势；Graph 方案不会再请求该状态。
 ---@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
 ---@return nil result 方向对齐后的换脚姿势连接 State Result。
 function GroundedMode.StateGraph_StopTurn(Graph)
@@ -318,16 +319,10 @@ function GroundedMode.StateGraph_StopTurn(Graph)
         "StopTurn",
         Standing.BuildStopTurn(Graph),
         Crouching.BuildStopTurn(Graph))
-    local compensated = DirectionalPose.SpineYawCompensation(
-        Graph,
-        "GroundedStopTurnCompensation",
-        stop_turn,
-        "LatchedLockOnSpineYawCompensationAngle",
-        "StopTurnSpineYawCompensationAlpha")
-    Graph.Result:Connect(compensated.Pose)
+    Graph.Result:Connect(stop_turn.Pose)
 end
 
----构建锁定方向的一次性 Step；非锁定移动由 Movement 负责把角色朝输入方向旋转。
+---构建一次性 Step；锁定分支使用动作触发边沿锁存的局部移动角重定向 Root Motion。
 ---@param Graph LuaAnimStateGraph Step 状态的原生 Pose Graph。
 ---@return nil result 四方向 Step 选择姿势连接 State Result。
 function GroundedMode.StateGraph_Step(Graph)
@@ -337,7 +332,13 @@ function GroundedMode.StateGraph_Step(Graph)
         Left = Anim.Step_Left,
         Right = Anim.Step_Right,
     }, "LatchedActionDirection", false, nil)
-    Graph.Result:Connect(step.Pose)
+    local aligned = DirectionalPose.GraphAlign(
+        Graph,
+        "GroundedStepGraphWarping",
+        step,
+        "LatchedLockOnLocomotionAngle",
+        "StepOrientationWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
 end
 
 return GroundedMode

@@ -8,6 +8,8 @@
 ---@field IKFootBones string 使用竖线分隔的 IK 脚骨骼名。
 ---@field RotationAxis string 角色朝向旋转轴。
 ---@field DistributedBoneOrientationAlpha number 根与脊柱承担的旋转比例；1 表示脚部不额外旋转。
+---@field MinRootMotionSpeedThreshold number Graph 模式低于该 Root Motion 速度时停止方向重定向，单位 cm/s。
+---@field LocomotionAngleDeltaThreshold number Graph 模式切换正反运动解释的最大角度，单位为度。
 
 ---@class SekiroFootIKSettings
 ---@field IKFootRootBone string Foot Placement 使用的双脚 IK 根骨骼名。
@@ -110,6 +112,8 @@ local Tuning = {
         IKFootBones = "L_Foot_Target|R_Foot_Target",
         RotationAxis = "Z",
         DistributedBoneOrientationAlpha = 1.0,
+        MinRootMotionSpeedThreshold = 3.0,
+        LocomotionAngleDeltaThreshold = 90.0,
     },
     FootIK = {
         -- 专用参考骨骼只提供稳定的向上轴，不蒙皮，也不改变 Master、RootPos 或双腿的既有层级。
