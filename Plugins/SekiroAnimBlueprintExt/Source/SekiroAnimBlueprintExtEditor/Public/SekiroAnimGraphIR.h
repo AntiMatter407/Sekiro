@@ -168,6 +168,9 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRNode
     FName NodeType = NAME_None;           // 由后续 NodeFactory 解析的注册名
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FSoftClassPath EditorNodeClass;        // 可选的反射节点类；设置后无需注册 NodeType
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     FString DisplayName;                  // 编辑器显示名
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")

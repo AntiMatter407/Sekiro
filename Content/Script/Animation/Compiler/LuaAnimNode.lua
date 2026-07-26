@@ -11,6 +11,7 @@ local NodeContracts = require("Animation.Compiler.NodeContracts")
 ---@field Graph LuaAnimGraph 所属 Pose Graph。
 ---@field Name string 节点语义名称。
 ---@field NodeType string|nil NodeFactory 注册类型；具体子类可在初始化前补入。
+---@field EditorNodeClass string|nil 原生 UAnimGraphNode 类路径；设置后通过 UE 反射创建，无需注册 NodeType。
 ---@field DisplayName string|nil 编辑器显示名称。
 ---@field OwnedGraphId string|nil 节点独占的内部 Graph ID。
 ---@field bIsGraphRoot boolean|nil 是否由 Graph 构造流程创建为固定根节点。
@@ -21,6 +22,7 @@ local NodeContracts = require("Animation.Compiler.NodeContracts")
 ---@field Name string 节点语义名称。
 ---@field Id string 节点稳定 ID。
 ---@field NodeType string NodeFactory 注册类型。
+---@field EditorNodeClass string 原生反射节点类路径；注册节点为空字符串。
 ---@field DisplayName string 编辑器显示名称。
 ---@field OwnedGraphId string 节点独占的内部 Graph ID。
 ---@field SourceLocation SekiroAnimIRSourceLocation 节点源码位置。
@@ -48,6 +50,13 @@ local function assign_node_field(instance, key, value)
         return
     end
 
+    if rawget(instance, "EditorNodeClass") ~= nil
+        and rawget(instance, "EditorNodeClass") ~= ""
+        and rawget(instance, "PropertyNames") ~= nil then
+        instance:SetProperty(key, IRValue.Infer(value))
+        return
+    end
+
     assert(rawget(instance, "bIsSealed") ~= true, string.format(
         "NodeType '%s' has no registered Property '%s'",
         tostring(rawget(instance, "NodeType")),
@@ -66,15 +75,25 @@ function LuaAnimNode:Initialize(config)
     self.Name = IRSchema.RequireSemanticName(config.Name, "Node")
     self.Id = IRSchema.MakeStableId(self.Graph.Id, "Node", self.Name)
     self.NodeType = IRSchema.RequireSemanticName(config.NodeType, "NodeType")
+    self.EditorNodeClass = config.EditorNodeClass or ""
     self.DisplayName = config.DisplayName or self.Name
     self.OwnedGraphId = config.OwnedGraphId or ""
     self.SourceLocation = config.SourceLocation
         or IRSchema.CaptureSourceLocation(self.Graph.Blueprint.SourceModule, 3)
-    self.Contract = NodeContracts.Require(self.NodeType)
-    NodeContracts.ValidatePlacement(self.Contract, self.Graph.GraphType, config.bIsGraphRoot == true)
-    self.Pins = NodeContracts.CopyPinAssertions(self.Contract)
+    self.Contract = self.EditorNodeClass ~= ""
+        and nil
+        or NodeContracts.Require(self.NodeType)
+    if self.Contract ~= nil then
+        NodeContracts.ValidatePlacement(self.Contract, self.Graph.GraphType, config.bIsGraphRoot == true)
+    else
+        assert(config.bIsGraphRoot ~= true, "Reflection Node cannot replace a Graph root")
+        assert(self.OwnedGraphId == "", "Reflection Node cannot own an internal Graph")
+    end
+    self.Pins = self.Contract ~= nil
+        and NodeContracts.CopyPinAssertions(self.Contract)
+        or {}
     self.PinObjects = {}
-    for _, pin_contract in ipairs(self.Contract.Pins) do
+    for _, pin_contract in ipairs(self.Contract ~= nil and self.Contract.Pins or {}) do
         ---@type LuaAnimPin
         local pin = LuaAnimPin:New({
             Node = self,
@@ -95,14 +114,18 @@ end
 ---@return SekiroAnimIRProperty property 新建的 Property IR 表。
 function LuaAnimNode:SetProperty(name, value)
     local property_name = IRSchema.RequireSemanticName(name, "Property")
-    local registered_property = NodeContracts.RequireProperty(self.Contract, property_name)
+    local registered_property = self.Contract ~= nil
+        and NodeContracts.RequireProperty(self.Contract, property_name)
+        or nil
     assert(value ~= nil and value.Type ~= nil, "Node Property requires a typed IRValue")
-    assert(value.Type == registered_property.ValueType, string.format(
-        "Property '%s.%s' requires IR value type '%s', got '%s'",
-        self.NodeType,
-        property_name,
-        registered_property.ValueType,
-        tostring(value.Type)))
+    if registered_property ~= nil then
+        assert(value.Type == registered_property.ValueType, string.format(
+            "Property '%s.%s' requires IR value type '%s', got '%s'",
+            self.NodeType,
+            property_name,
+            registered_property.ValueType,
+            tostring(value.Type)))
+    end
     assert(self.PropertyNames[property_name] == nil, string.format(
         "Node '%s' contains duplicate Property '%s'",
         self.Name,
@@ -122,10 +145,13 @@ end
 ---导出与 FSekiroAnimIRNode 字段一致的纯 Lua 表。
 ---@return SekiroAnimIRNode ir_node 可交给 C++ 导入器的节点声明。
 function LuaAnimNode:ToIR()
-    NodeContracts.ValidateExport(self.Contract, self.PropertyNames, self.OwnedGraphId)
+    if self.Contract ~= nil then
+        NodeContracts.ValidateExport(self.Contract, self.PropertyNames, self.OwnedGraphId)
+    end
     return {
         Id = self.Id,
         NodeType = self.NodeType,
+        EditorNodeClass = self.EditorNodeClass,
         DisplayName = self.DisplayName,
         OwnedGraphId = self.OwnedGraphId,
         Pins = self.Pins,

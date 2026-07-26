@@ -1809,6 +1809,44 @@ bool FSekiroAnimGraphIRUnknownNodeTypeTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRReflectionNodeTest,
+    "Sekiro.AnimGraphIR.ReflectionNode",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证显式 EditorNodeClass 可绕过静态 NodeType 注册表，并把 Pin 校验延迟到 UE 原生 Schema。
+ * 测试只操作内存 IR，不加载编辑器节点类。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRReflectionNodeTest::RunTest(const FString& Parameters)
+{
+    FSekiroAnimBlueprintIR Blueprint = SekiroAnimGraphIRTests::MakeMinimalIR();
+    FSekiroAnimIRGraph& MainGraph = Blueprint.Layers[0].Graphs[0];
+    FSekiroAnimIRNode& ReflectionNode = MainGraph.Nodes.AddDefaulted_GetRef();
+    ReflectionNode.Id = TEXT("Node.Reflection.RotateRoot");
+    ReflectionNode.NodeType = TEXT("Reflected");
+    ReflectionNode.EditorNodeClass =
+        FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_RotateRootBone"));
+    ReflectionNode.DisplayName = TEXT("Rotate Root");
+    ReflectionNode.DeclarationOrder = MainGraph.Nodes.Num() - 1;
+    FSekiroAnimIRProperty& YawProperty = ReflectionNode.Properties.AddDefaulted_GetRef();
+    YawProperty.Name = TEXT("Yaw");
+    YawProperty.Value.Type = ESekiroAnimIRValueType::Float;
+    YawProperty.Value.FloatValue = 30.0;
+
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestTrue(
+        TEXT("Reflection Node is accepted without static registry entry"),
+        USekiroAnimGraphIRLibrary::Validate(Blueprint, Diagnostics));
+    TestFalse(
+        TEXT("Reflection Node does not emit unknown NodeType"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(Diagnostics, TEXT("IR.UnknownNodeType")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FSekiroAnimGraphIRPinRegistryContractTest,
     "Sekiro.AnimGraphIR.PinRegistryContract",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

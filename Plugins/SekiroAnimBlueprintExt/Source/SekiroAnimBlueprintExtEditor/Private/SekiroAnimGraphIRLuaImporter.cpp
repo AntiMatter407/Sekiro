@@ -130,6 +130,66 @@ namespace SekiroAnimGraphIRLua
     }
 
     /**
+     * 读取可选 Lua string；字段缺失时返回空字符串，字段存在但类型错误时追加诊断。
+     * 函数结束时恢复 Lua 栈顶，不加载任何 UObject。
+     *
+     * @param Context 当前解析上下文。
+     * @param TableIndex 父 table 栈索引。
+     * @param FieldName UTF-8 字段名。
+     * @param FieldPath 完整字段路径。
+     * @param SourceLocation 字段所属实体位置。
+     * @param OutValue 接收字符串；字段缺失时为空。
+     * @return 字段缺失或为 string 时返回 true，类型错误时返回 false。
+     */
+    bool ReadOptionalStringField(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const char* FieldName,
+        const FString& FieldPath,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        FString& OutValue)
+    {
+        const int32 InitialTop = lua_gettop(Context.State);
+        ON_SCOPE_EXIT { lua_settop(Context.State, InitialTop); };
+
+        const int32 Type = lua_getfield(Context.State, lua_absindex(Context.State, TableIndex), FieldName);
+        if (Type == LUA_TNIL)
+        {
+            OutValue.Reset();
+            return true;
+        }
+        if (Type != LUA_TSTRING)
+        {
+            AddLuaError(
+                Context,
+                InvalidFieldType,
+                FString::Printf(
+                    TEXT("Field '%s' must be string when present, got %s."),
+                    *FieldPath,
+                    *DescribeLuaType(Context.State, Type)),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+
+        size_t Utf8Length = 0;
+        const char* Utf8Value = lua_tolstring(Context.State, -1, &Utf8Length);
+        if (Utf8Length > static_cast<size_t>(MAX_int32))
+        {
+            AddLuaError(
+                Context,
+                InvalidNumber,
+                FString::Printf(TEXT("String field '%s' exceeds supported length."), *FieldPath),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+        const FUTF8ToTCHAR ConvertedValue(Utf8Value, static_cast<int32>(Utf8Length));
+        OutValue = FString(ConvertedValue.Length(), ConvertedValue.Get());
+        return true;
+    }
+
+    /**
      * 读取严格 Lua string 并转换为 FName，不加载或注册任何 UObject。
      *
      * @param Context 当前解析上下文。
@@ -777,8 +837,17 @@ namespace SekiroAnimGraphIRLua
         FSekiroAnimIRNode& OutNode)
     {
         if (!ParseSourceLocationField(Context, TableIndex, Path + TEXT(".SourceLocation"), SourceLocation, OutNode.SourceLocation)) return false;
+        FString EditorNodeClassPath;
         return ReadStringField(Context, TableIndex, "Id", Path + TEXT(".Id"), OutNode.SourceLocation, OutNode.Id)
             && ReadNameField(Context, TableIndex, "NodeType", Path + TEXT(".NodeType"), OutNode.SourceLocation, OutNode.NodeType)
+            && ReadOptionalStringField(
+                Context,
+                TableIndex,
+                "EditorNodeClass",
+                Path + TEXT(".EditorNodeClass"),
+                OutNode.SourceLocation,
+                EditorNodeClassPath)
+            && ((OutNode.EditorNodeClass = FSoftClassPath(EditorNodeClassPath)), true)
             && ReadStringField(Context, TableIndex, "DisplayName", Path + TEXT(".DisplayName"), OutNode.SourceLocation, OutNode.DisplayName)
             && ReadStringField(Context, TableIndex, "OwnedGraphId", Path + TEXT(".OwnedGraphId"), OutNode.SourceLocation, OutNode.OwnedGraphId)
             && ParseArrayField(Context, TableIndex, "Pins", Path + TEXT(".Pins"), OutNode.SourceLocation, OutNode.Pins, &ParsePin)

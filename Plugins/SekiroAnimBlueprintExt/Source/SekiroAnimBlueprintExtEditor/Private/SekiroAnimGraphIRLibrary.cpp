@@ -823,7 +823,7 @@ bool USekiroAnimGraphIRLibrary::Validate(
                 else
                 {
                     NodeContract = FSekiroAnimGraphNodeRegistry::Find(Node.NodeType);
-                    if (!NodeContract)
+                    if (!NodeContract && Node.EditorNodeClass.IsNull())
                     {
                         AddError(
                             OutDiagnostics,
@@ -835,6 +835,17 @@ bool USekiroAnimGraphIRLibrary::Validate(
                             Node.Id,
                             Node.SourceLocation);
                     }
+                }
+
+                if (!Node.EditorNodeClass.IsNull()
+                    && (!Node.OwnedGraphId.IsEmpty() || Node.Id == Graph.RootNodeId))
+                {
+                    AddError(
+                        OutDiagnostics,
+                        UnexpectedOwnedGraph,
+                        TEXT("Reflection nodes cannot own a Graph or replace a schema-owned root node."),
+                        Node.Id,
+                        Node.SourceLocation);
                 }
 
                 if (NodeContract)
@@ -1324,13 +1335,15 @@ bool USekiroAnimGraphIRLibrary::Validate(
                     FSekiroAnimGraphNodeRegistry::Find((*SourceNodeResult)->NodeType);
                 const FSekiroAnimIRNodeContract* TargetContract =
                     FSekiroAnimGraphNodeRegistry::Find((*TargetNodeResult)->NodeType);
+                const bool bReflectiveSource = !(*SourceNodeResult)->EditorNodeClass.IsNull();
+                const bool bReflectiveTarget = !(*TargetNodeResult)->EditorNodeClass.IsNull();
                 const FSekiroAnimIRPinContract* SourcePin = SourceContract
                     ? FindPinContract(*SourceContract, Link.Source.PinName)
                     : nullptr;
                 const FSekiroAnimIRPinContract* TargetPin = TargetContract
                     ? FindPinContract(*TargetContract, Link.Target.PinName)
                     : nullptr;
-                if (!SourcePin || !TargetPin)
+                if ((!SourcePin && !bReflectiveSource) || (!TargetPin && !bReflectiveTarget))
                 {
                     AddError(
                         OutDiagnostics,
@@ -1341,8 +1354,8 @@ bool USekiroAnimGraphIRLibrary::Validate(
                     continue;
                 }
 
-                if (SourcePin->Direction != ESekiroAnimIRPinDirection::Output
-                    || TargetPin->Direction != ESekiroAnimIRPinDirection::Input)
+                if ((SourcePin && SourcePin->Direction != ESekiroAnimIRPinDirection::Output)
+                    || (TargetPin && TargetPin->Direction != ESekiroAnimIRPinDirection::Input))
                 {
                     AddError(
                         OutDiagnostics,
@@ -1352,7 +1365,7 @@ bool USekiroAnimGraphIRLibrary::Validate(
                         Link.SourceLocation);
                 }
 
-                if (SourcePin->DataType != TargetPin->DataType)
+                if (SourcePin && TargetPin && SourcePin->DataType != TargetPin->DataType)
                 {
                     AddError(
                         OutDiagnostics,
@@ -1365,7 +1378,9 @@ bool USekiroAnimGraphIRLibrary::Validate(
                 const FString InputKey = Link.Target.NodeId + TEXT("\x1f") + Link.Target.PinName;
                 int32& InputCount = InputConnectionCounts.FindOrAdd(InputKey);
                 ++InputCount;
-                if (InputCount > 1 && !TargetPin->bAllowMultipleConnections)
+                if (InputCount > 1
+                    && TargetPin != nullptr
+                    && !TargetPin->bAllowMultipleConnections)
                 {
                     AddError(
                         OutDiagnostics,

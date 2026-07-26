@@ -3,6 +3,7 @@
 -- Graph 持有节点与 Link，并自动创建唯一 OutputPose 根节点。
 local CompilerClass = require("Animation.Compiler.CompilerClass")
 local IRSchema = require("Animation.Compiler.IRSchema")
+local IRValue = require("Animation.Compiler.IRValue")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
 local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")
@@ -187,6 +188,37 @@ function LuaAnimGraph:CreateNode(name, node_type)
         NodeType = node_type,
         SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
     })
+    self:AddNode(node)
+    return node
+end
+
+---通过 UE 反射创建并登记任意普通 UAnimGraphNode_Base 节点。
+---节点 Pin 由原生类分配，连接时直接使用编辑器中显示的 Pin 名；结构型节点仍应使用现有专用构造函数。
+---@param name string Graph 内的节点语义名。
+---@param editor_node_class string 原生编辑器节点类路径，例如 /Script/AnimGraph.AnimGraphNode_RotateRootBone。
+---@param properties table<string, boolean|number|string|SekiroAnimIRValue>|nil 反射属性路径和值；支持 Node.Yaw 或嵌套结构路径。
+---@return LuaAnimNode node 新建并登记的反射节点。
+function LuaAnimGraph:Node(name, editor_node_class, properties)
+    assert(
+        type(editor_node_class) == "string" and editor_node_class ~= "",
+        "Graph:Node requires a non-empty UAnimGraphNode class path")
+    ---@type LuaAnimNode
+    local node = LuaAnimNode:New({
+        Graph = self,
+        Name = name,
+        NodeType = "Reflected",
+        EditorNodeClass = editor_node_class,
+        SourceLocation = IRSchema.CaptureSourceLocation(self.Blueprint.SourceModule, 3),
+    })
+    local property_names = {}
+    for property_name in pairs(properties or {}) do
+        table.insert(property_names, property_name)
+    end
+    table.sort(property_names)
+    for _, property_name in ipairs(property_names) do
+        local value = properties[property_name]
+        node:SetProperty(property_name, IRValue.Infer(value))
+    end
     self:AddNode(node)
     return node
 end
@@ -396,8 +428,14 @@ end
 ---@return SekiroAnimIRLink link 新建的 Link IR 表。
 function LuaAnimGraph:Link(source_node, source_pin, target_node, target_pin)
     assert(source_node ~= nil and target_node ~= nil, "Graph:Link requires source and target Nodes")
-    local source_contract = NodeContracts.RequirePin(source_node.Contract, source_pin, "Output")
-    local target_contract = NodeContracts.RequirePin(target_node.Contract, target_pin, "Input")
+    IRSchema.RequireSemanticName(source_pin, "Source Pin")
+    IRSchema.RequireSemanticName(target_pin, "Target Pin")
+    local source_contract = source_node.Contract ~= nil
+        and NodeContracts.RequirePin(source_node.Contract, source_pin, "Output")
+        or { bAllowMultipleConnections = true }
+    local target_contract = target_node.Contract ~= nil
+        and NodeContracts.RequirePin(target_node.Contract, target_pin, "Input")
+        or { bAllowMultipleConnections = false }
     for _, existing_link in ipairs(self.Links) do
         local source_is_reused = existing_link.Source.NodeId == source_node.Id
             and existing_link.Source.PinName == source_pin

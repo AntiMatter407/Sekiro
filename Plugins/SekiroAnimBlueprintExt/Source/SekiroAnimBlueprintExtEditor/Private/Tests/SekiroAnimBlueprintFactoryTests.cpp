@@ -32,6 +32,7 @@
 #include "Editor.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkeletalMeshSocket.h"
+#include "EdGraphSchema_K2.h"
 #include "Framework/Commands/UICommandList.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "Framework/MultiBox/MultiBox.h"
@@ -40,6 +41,7 @@
 #include "K2Node_CallFunction.h"
 #include "K2Node_AnimGetter.h"
 #include "K2Node_Event.h"
+#include "K2Node_Self.h"
 #include "K2Node_VariableGet.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -3033,6 +3035,26 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     TArray<UEdGraph*> FirstAllGraphs;
     AnimBlueprint->GetAllGraphs(FirstAllGraphs);
 
+    FEdGraphPinType ManualVariableType;
+    ManualVariableType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+    const FName ManualVariableName(TEXT("EditorOwnedFlag"));
+    TestTrue(
+        TEXT("Editor-owned variable is added before Lua regeneration"),
+        FBlueprintEditorUtils::AddMemberVariable(
+            AnimBlueprint,
+            ManualVariableName,
+            ManualVariableType,
+            TEXT("false")));
+    UK2Node_Self* EditorOwnedEventNode = nullptr;
+    if (EventGraph != nullptr)
+    {
+        FGraphNodeCreator<UK2Node_Self> NodeCreator(*EventGraph);
+        EditorOwnedEventNode = NodeCreator.CreateNode(false);
+        NodeCreator.Finalize();
+        EditorOwnedEventNode->NodePosX = -500;
+        EditorOwnedEventNode->NodePosY = 400;
+    }
+
     bool bRecursiveCallbackObserved = false;
     bool bRecursiveCompileSucceeded = true;
     TArray<FSekiroAnimIRDiagnostic> RecursiveDiagnostics;
@@ -3096,7 +3118,22 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
         ? StateMachineNode->EditorStateMachineGraph
         : nullptr;
     EventGraph = FBlueprintEditorUtils::FindEventGraph(AnimBlueprint);
-    TestEqual(TEXT("Variables do not duplicate"), AnimBlueprint->NewVariables.Num(), FirstVariableCount);
+    TestEqual(
+        TEXT("Lua variables do not duplicate and editor variable remains"),
+        AnimBlueprint->NewVariables.Num(),
+        FirstVariableCount + 1);
+    TestTrue(
+        TEXT("Editor-owned variable survives Lua regeneration"),
+        AnimBlueprint->NewVariables.ContainsByPredicate(
+            [ManualVariableName](const FBPVariableDescription& Variable)
+            {
+                return Variable.VarName == ManualVariableName;
+            }));
+    TestTrue(
+        TEXT("Editor-owned EventGraph node survives Lua regeneration"),
+        EventGraph != nullptr
+            && EditorOwnedEventNode != nullptr
+            && EventGraph->Nodes.Contains(EditorOwnedEventNode));
     TestEqual(
         TEXT("Root state machine does not duplicate"),
         CountNodes<UAnimGraphNode_StateMachine>(MainGraph),

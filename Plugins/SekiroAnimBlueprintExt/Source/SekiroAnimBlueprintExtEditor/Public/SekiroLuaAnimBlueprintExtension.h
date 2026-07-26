@@ -74,6 +74,9 @@ public:
     UPROPERTY()
     bool bHasLastSuccessfulIR = false; // 是否存在可用于失败恢复的成功 IR
 
+    UPROPERTY()
+    TArray<FName> GeneratedVariableNames; // 当前 AnimGraph 中由 Lua 生成器拥有的成员变量名
+
     /** 查找资产已有的 Lua 动画蓝图扩展。 */
     static USekiroLuaAnimBlueprintExtension* Find(const UAnimBlueprint* AnimBlueprint);
 

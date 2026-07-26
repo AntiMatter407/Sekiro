@@ -92,4 +92,29 @@ function IRValue.From(value_type, value)
     return constructor(value)
 end
 
+---根据普通 Lua 标量生成类型化 IR Value，供反射节点属性使用。
+---字符串默认保持 String；需要明确的 FName、对象或类路径时仍可直接传入对应 IRValue 构造结果。
+---@param value boolean|number|string|SekiroAnimIRValue 待转换的 Lua 标量或已类型化 IR Value。
+---@return SekiroAnimIRValue ir_value 可由 C++ 反射属性写入器消费的类型化值。
+function IRValue.Infer(value)
+    if type(value) == "table" and value.Type ~= nil then
+        return value
+    end
+    if type(value) == "boolean" then
+        return IRValue.Bool(value)
+    end
+    if type(value) == "number" then
+        if value % 1 == 0 then
+            return IRValue.Integer(value)
+        end
+        return IRValue.Float(value)
+    end
+    if type(value) == "string" then
+        return IRValue.String(value)
+    end
+    error(string.format(
+        "Reflection Property requires boolean, number, string or typed IRValue, got '%s'",
+        type(value)))
+end
+
 return IRValue
