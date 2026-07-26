@@ -490,8 +490,9 @@ UAnimBlueprint* FSekiroLuaAnimBlueprintEditorBinding::GetAnimBlueprint() const
 }
 
 /**
- * 根据持久化 SourceMode 执行普通 Compile：Native 直接委托原动作，Lua 先 Check 和 Generate，再委托一次。
- * Lua 前置阶段失败时绝不调用原动作；原生动作返回后根据 Blueprint 状态提交成功或失败元数据。
+ * 根据持久化 SourceMode 执行普通 Compile：Native 直接委托原动作；Lua 源过期时先 Check 和 Generate，
+ * 源未变化时直接执行原生编译，避免设置修改触发整图重建。Lua 前置阶段失败时绝不调用原动作；
+ * 原生动作返回后根据 Blueprint 状态提交成功或失败元数据。
  *
  * @param OriginalAction 本次命令在包装前捕获的 UE 原生动作副本。
  */
@@ -507,20 +508,27 @@ void FSekiroLuaAnimBlueprintEditorBinding::ExecuteModeAwareCompile(FUIAction Ori
         return;
     }
 
-    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
-    if (!USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
-            AnimBlueprint,
-            Diagnostics))
+    const bool bRequiresLuaGraphGeneration =
+        Extension->bSourceDirty
+        || Extension->CompilerVersion
+            != USekiroLuaAnimBlueprintExtension::CurrentCompilerVersion;
+    if (bRequiresLuaGraphGeneration)
     {
-        LogDiagnostics(TEXT("Check Lua"), AnimBlueprint, Diagnostics);
-        return;
-    }
-    if (!USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
-            AnimBlueprint,
-            Diagnostics))
-    {
-        LogDiagnostics(TEXT("Generate From Lua"), AnimBlueprint, Diagnostics);
-        return;
+        TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+        if (!USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
+                AnimBlueprint,
+                Diagnostics))
+        {
+            LogDiagnostics(TEXT("Check Lua"), AnimBlueprint, Diagnostics);
+            return;
+        }
+        if (!USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
+                AnimBlueprint,
+                Diagnostics))
+        {
+            LogDiagnostics(TEXT("Generate From Lua"), AnimBlueprint, Diagnostics);
+            return;
+        }
     }
 
     OriginalAction.Execute();

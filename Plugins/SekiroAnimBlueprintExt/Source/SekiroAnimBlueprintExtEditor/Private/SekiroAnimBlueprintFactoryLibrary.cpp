@@ -4331,7 +4331,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
     /**
      * 将已预检 IR 写入目标 AnimBlueprint 的现有 UObject，缺失图外壳由 ResetLuaOwnedBlueprint 自动恢复。
      * 可选 staging 仅供显式工具在进入原生编译前验证；编译前回调必须关闭 staging，避免嵌套原生编译。
-     * 必须在游戏线程且 GEditor 可用时调用。函数在同一事务中关闭多线程动画更新，
+     * 必须在游戏线程且 GEditor 可用时调用。函数保留目标资产当前的多线程动画更新设置，
      * 只准备 Graph，不调用目标 Blueprint 的原生编译。
      *
      * @param Blueprint 接收生成结构的标准动画蓝图。
@@ -4378,8 +4378,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
             NSLOCTEXT("SekiroLuaAnimBlueprint", "PrepareTransaction", "Prepare Lua Animation Blueprint Graph"),
             &Blueprint);
         Blueprint.Modify();
-        Blueprint.bUseMultiThreadedAnimationUpdate =
-            CanUseMultiThreadedAnimationUpdate(Preflight.Blueprint);
 
         bool bPrepared = ResetLuaOwnedBlueprint(
             Blueprint,

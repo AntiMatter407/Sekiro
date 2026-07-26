@@ -3036,6 +3036,7 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     bool bRecursiveCallbackObserved = false;
     bool bRecursiveCompileSucceeded = true;
     TArray<FSekiroAnimIRDiagnostic> RecursiveDiagnostics;
+    AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
     const FDelegateHandle PreCompileHandle = GEditor->OnBlueprintPreCompile().AddLambda(
         [&](UBlueprint* BlueprintToCompile)
         {
@@ -3068,6 +3069,17 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     TestTrue(
         TEXT("Second in-place compilation keeps GeneratedClass valid"),
         AnimBlueprint->GeneratedClass != nullptr);
+    TestFalse(
+        TEXT("In-place Graph regeneration preserves disabled threaded animation update"),
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate);
+    const UAnimInstance* InPlaceGeneratedDefaultInstance =
+        AnimBlueprint->GeneratedClass != nullptr
+            ? Cast<UAnimInstance>(AnimBlueprint->GeneratedClass->GetDefaultObject())
+            : nullptr;
+    TestTrue(
+        TEXT("In-place generated default instance preserves disabled threaded animation update"),
+        InPlaceGeneratedDefaultInstance != nullptr
+            && !InPlaceGeneratedDefaultInstance->bUseMultiThreadedAnimationUpdate);
 
     MainGraph = nullptr;
     for (UEdGraph* FunctionGraph : AnimBlueprint->FunctionGraphs)
@@ -3297,6 +3309,43 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
             SuccessfulRevisionBeforeLuaCommand + 1);
         TestFalse(TEXT("Lua mode compile clears source dirty"), Extension->bSourceDirty);
     }
+    MainGraph = FindMainGraph(AnimBlueprint);
+    const TArray<UEdGraphNode*> NodesBeforeCleanLuaCompile =
+        MainGraph != nullptr ? MainGraph->Nodes : TArray<UEdGraphNode*>();
+    AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
+    TestTrue(
+        TEXT("Clean Lua mode command list executes mapped Compile action"),
+        TestCommandList->ExecuteAction(TestCompileCommand.ToSharedRef()));
+    TestEqual(
+        TEXT("Clean Lua mode delegates to native Compile exactly once"),
+        NativeCompileCallCount,
+        3);
+    TestFalse(
+        TEXT("Clean Lua mode Compile preserves disabled threaded animation update"),
+        AnimBlueprint->bUseMultiThreadedAnimationUpdate);
+    MainGraph = FindMainGraph(AnimBlueprint);
+    bool bCleanCompilePreservedNodeIdentity =
+        MainGraph != nullptr
+        && MainGraph->Nodes.Num() == NodesBeforeCleanLuaCompile.Num();
+    for (int32 NodeIndex = 0;
+         bCleanCompilePreservedNodeIdentity
+            && NodeIndex < NodesBeforeCleanLuaCompile.Num();
+         ++NodeIndex)
+    {
+        bCleanCompilePreservedNodeIdentity =
+            MainGraph->Nodes[NodeIndex].Get() == NodesBeforeCleanLuaCompile[NodeIndex];
+    }
+    TestTrue(
+        TEXT("Clean Lua mode Compile skips Lua Graph regeneration"),
+        bCleanCompilePreservedNodeIdentity);
+    const UAnimInstance* CleanCompileGeneratedDefaultInstance =
+        AnimBlueprint->GeneratedClass != nullptr
+            ? Cast<UAnimInstance>(AnimBlueprint->GeneratedClass->GetDefaultObject())
+            : nullptr;
+    TestTrue(
+        TEXT("Clean Lua mode generated default instance stays on game thread"),
+        CleanCompileGeneratedDefaultInstance != nullptr
+            && !CleanCompileGeneratedDefaultInstance->bUseMultiThreadedAnimationUpdate);
     const int32 SuccessfulRevisionAfterCommand =
         Extension != nullptr ? Extension->SuccessfulCompileRevision : 0;
     CommandBinding->RestoreOriginalCompileActions();
