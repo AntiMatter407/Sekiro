@@ -104,6 +104,7 @@ private:
     void RegisterScriptWatcher();
     void UnregisterScriptWatcher();
     void HandleDirectoryChanged(const TArray<FFileChangeData>& FileChanges);
+    void HandleBlueprintPreCompile(UBlueprint* BlueprintToCompile);
     void HandlePreBeginPIE(bool bIsSimulatingInEditor);
     void HandleEndPIE(bool bIsSimulatingInEditor);
     TSharedRef<FExtender> ExtendAnimationBlueprintToolbar(
@@ -118,6 +119,7 @@ private:
     TSharedPtr<FSekiroLuaAnimBlueprintAutoCompileScheduler, ESPMode::ThreadSafe> Scheduler; // 事件驱动标脏请求合并器
     FString WatchedAnimationScriptRoot; // 注册和注销使用的 ScriptRoot/Animation 目录
     FDelegateHandle DirectoryWatcherHandle; // DirectoryWatcher 回调句柄
+    FDelegateHandle BlueprintPreCompileHandle; // 动画蓝图编译前运行缓存失效委托句柄
     FDelegateHandle PreBeginPIEHandle; // PIE 前同步编译委托句柄
     FDelegateHandle EndPIEHandle; // PIE 结束自动关闭全部 Lua 动画调试委托句柄
     FDelegateHandle ToolbarExtenderHandle; // 官方动画蓝图编辑器工具栏扩展句柄
@@ -170,6 +172,12 @@ void FSekiroAnimBlueprintExtEditorModule::StartupModule()
 
     Scheduler = MakeShared<FSekiroLuaAnimBlueprintAutoCompileScheduler, ESPMode::ThreadSafe>();
     RegisterScriptWatcher();
+    if (GEditor != nullptr)
+    {
+        BlueprintPreCompileHandle = GEditor->OnBlueprintPreCompile().AddRaw(
+            this,
+            &FSekiroAnimBlueprintExtEditorModule::HandleBlueprintPreCompile);
+    }
     PreBeginPIEHandle = FEditorDelegates::PreBeginPIE.AddRaw(
         this,
         &FSekiroAnimBlueprintExtEditorModule::HandlePreBeginPIE);
@@ -204,6 +212,11 @@ void FSekiroAnimBlueprintExtEditorModule::ShutdownModule()
             SekiroAnimBlueprintExtEditorPrivate::LuaAnimSnapshotViewerTabName);
     }
     UnregisterScriptWatcher();
+    if (BlueprintPreCompileHandle.IsValid() && GEditor != nullptr)
+    {
+        GEditor->OnBlueprintPreCompile().Remove(BlueprintPreCompileHandle);
+        BlueprintPreCompileHandle.Reset();
+    }
     if (PreBeginPIEHandle.IsValid())
     {
         FEditorDelegates::PreBeginPIE.Remove(PreBeginPIEHandle);
@@ -405,6 +418,20 @@ void FSekiroAnimBlueprintExtEditorModule::HandleDirectoryChanged(
     {
         MarkPendingSourceChanges(WeakScheduler);
     });
+}
+
+/**
+ * 在动画蓝图销毁并重建生成字段前清除 Lua 更新反射缓存，避免编辑器预览继续访问旧 FProperty。
+ * 只能由 UEditorEngine 的 BlueprintPreCompile 事件在游戏线程调用；非动画蓝图编译不会改变缓存。
+ *
+ * @param BlueprintToCompile 即将编译的蓝图；允许为空，只有 UAnimBlueprint 会触发缓存失效。
+ */
+void FSekiroAnimBlueprintExtEditorModule::HandleBlueprintPreCompile(
+    UBlueprint* BlueprintToCompile)
+{
+    check(IsInGameThread());
+    if (!IsValid(Cast<UAnimBlueprint>(BlueprintToCompile))) return;
+    USekiroLuaTransitionRuntimeLibrary::ResetRuntimeCachesForPIESession();
 }
 
 /**

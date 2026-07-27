@@ -80,9 +80,10 @@ function LuaAnimNode:Initialize(config)
     self.OwnedGraphId = config.OwnedGraphId or ""
     self.SourceLocation = config.SourceLocation
         or IRSchema.CaptureSourceLocation(self.Graph.Blueprint.SourceModule, 3)
-    self.Contract = self.EditorNodeClass ~= ""
-        and nil
-        or NodeContracts.Require(self.NodeType)
+    self.Contract = NodeContracts.Find(self.NodeType)
+    if self.Contract == nil and self.EditorNodeClass == "" then
+        self.Contract = NodeContracts.Require(self.NodeType)
+    end
     if self.Contract ~= nil then
         NodeContracts.ValidatePlacement(self.Contract, self.Graph.GraphType, config.bIsGraphRoot == true)
     else
@@ -106,6 +107,22 @@ function LuaAnimNode:Initialize(config)
     end
     self.Properties = {}
     self.PropertyNames = {}
+end
+
+---按注册契约或普通 Lua 类型把属性值转换为显式 IR Value。
+---Graph:Node 使用该入口，避免业务代码直接构造 IRValue 或因整数写法丢失 Float 契约。
+---@param name string 注册属性名或反射属性路径。
+---@param value boolean|number|string|SekiroAnimIRValue 普通 Lua 标量或显式类型值。
+---@return SekiroAnimIRProperty property 新建的属性 IR。
+function LuaAnimNode:AssignProperty(name, value)
+    local property_name = IRSchema.RequireSemanticName(name, "Property")
+    local registered_property = self.Contract ~= nil
+        and NodeContracts.FindProperty(self.Contract, property_name)
+        or nil
+    local ir_value = registered_property ~= nil
+        and IRValue.From(registered_property.ValueType, value)
+        or IRValue.Infer(value)
+    return self:SetProperty(property_name, ir_value)
 end
 
 ---向节点写入一个已注册的显式类型化 Property；名称和 Value.Type 必须符合 NodeType 契约。

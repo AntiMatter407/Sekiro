@@ -4,6 +4,7 @@
 
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 local CombatBasePose = require("Animation.Sekiro.Layer.Combat.CombatBasePose")
 local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
@@ -117,80 +118,136 @@ function ABP_Sekiro:AnimGraph(Graph)
     local combat_base_pose = Graph:StateMachine("CombatBasePose", CombatBasePose)
 
     -- UE 动画姿势 Pin 不能直接扇出到两个消费者；基础战斗姿态先缓存，再供上半身 Slot 和分层混合共同读取。
-    local locomotion_cache = Graph:SaveCachedPose("LocomotionForUpperBody")
+    local locomotion_cache = Graph:Node(
+        "LocomotionForUpperBody",
+        EditorNodeClass.SaveCachedPose,
+        {
+            CacheName = "LocomotionForUpperBody",
+        },
+        "SaveCachedPose")
     locomotion_cache.Pose:Connect(combat_base_pose.Pose)
-    local locomotion_for_slot = Graph:UseCachedPose("LocomotionSlotSource", locomotion_cache)
-    local locomotion_for_base = Graph:UseCachedPose("LocomotionBlendBase", locomotion_cache)
+    local locomotion_for_slot = Graph:Node(
+        "LocomotionSlotSource",
+        EditorNodeClass.UseCachedPose,
+        {
+            CacheName = locomotion_cache.Name,
+        },
+        "UseCachedPose")
+    local locomotion_for_base = Graph:Node(
+        "LocomotionBlendBase",
+        EditorNodeClass.UseCachedPose,
+        {
+            CacheName = locomotion_cache.Name,
+        },
+        "UseCachedPose")
 
     -- Slot 没有 Montage 时透传移动姿势；收拔刀播放时只替换 Spine 及其后代。
-    local upper_body_slot = Graph:Slot("WeaponUpperBodySlot")
-    upper_body_slot.SlotName = Tuning.UpperBody.SlotName
-    upper_body_slot.bAlwaysUpdateSourcePose = true
+    local upper_body_slot = Graph:Node(
+        "WeaponUpperBodySlot",
+        EditorNodeClass.Slot,
+        {
+            SlotName = Tuning.UpperBody.SlotName,
+            bAlwaysUpdateSourcePose = true,
+        },
+        "Slot")
     upper_body_slot.Source:Connect(locomotion_for_slot.Pose)
 
-    local upper_body_blend = Graph:LayeredBlendPerBone("WeaponUpperBodyBlend")
-    upper_body_blend.BranchFilters = Tuning.UpperBody.BranchFilters
-    upper_body_blend.bMeshSpaceRotationBlend = true
-    upper_body_blend.bMeshSpaceScaleBlend = false
-    upper_body_blend.CurveBlendOption = "Override"
+    local upper_body_blend = Graph:Node(
+        "WeaponUpperBodyBlend",
+        EditorNodeClass.LayeredBlendPerBone,
+        {
+            BranchFilters = Tuning.UpperBody.BranchFilters,
+            bMeshSpaceRotationBlend = true,
+            bMeshSpaceScaleBlend = false,
+            CurveBlendOption = "Override",
+            bBlendRootMotionBasedOnRootBone = false,
+        },
+        "LayeredBlendPerBone")
     -- 两个输入都源自同一份 Locomotion 缓存；关闭按根骨权重筛选，避免 Spine 过滤器把基础 Root Motion 一并裁掉。
-    upper_body_blend.bBlendRootMotionBasedOnRootBone = false
     upper_body_blend.BasePose:Connect(locomotion_for_base.Pose)
     upper_body_blend.BlendPose:Connect(upper_body_slot.Pose)
 
     -- 攻击、Raise/Lower 与 Deflect 都是全身动作；Slot 放在持续姿态状态机和上半身分层之后。
-    local combat_full_body_slot = Graph:Slot("CombatFullBodySlot")
-    combat_full_body_slot.SlotName = Tuning.Combat.FullBodySlotName
-    combat_full_body_slot.bAlwaysUpdateSourcePose = true
+    local combat_full_body_slot = Graph:Node(
+        "CombatFullBodySlot",
+        EditorNodeClass.Slot,
+        {
+            SlotName = Tuning.Combat.FullBodySlotName,
+            bAlwaysUpdateSourcePose = true,
+        },
+        "Slot")
     combat_full_body_slot.Source:Connect(upper_body_blend.Pose)
 
-    local to_component = Graph:LocalToComponentSpace("SkeletalControlsLocalToComponent")
+    local to_component = Graph:Node(
+        "SkeletalControlsLocalToComponent",
+        EditorNodeClass.LocalToComponentSpace,
+        nil,
+        "LocalToComponentSpace")
     to_component.LocalPose:Connect(combat_full_body_slot.Pose)
 
     -- 挂点与刀身偏移反解得到收拔刀共用目标；Montage 曲线只在换挂帧附近平滑约束右手，
     -- 动作前段保持零权重，让原始收拔刀动画完整驱动手臂接近刀柄。
     -- 关节目标引用输入姿势的右肘位置，保留原动画肘部弯曲方向；禁止拉伸以免改变手臂比例。
-    local weapon_hand_ik = Graph:TwoBoneIK("WeaponHandIK")
-    weapon_hand_ik.IKBone = weapon_ik.IKBone
-    weapon_hand_ik.EffectorLocationSpace = "BoneSpace"
-    weapon_hand_ik.EffectorTargetSocketName = weapon_ik.EffectorSocket
-    weapon_hand_ik.JointTargetLocationSpace = "BoneSpace"
-    weapon_hand_ik.JointTargetBoneName = weapon_ik.JointTargetBone
-    weapon_hand_ik.bTakeRotationFromEffectorSpace = true
-    weapon_hand_ik.bAllowStretching = false
-    weapon_hand_ik.AlphaInputType = "Curve"
-    weapon_hand_ik.AlphaCurveName = CurveNames.WeaponHandIK
+    local weapon_hand_ik = Graph:Node(
+        "WeaponHandIK",
+        EditorNodeClass.TwoBoneIK,
+        {
+            IKBone = weapon_ik.IKBone,
+            EffectorLocationSpace = "BoneSpace",
+            EffectorTargetSocketName = weapon_ik.EffectorSocket,
+            JointTargetLocationSpace = "BoneSpace",
+            JointTargetBoneName = weapon_ik.JointTargetBone,
+            bTakeRotationFromEffectorSpace = true,
+            bAllowStretching = false,
+            AlphaInputType = "Curve",
+            AlphaCurveName = CurveNames.WeaponHandIK,
+        },
+        "TwoBoneIK")
     weapon_hand_ik.ComponentPose:Connect(to_component.ComponentPose)
 
-    local foot_placement = Graph:FootPlacement("FootPlacement")
-    foot_placement.IKFootRootBone = foot_ik.IKFootRootBone
-    foot_placement.PelvisBone = foot_ik.PelvisBone
-    foot_placement.LegDefinitions = foot_ik.FootPlacementLegDefinitions
-    foot_placement.PlantSpeedMode = foot_ik.PlantSpeedMode
-    foot_placement.PlantLockType = foot_ik.PlantLockType
-    foot_placement.PelvisMaxOffset = foot_ik.PelvisMaxOffset
-    foot_placement.PelvisHorizontalRebalancingWeight = foot_ik.PelvisHorizontalRebalancingWeight
-    foot_placement.PlantSpeedThreshold = foot_ik.PlantSpeedThreshold
-    foot_placement.PlantDistanceToGround = foot_ik.PlantDistanceToGround
-    foot_placement.TraceStartOffset = foot_ik.TraceStartOffset
-    foot_placement.TraceEndOffset = foot_ik.TraceEndOffset
-    foot_placement.TraceSweepRadius = foot_ik.TraceSweepRadius
-    foot_placement.TraceMaxGroundPenetration = foot_ik.TraceMaxGroundPenetration
-    foot_placement.bTraceEnabled = true
+    local foot_placement = Graph:Node(
+        "FootPlacement",
+        EditorNodeClass.FootPlacement,
+        {
+            IKFootRootBone = foot_ik.IKFootRootBone,
+            PelvisBone = foot_ik.PelvisBone,
+            LegDefinitions = foot_ik.FootPlacementLegDefinitions,
+            PlantSpeedMode = foot_ik.PlantSpeedMode,
+            PlantLockType = foot_ik.PlantLockType,
+            PelvisMaxOffset = foot_ik.PelvisMaxOffset,
+            PelvisHorizontalRebalancingWeight = foot_ik.PelvisHorizontalRebalancingWeight,
+            PlantSpeedThreshold = foot_ik.PlantSpeedThreshold,
+            PlantDistanceToGround = foot_ik.PlantDistanceToGround,
+            TraceStartOffset = foot_ik.TraceStartOffset,
+            TraceEndOffset = foot_ik.TraceEndOffset,
+            TraceSweepRadius = foot_ik.TraceSweepRadius,
+            TraceMaxGroundPenetration = foot_ik.TraceMaxGroundPenetration,
+            bTraceEnabled = true,
+        },
+        "FootPlacement")
     foot_placement.ComponentPose:Connect(weapon_hand_ik.Pose)
 
     -- Foot Placement 和 Leg IK 必须使用同一权重；否则空中关闭贴地后，Leg IK 仍会把双脚拉回旧目标。
     local foot_ik_alpha = Graph:Property("FootIKAlpha", "FootIKAlpha")
     foot_placement.Alpha:Connect(foot_ik_alpha.Value)
 
-    local leg_ik = Graph:LegIK("DualLegIK")
-    leg_ik.LegDefinitions = foot_ik.LegIKLegDefinitions
-    leg_ik.ReachPrecision = foot_ik.ReachPrecision
-    leg_ik.MaxIterations = foot_ik.MaxIterations
+    local leg_ik = Graph:Node(
+        "DualLegIK",
+        EditorNodeClass.LegIK,
+        {
+            LegDefinitions = foot_ik.LegIKLegDefinitions,
+            ReachPrecision = foot_ik.ReachPrecision,
+            MaxIterations = foot_ik.MaxIterations,
+        },
+        "LegIK")
     leg_ik.ComponentPose:Connect(foot_placement.Pose)
     leg_ik.Alpha:Connect(foot_ik_alpha.Value)
 
-    local to_local = Graph:ComponentToLocalSpace("FootIKComponentToLocal")
+    local to_local = Graph:Node(
+        "FootIKComponentToLocal",
+        EditorNodeClass.ComponentToLocalSpace,
+        nil,
+        "ComponentToLocalSpace")
     to_local.ComponentPose:Connect(leg_ik.Pose)
     Graph.Result:Connect(to_local.Pose)
 

@@ -2,6 +2,7 @@
 -- Standing 姿态各运动阶段的 Pose 构建器。
 -- 本模块只声明 Standing 资产选择节点，不拥有状态机；Idle/Start/Cycle/Stop 的时序由 GroundedMode 统一管理。
 
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 local PoseSelectors = require("Animation.Sekiro.Shared.PoseSelectors")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
@@ -89,14 +90,14 @@ local StopAssets = {
 
 ---构建 Standing Idle 循环，供共享 Idle 状态的姿态选择器消费。
 ---@param Graph LuaAnimStateGraph Idle 状态的原生 Pose Graph。
----@return LuaSequencePlayerNode pose_node Standing Idle 姿势节点。
+---@return LuaAnimNode pose_node Standing Idle 姿势节点。
 function Standing.BuildIdle(Graph)
     return PoseSelectors.Sequence(Graph, "StandingIdle", Anim.Idle, true, nil)
 end
 
 ---构建 Standing 原地左右转身；方向在动作进入边沿锁存，避免播放中途翻转。
 ---@param Graph LuaAnimStateGraph Turn 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Standing Turn 最终姿势节点。
+---@return LuaAnimNode pose_node Standing Turn 最终姿势节点。
 function Standing.BuildTurn(Graph)
     return PoseSelectors.LeftRight(
         Graph,
@@ -108,7 +109,7 @@ end
 
 ---构建 Standing Stop 后的换脚回正动作；方向由输入释放时的残差符号独立锁存。
 ---@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Standing StopTurn 最终姿势节点。
+---@return LuaAnimNode pose_node Standing StopTurn 最终姿势节点。
 function Standing.BuildStopTurn(Graph)
     return PoseSelectors.LeftRight(
         Graph,
@@ -120,7 +121,7 @@ end
 
 ---构建 Standing Walk/Run/Sprint Start，并按进入动作时锁存的朝向模式选择转向资产。
 ---@param Graph LuaAnimStateGraph Start 状态的原生 Pose Graph。
----@return LuaBlendListByBoolNode pose_node Standing Start 最终姿势节点。
+---@return LuaAnimNode pose_node Standing Start 最终姿势节点。
 function Standing.BuildStart(Graph)
     local locked_start = PoseSelectors.WalkRunSprint(
         Graph,
@@ -139,8 +140,11 @@ function Standing.BuildStart(Graph)
         false,
         nil)
     local locked_on = Graph:Property("StandingStartLockedOn", "bLatchedActionLockedOn")
-    local start = Graph:BlendListByBool("StandingStartFacingMode")
-    start.BlendTime = Tuning.StartBlendDuration
+    local start = Graph:Node(
+        "StandingStartFacingMode",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.StartBlendDuration },
+        "BlendListByBool")
     start.TruePose:Connect(locked_start.Pose)
     start.FalsePose:Connect(free_start.Pose)
     start.ActiveValue:Connect(locked_on.Value)
@@ -150,7 +154,7 @@ end
 ---构建 Standing Cycle；Walk/Run 四向分支先独立对齐再混合，Sprint 继续作为单向步态分支。
 ---@param Graph LuaAnimStateGraph Cycle 状态的原生 Pose Graph。
 ---@param alignment SekiroCardinalAlignmentConfig 混合前逐分支方向对齐配置。
----@return LuaBlendListByEnumNode pose_node Standing Cycle 步态选择节点。
+---@return LuaAnimNode pose_node Standing Cycle 步态选择节点。
 function Standing.BuildCycle(Graph, alignment)
     return PoseSelectors.WalkRunSprint(
         Graph,
@@ -165,7 +169,7 @@ end
 
 ---构建 Standing Walk/Run/Sprint Stop，使用输入释放边沿锁存的步态和方向保持一次性动画稳定。
 ---@param Graph LuaAnimStateGraph Stop 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Standing Stop 最终姿势节点。
+---@return LuaAnimNode pose_node Standing Stop 最终姿势节点。
 function Standing.BuildStop(Graph)
     return PoseSelectors.WalkRunSprint(
         Graph,

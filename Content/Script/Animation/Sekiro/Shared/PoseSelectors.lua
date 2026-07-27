@@ -2,6 +2,7 @@
 -- Sekiro Locomotion 状态图复用的原生 Pose 选择器构建函数。
 -- 本模块只在编译期创建明确的 SequencePlayer 和 BlendList 节点，不在运行时拼接动画名或动态播放资产。
 
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 local DirectionalPose = require("Animation.Sekiro.Shared.DirectionalPose")
 
@@ -62,18 +63,23 @@ end
 ---@param sequence string 动画序列资产对象路径。
 ---@param loop_animation boolean 是否循环播放。
 ---@param sync_group string|nil 原生同步组名称；一次性动画传 nil。
----@return LuaSequencePlayerNode player 已声明的 SequencePlayer 节点。
+---@return LuaAnimNode player 已声明的 SequencePlayer 节点。
 function PoseSelectors.Sequence(Graph, name, sequence, loop_animation, sync_group)
-    local player = Graph:SequencePlayer(name)
-    player.Sequence = sequence
-    player.bLoopAnimation = loop_animation
-    player.PlayRate = 1.0
+    local properties = {
+        Sequence = sequence,
+        bLoopAnimation = loop_animation,
+        PlayRate = 1.0,
+    }
     if sync_group ~= nil then
-        player.GroupName = sync_group
-        player.GroupRole = "CanBeLeader"
-        player.GroupMethod = "SyncGroup"
+        properties.GroupName = sync_group
+        properties.GroupRole = "CanBeLeader"
+        properties.GroupMethod = "SyncGroup"
     end
-    return player
+    return Graph:Node(
+        name,
+        EditorNodeClass.SequencePlayer,
+        properties,
+        "SequencePlayer")
 end
 
 ---创建四个明确 SequencePlayer，并由 ESKLocomotionDirection 原生枚举选择输出姿势。
@@ -84,7 +90,7 @@ end
 ---@param loop_animation boolean 是否循环四个 SequencePlayer。
 ---@param sync_group string|nil 循环动画使用的同步组名称。
 ---@param alignment SekiroCardinalAlignmentConfig|nil 可选的混合前逐分支方向对齐配置。
----@return LuaBlendListByEnumNode selector 四方向原生 BlendListByEnum 节点。
+---@return LuaAnimNode selector 四方向原生 BlendListByEnum 节点。
 function PoseSelectors.Cardinal(
     Graph,
     name,
@@ -126,8 +132,15 @@ function PoseSelectors.Cardinal(
     end
 
     local direction = Graph:Property(name .. "Direction", direction_variable)
-    local selector = Graph:BlendListByEnum(name .. "Selector", DirectionEnum, { "Fwd", "Bwd", "L", "R" })
-    selector.BlendTime = Tuning.DirectionBlendDuration
+    local selector = Graph:Node(
+        name .. "Selector",
+        EditorNodeClass.BlendListByEnum,
+        {
+            EnumType = DirectionEnum,
+            EnumEntries = "Fwd|Bwd|L|R",
+            BlendTime = Tuning.DirectionBlendDuration,
+        },
+        "BlendListByEnum")
     selector.DefaultPose:Connect(forward.Pose)
     selector.Pose0:Connect(forward.Pose)
     selector.Pose1:Connect(back.Pose)
@@ -146,7 +159,7 @@ end
 ---@param loop_animation boolean 是否循环播放；Cycle 为 true，Start/Stop 为 false。
 ---@param sync_group string|nil Cycle 使用的原生同步组名称。
 ---@param alignment SekiroCardinalAlignmentConfig|nil 可选的混合前逐分支方向对齐配置。
----@return LuaBlendListByEnumNode selector Walk/Run 原生枚举选择节点。
+---@return LuaAnimNode selector Walk/Run 原生枚举选择节点。
 function PoseSelectors.WalkRun(
     Graph,
     name,
@@ -161,8 +174,15 @@ function PoseSelectors.WalkRun(
     local run = PoseSelectors.Cardinal(
         Graph, name .. "Run", assets.Run, direction_variable, loop_animation, sync_group, alignment)
     local gait = Graph:Property(name .. "Gait", gait_variable)
-    local selector = Graph:BlendListByEnum(name .. "GaitSelector", GaitEnum, { "Walk", "Run" })
-    selector.BlendTime = Tuning.GaitBlendDuration
+    local selector = Graph:Node(
+        name .. "GaitSelector",
+        EditorNodeClass.BlendListByEnum,
+        {
+            EnumType = GaitEnum,
+            EnumEntries = "Walk|Run",
+            BlendTime = Tuning.GaitBlendDuration,
+        },
+        "BlendListByEnum")
     selector.DefaultPose:Connect(walk.Pose)
     selector.Pose0:Connect(walk.Pose)
     selector.Pose1:Connect(run.Pose)
@@ -176,13 +196,20 @@ end
 ---@param left_sequence string 左转动画序列资产对象路径。
 ---@param right_sequence string 右转动画序列资产对象路径。
 ---@param direction_variable string 已锁存的左右方向生成变量名。
----@return LuaBlendListByEnumNode selector 左右转原生枚举选择节点。
+---@return LuaAnimNode selector 左右转原生枚举选择节点。
 function PoseSelectors.LeftRight(Graph, name, left_sequence, right_sequence, direction_variable)
     local left = PoseSelectors.Sequence(Graph, name .. "Left", left_sequence, false, nil)
     local right = PoseSelectors.Sequence(Graph, name .. "Right", right_sequence, false, nil)
     local direction = Graph:Property(name .. "Direction", direction_variable)
-    local selector = Graph:BlendListByEnum(name .. "Selector", DirectionEnum, { "Fwd", "Bwd", "L", "R" })
-    selector.BlendTime = Tuning.TurnBlendDuration
+    local selector = Graph:Node(
+        name .. "Selector",
+        EditorNodeClass.BlendListByEnum,
+        {
+            EnumType = DirectionEnum,
+            EnumEntries = "Fwd|Bwd|L|R",
+            BlendTime = Tuning.TurnBlendDuration,
+        },
+        "BlendListByEnum")
     selector.DefaultPose:Connect(right.Pose)
     selector.Pose0:Connect(right.Pose)
     selector.Pose1:Connect(right.Pose)
@@ -202,7 +229,7 @@ end
 ---@param loop_animation boolean 是否循环播放各个 SequencePlayer。
 ---@param sync_group string|nil 循环动画使用的原生同步组名称。
 ---@param alignment SekiroCardinalAlignmentConfig|nil 可选的混合前逐分支方向对齐配置；单向 Sprint 不消费该配置。
----@return LuaBlendListByEnumNode selector Walk/Run/Sprint 原生枚举选择节点。
+---@return LuaAnimNode selector Walk/Run/Sprint 原生枚举选择节点。
 function PoseSelectors.WalkRunSprint(
     Graph,
     name,
@@ -226,8 +253,15 @@ function PoseSelectors.WalkRunSprint(
     end
 
     local gait = Graph:Property(name .. "Gait", gait_variable)
-    local selector = Graph:BlendListByEnum(name .. "GaitSelector", GaitEnum, { "Walk", "Run", "Sprint" })
-    selector.BlendTime = Tuning.GaitBlendDuration
+    local selector = Graph:Node(
+        name .. "GaitSelector",
+        EditorNodeClass.BlendListByEnum,
+        {
+            EnumType = GaitEnum,
+            EnumEntries = "Walk|Run|Sprint",
+            BlendTime = Tuning.GaitBlendDuration,
+        },
+        "BlendListByEnum")
     selector.DefaultPose:Connect(run.Pose)
     selector.Pose0:Connect(walk.Pose)
     selector.Pose1:Connect(run.Pose)
@@ -242,7 +276,7 @@ end
 ---@param assets table<string, string> 包含 Forward、ForwardLeft、Left、BackLeft、Back、BackRight、Right、ForwardRight 的资产表。
 ---@param direction_variable string 已声明的八方向生成变量名。
 ---@param loop_animation boolean 是否循环播放。
----@return LuaBlendListByEnumNode selector 八方向原生 BlendListByEnum 节点。
+---@return LuaAnimNode selector 八方向原生 BlendListByEnum 节点。
 function PoseSelectors.Octant(Graph, name, assets, direction_variable, loop_animation)
     local players = {
         PoseSelectors.Sequence(Graph, name .. "Forward", assets.Forward, loop_animation, nil),
@@ -255,10 +289,15 @@ function PoseSelectors.Octant(Graph, name, assets, direction_variable, loop_anim
         PoseSelectors.Sequence(Graph, name .. "ForwardRight", assets.ForwardRight, loop_animation, nil),
     }
     local direction = Graph:Property(name .. "Direction", direction_variable)
-    local selector = Graph:BlendListByEnum(name .. "Selector", DirectionEnum, {
-        "Fwd", "Fwd_L", "L", "Bwd_L", "Bwd", "Bwd_R", "R", "Fwd_R",
-    })
-    selector.BlendTime = Tuning.JumpBlendDuration
+    local selector = Graph:Node(
+        name .. "Selector",
+        EditorNodeClass.BlendListByEnum,
+        {
+            EnumType = DirectionEnum,
+            EnumEntries = "Fwd|Fwd_L|L|Bwd_L|Bwd|Bwd_R|R|Fwd_R",
+            BlendTime = Tuning.JumpBlendDuration,
+        },
+        "BlendListByEnum")
     selector.DefaultPose:Connect(players[1].Pose)
     for index, player in ipairs(players) do
         selector["Pose" .. tostring(index - 1)]:Connect(player.Pose)

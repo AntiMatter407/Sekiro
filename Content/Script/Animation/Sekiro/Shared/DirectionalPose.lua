@@ -3,6 +3,7 @@
 -- 地面锁定移动使用 Graph Orientation Warping 同步重定向 Root Motion 与下半身；
 -- Jump 等不修改 Root Motion 的分支继续使用 Manual 模式补齐量化残差。
 
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
 ---@class SekiroDirectionalPoseLibrary
@@ -16,7 +17,7 @@ local DirectionalPose = {}
 ---@param residual_angle_variable string 已声明的有符号量化残差变量名，单位为度。
 ---@param alpha_variable string 已声明的方向对齐强度变量名，范围为 0..1。
 ---@param rotation_interp_speed number|nil 节点内部角度插值速度；nil 使用集中配置，0 表示立即应用目标角。
----@return LuaComponentToLocalSpaceNode aligned_pose 已对齐下半身并保留上半身目标朝向的局部空间 Pose。
+---@return LuaAnimNode aligned_pose 已对齐下半身并保留上半身目标朝向的局部空间 Pose。
 function DirectionalPose.Align(
     Graph,
     name,
@@ -27,18 +28,30 @@ function DirectionalPose.Align(
     local residual_angle = Graph:Property(name .. "ResidualAngle", residual_angle_variable)
     local alignment_alpha = Graph:Property(name .. "Alpha", alpha_variable)
     local warping_settings = Tuning.LockOnOrientationWarping
-    local to_component = Graph:LocalToComponentSpace(name .. "LocalToComponent")
-    local warping = Graph:OrientationWarping(name .. "OrientationWarping")
-    local to_local = Graph:ComponentToLocalSpace(name .. "ComponentToLocal")
-
-    warping.SpineBones = warping_settings.SpineBones
-    warping.IKFootRootBone = warping_settings.IKFootRootBone
-    warping.IKFootBones = warping_settings.IKFootBones
-    warping.RotationAxis = warping_settings.RotationAxis
-    warping.DistributedBoneOrientationAlpha = warping_settings.DistributedBoneOrientationAlpha
-    warping.RotationInterpSpeed = rotation_interp_speed ~= nil
-        and rotation_interp_speed
-        or Tuning.LockOnWarpingInterpSpeed
+    local to_component = Graph:Node(
+        name .. "LocalToComponent",
+        EditorNodeClass.LocalToComponentSpace,
+        nil,
+        "LocalToComponentSpace")
+    local warping = Graph:Node(
+        name .. "OrientationWarping",
+        EditorNodeClass.OrientationWarping,
+        {
+            SpineBones = warping_settings.SpineBones,
+            IKFootRootBone = warping_settings.IKFootRootBone,
+            IKFootBones = warping_settings.IKFootBones,
+            RotationAxis = warping_settings.RotationAxis,
+            DistributedBoneOrientationAlpha = warping_settings.DistributedBoneOrientationAlpha,
+            RotationInterpSpeed = rotation_interp_speed ~= nil
+                and rotation_interp_speed
+                or Tuning.LockOnWarpingInterpSpeed,
+        },
+        "OrientationWarping")
+    local to_local = Graph:Node(
+        name .. "ComponentToLocal",
+        EditorNodeClass.ComponentToLocalSpace,
+        nil,
+        "ComponentToLocalSpace")
     to_component.LocalPose:Connect(source_pose.Pose)
     warping.ComponentPose:Connect(to_component.ComponentPose)
     warping.OrientationAngle:Connect(residual_angle.Value)
@@ -55,7 +68,7 @@ end
 ---@param source_pose LuaAnimNode 已选出四向动画的局部空间 Pose 节点。
 ---@param locomotion_angle_variable string 实际移动方向相对当前 Actor 的角度变量名，单位为度。
 ---@param alpha_variable string Graph 模式启用权重变量名；当前约定只写入 0 或 1。
----@return LuaComponentToLocalSpaceNode aligned_pose Root Motion 与下半身已同步重定向的局部空间 Pose。
+---@return LuaAnimNode aligned_pose Root Motion 与下半身已同步重定向的局部空间 Pose。
 function DirectionalPose.GraphAlign(
     Graph,
     name,
@@ -65,22 +78,34 @@ function DirectionalPose.GraphAlign(
     local locomotion_angle = Graph:Property(name .. "LocomotionAngle", locomotion_angle_variable)
     local alignment_alpha = Graph:Property(name .. "Alpha", alpha_variable)
     local warping_settings = Tuning.LockOnOrientationWarping
-    local to_component = Graph:LocalToComponentSpace(name .. "LocalToComponent")
-    local warping = Graph:OrientationWarping(name .. "OrientationWarping")
-    local to_local = Graph:ComponentToLocalSpace(name .. "ComponentToLocal")
-
-    warping.Mode = "Graph"
-    warping.SpineBones = warping_settings.SpineBones
-    warping.IKFootRootBone = warping_settings.IKFootRootBone
-    warping.IKFootBones = warping_settings.IKFootBones
-    warping.RotationAxis = warping_settings.RotationAxis
-    warping.DistributedBoneOrientationAlpha = warping_settings.DistributedBoneOrientationAlpha
-    warping.RotationInterpSpeed = Tuning.LockOnWarpingInterpSpeed
-    -- 编辑器可能已缓存旧版 Tuning 模块；回退值保证首次热生成不因新增字段为 nil 而中断。
-    warping.MinRootMotionSpeedThreshold = warping_settings.MinRootMotionSpeedThreshold or 3.0
-    warping.LocomotionAngleDeltaThreshold = warping_settings.LocomotionAngleDeltaThreshold or 90.0
-    warping.WarpingAlpha = 1.0
-    warping.OffsetAlpha = 0.0
+    local to_component = Graph:Node(
+        name .. "LocalToComponent",
+        EditorNodeClass.LocalToComponentSpace,
+        nil,
+        "LocalToComponentSpace")
+    local warping = Graph:Node(
+        name .. "OrientationWarping",
+        EditorNodeClass.OrientationWarping,
+        {
+            Mode = "Graph",
+            SpineBones = warping_settings.SpineBones,
+            IKFootRootBone = warping_settings.IKFootRootBone,
+            IKFootBones = warping_settings.IKFootBones,
+            RotationAxis = warping_settings.RotationAxis,
+            DistributedBoneOrientationAlpha = warping_settings.DistributedBoneOrientationAlpha,
+            RotationInterpSpeed = Tuning.LockOnWarpingInterpSpeed,
+            -- 编辑器可能已缓存旧版 Tuning 模块；回退值保证首次热生成不因新增字段为 nil 而中断。
+            MinRootMotionSpeedThreshold = warping_settings.MinRootMotionSpeedThreshold or 3.0,
+            LocomotionAngleDeltaThreshold = warping_settings.LocomotionAngleDeltaThreshold or 90.0,
+            WarpingAlpha = 1.0,
+            OffsetAlpha = 0.0,
+        },
+        "OrientationWarping")
+    local to_local = Graph:Node(
+        name .. "ComponentToLocal",
+        EditorNodeClass.ComponentToLocalSpace,
+        nil,
+        "ComponentToLocalSpace")
     to_component.LocalPose:Connect(source_pose.Pose)
     warping.ComponentPose:Connect(to_component.ComponentPose)
     warping.LocomotionAngle:Connect(locomotion_angle.Value)

@@ -261,27 +261,23 @@ Lua 类型注释必须让 Rider/LuaLS 能从参数、返回值、字段和父类
 正确示例：
 
 ```lua
----@class LuaSequencePlayerSettings
----@field bLoopAnimation boolean|nil 动画是否循环。
----@field PlayRate number|nil 播放倍率。
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 
----@class LuaSequencePlayerNode: LuaAnimNode
-local LuaSequencePlayerNode = LuaAnimNode:Extend("LuaSequencePlayerNode")
-
----创建并登记 SequencePlayer 节点。
+---创建一个循环播放的原生 Sequence Player。
+---@param graph LuaAnimGraph 当前 Pose Graph。
 ---@param name string Graph 内的节点语义名。
 ---@param sequence string 动画序列资产软路径。
----@param settings LuaSequencePlayerSettings|nil 播放设置。
----@return LuaSequencePlayerNode node 新建的 SequencePlayer 节点。
-function LuaAnimGraph:SequencePlayer(name, sequence, settings)
-    ---@type LuaSequencePlayerNode
-    local node = LuaSequencePlayerNode:New({
-        Graph = self,
-        Name = name,
-        Sequence = sequence,
-        Settings = settings,
-    })
-    return node
+---@return LuaAnimNode node 由通用反射入口创建的节点。
+local function create_looping_sequence(graph, name, sequence)
+    return graph:Node(
+        name,
+        EditorNodeClass.SequencePlayer,
+        {
+            Sequence = sequence,
+            bLoopAnimation = true,
+            PlayRate = 1.0,
+        },
+        "SequencePlayer")
 end
 ```
 
@@ -289,11 +285,11 @@ end
 
 ```lua
 ---@param graph table LuaAnimGraph 编译期实例。
----@param settings table|nil SequencePlayer 设置。
----@return table node LuaSequencePlayerNode 实例。
+---@param properties table 节点属性。
+---@return table node LuaAnimNode 实例。
 ```
 
-上面的 `LuaAnimGraph` 和 `LuaSequencePlayerNode` 只是描述文本，IDE 仍会把参数和返回值识别为普通 `table`，无法可靠补全或跳转。
+上面的 `LuaAnimGraph` 和 `LuaAnimNode` 只是描述文本，IDE 仍会把参数和返回值识别为普通 `table`，无法可靠补全或跳转。
 
 ## 六、格式细则
 
@@ -384,8 +380,11 @@ end
 - 普通 `ABP_xxx.lua` 必须在类定义中显式填写 `TargetSkeleton = "/Package/Asset.Asset"`；禁止从动画资源、父类或磁盘路径隐式推导。
 - `AnimAssets.lua` 只放语义资源名与 UE 对象路径，不写状态逻辑。
 - 编译器通用类放在 `Animation/Compiler/`，其中禁止出现项目角色名、状态名和资源路径。
-- Graph 内直接使用 `graph:SequencePlayer()`、`graph:StateMachine()` 等具名构造函数创建节点，不允许匿名 table 冒充 Node 或 Pin。
-- 节点属性使用 `player.Sequence = ...`、`player.PlayRate = ...` 直接赋值；业务代码禁止调用 `SetProperty()`、构造 `IRValue` 或传递 settings table 模拟节点详情。
+- 普通原生节点统一使用 `graph:Node(Name, EditorNodeClass, Properties, NodeType)` 创建；业务脚本不得为每种 UE 节点新增一个 Lua 子类或专用构造函数。
+- 原生类路径统一登记在 `Animation.Compiler.NodeClasses.EditorNodeClass`；业务脚本使用 `EditorNodeClass.SequencePlayer` 这类语义引用，禁止散落 `"/Script/..."` 字符串。
+- 节点初始属性集中写在 `Properties` 表中。业务代码禁止调用 `SetProperty()`、构造 `IRValue` 或直接修改内部属性表。
+- 已有特殊生成逻辑或强类型 Pin 契约的节点必须传入稳定 `NodeType`，例如 `SequencePlayer`、`BlendListByEnum`、`SaveCachedPose`；新增普通反射节点可以省略，最终由 UE Schema 校验 Pin 和连接。
+- `graph:StateMachine()` 与 `graph:Property()` 是结构型专用入口，继续负责内部 Graph 所有权和 AnimInstance 变量类型解析。
 - Pin 连接统一写成 `目标输入Pin:Connect(来源输出Pin)`，例如 `graph.Result:Connect(player.Pose)`；业务代码禁止手写节点名和 Pin 名字符串调用底层 `Link()`。
 - StateMachine 必须由 `PoseGraph:StateMachine()` 创建为 `LuaAnimNode` 子类，并通过 `OwnedGraphId` 持有内部 StateMachine Graph；禁止把内部状态机 Graph 直接作为 Layer 根。
 - 大型状态机继承 `Animation.Compiler.LuaAnimStateMachine` 并拆分到独立文件；主图通过 `graph:StateMachine("Name", Definition)` 引用。
@@ -396,7 +395,7 @@ end
 - Transition 使用 `machine:Transition(Key, From, To, { Rule = ... })` 创建对象，并直接配置 `BlendDuration`、`PriorityOrder` 和 `BlendMode`。
 - 主 AnimGraph 使用 `Pose + OutputPose`，State 独占 Graph 使用 `StatePose + StateResult`；根节点和 Layer 根由基类自动管理。
 - 稳定 ID、Link 和 SourceLocation 由基类生成，业务模块不得自己拼接 ID。
-- NodeType、Pin、Property、允许放置的 GraphType 和内部 Graph 所有权以 C++ NodeType 注册表为唯一权威；`NodeContracts.lua` 只做 Lua 前端镜像和快速报错。
+- 已注册 NodeType 的 Pin、Property、允许放置的 GraphType 和内部 Graph 所有权以 C++ 注册表为权威；`NodeContracts.lua` 只做 Lua 前端镜像和快速报错。未注册的普通节点由 UE 反射与 Graph Schema 校验。
 - 业务 Lua 禁止调用或新增 `AddPin` 一类任意 Pin 接口，也不得直接修改节点的 `Pins`、`Properties` 或注册契约表；Pin 断言由 `LuaAnimNode` 自动复制。
 - `SaveCachedPose` 和引用它的 `UseCachedPose` 必须位于同一个主 Pose Graph。Lua 不保存运行时 Pose。
 - Lua 编译期类不实现 `Initialize_AnyThread`、`Update_AnyThread`、`Evaluate_AnyThread`，这些生命周期属于 C++ 原生 AnimNode。

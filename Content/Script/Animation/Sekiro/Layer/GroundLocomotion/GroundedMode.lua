@@ -4,6 +4,7 @@
 
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local Rule = require("Animation.Compiler.TransitionRule")
 local Standing = require("Animation.Sekiro.Layer.GroundLocomotion.Standing")
 local Crouching = require("Animation.Sekiro.Layer.GroundLocomotion.Crouching")
@@ -22,11 +23,14 @@ local GroundedMode = LuaAnimStateMachine:Extend("GroundedMode")
 ---@param name string 姿态属性与选择节点使用的语义前缀。
 ---@param standing_pose LuaAnimNode Standing 构建器返回的 Pose 节点。
 ---@param crouching_pose LuaAnimNode Crouching 构建器返回的 Pose 节点。
----@return LuaBlendListByBoolNode selector Standing/Crouching 原生姿态选择节点。
+---@return LuaAnimNode selector Standing/Crouching 原生姿态选择节点。
 local function select_stance(Graph, name, standing_pose, crouching_pose)
     local crouching = Graph:Property(name .. "Crouching", "bPoseCrouching")
-    local selector = Graph:BlendListByBool(name .. "StanceSelector")
-    selector.BlendTime = Tuning.StanceBlendDuration
+    local selector = Graph:Node(
+        name .. "StanceSelector",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.StanceBlendDuration },
+        "BlendListByBool")
     selector.FalsePose:Connect(standing_pose.Pose)
     selector.TruePose:Connect(crouching_pose.Pose)
     selector.ActiveValue:Connect(crouching.Value)
@@ -291,7 +295,11 @@ function GroundedMode.StateGraph_Cycle(Graph)
         "LockOnLocomotionAngle",
         "LockOnOrientationWarpingAlpha")
 
-    local inertialization = Graph:Inertialization("GroundedCycleInertialization")
+    local inertialization = Graph:Node(
+        "GroundedCycleInertialization",
+        EditorNodeClass.Inertialization,
+        nil,
+        "Inertialization")
     inertialization.Source:Connect(aligned.Pose)
     Graph.Result:Connect(inertialization.Pose)
 end

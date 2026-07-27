@@ -2,6 +2,7 @@
 -- 可被多个动画蓝图引用的最小移动状态机。
 -- 本文件只关心 Entry、State、Transition、状态内部动画和可编译为 UE K2 节点的原生过渡规则。
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local Rule = require("Animation.Compiler.TransitionRule")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 
@@ -36,10 +37,15 @@ end
 ---@param Graph LuaAnimStateGraph Idle 状态独占的 StatePose Graph。
 ---@return nil result IdlePlayer 的姿势连接到 State Result。
 function MinimalLocomotion.StateGraph_Idle(Graph)
-    local idle_player = Graph:SequencePlayer("IdlePlayer")
-    idle_player.Sequence = AnimAssets.Locomotion.Idle
-    idle_player.bLoopAnimation = true
-    idle_player.PlayRate = 1.0
+    local idle_player = Graph:Node(
+        "IdlePlayer",
+        EditorNodeClass.SequencePlayer,
+        {
+            Sequence = AnimAssets.Locomotion.Idle,
+            bLoopAnimation = true,
+            PlayRate = 1.0,
+        },
+        "SequencePlayer")
 
     Graph.Result:Connect(idle_player.Pose)
 end
@@ -48,10 +54,15 @@ end
 ---@param Graph LuaAnimStateGraph Move 状态独占的 StatePose Graph。
 ---@return nil result MovePlayer 的姿势连接到 State Result。
 function MinimalLocomotion.StateGraph_Move(Graph)
-    local move_player = Graph:SequencePlayer("MovePlayer")
-    move_player.Sequence = AnimAssets.Locomotion.Run_Forward_Loop
-    move_player.bLoopAnimation = true
-    move_player.PlayRate = 1.0
+    local move_player = Graph:Node(
+        "MovePlayer",
+        EditorNodeClass.SequencePlayer,
+        {
+            Sequence = AnimAssets.Locomotion.Run_Forward_Loop,
+            bLoopAnimation = true,
+            PlayRate = 1.0,
+        },
+        "SequencePlayer")
 
     Graph.Result:Connect(move_player.Pose)
 end

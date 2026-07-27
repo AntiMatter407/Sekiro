@@ -2226,7 +2226,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
             const int32 PositionX = 100;
             const int32 PositionY = NodeIndex * 180;
-            if (!Node.EditorNodeClass.IsNull())
+            if (!Node.EditorNodeClass.IsNull()
+                && FSekiroAnimGraphNodeRegistry::Find(Node.NodeType) == nullptr)
             {
                 UEdGraphNode* ReflectedNode = NewObject<UEdGraphNode>(
                     &NativeGraph,

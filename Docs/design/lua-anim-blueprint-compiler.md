@@ -114,7 +114,6 @@ CompilerClass
 ├─ LuaAnimGraph
 │  └─ LuaAnimStateGraph
 ├─ LuaAnimNode
-│  ├─ LuaSequencePlayerNode
 │  └─ LuaStateMachineNode
 ├─ LuaAnimState
 └─ LuaAnimStateMachineGraph
@@ -124,7 +123,7 @@ CompilerClass
 
 - `LuaAnimBlueprint:BuildAnimGraph` 是子类唯一必须 override 的编译期入口。
 - `AnimationLayer` 和 `PoseGraph` 负责声明主图作用域；Layer 根必须显式设置为 Pose Graph。
-- `LuaAnimNode` 根据 NodeType 前端镜像自动生成 Pin 一致性断言；`LuaSequencePlayerNode` 只提交已注册的显式类型化 Property。
+- 普通节点统一由 `LuaAnimGraph:Node` 创建 `LuaAnimNode`，编辑器类路径来自 `EditorNodeClass`；NodeType 只复用已有 Pin 契约和结构型适配器。
 - `LuaStateMachineNode` 是 Pose 节点，并拥有 `LuaAnimStateMachineGraph`；`State` 创建 `LuaAnimState` 及其独占 `LuaAnimStateGraph`。
 - `LuaAnimStateGraph` 使用 `StatePose` GraphType 和 `StateResult` 根节点，与主图的 `Pose + OutputPose` 保持原生语义区分。
 - `Export().CompileIR` 每次创建全新实例，避免 UnLua 热重载后残留上一次 Graph 数组。

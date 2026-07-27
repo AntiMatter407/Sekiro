@@ -56,14 +56,14 @@ local StopAssets = {
 
 ---构建 Crouching Idle 循环，供共享 Idle 状态的姿态选择器消费。
 ---@param Graph LuaAnimStateGraph Idle 状态的原生 Pose Graph。
----@return LuaSequencePlayerNode pose_node Crouching Idle 姿势节点。
+---@return LuaAnimNode pose_node Crouching Idle 姿势节点。
 function Crouching.BuildIdle(Graph)
     return PoseSelectors.Sequence(Graph, "CrouchingIdle", Anim.Crouch_Idle, true, nil)
 end
 
 ---构建 Crouching 原地左右转身；与 Standing 共用锁存方向和退出曲线语义。
 ---@param Graph LuaAnimStateGraph Turn 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Crouching Turn 最终姿势节点。
+---@return LuaAnimNode pose_node Crouching Turn 最终姿势节点。
 function Crouching.BuildTurn(Graph)
     return PoseSelectors.LeftRight(
         Graph,
@@ -75,7 +75,7 @@ end
 
 ---构建 Crouching Stop 后的换脚回正动作；与普通 Aim Turn 使用不同的锁存方向。
 ---@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Crouching StopTurn 最终姿势节点。
+---@return LuaAnimNode pose_node Crouching StopTurn 最终姿势节点。
 function Crouching.BuildStopTurn(Graph)
     return PoseSelectors.LeftRight(
         Graph,
@@ -87,7 +87,7 @@ end
 
 ---构建 Crouching Walk/Run Start；Sprint 由 Movement 先退出蹲姿后在 Standing 分支表现。
 ---@param Graph LuaAnimStateGraph Start 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Crouching Start 姿势节点。
+---@return LuaAnimNode pose_node Crouching Start 姿势节点。
 function Crouching.BuildStart(Graph)
     return PoseSelectors.WalkRun(
         Graph,
@@ -102,7 +102,7 @@ end
 ---构建 Crouching Walk/Run Cycle；四向分支先独立对齐，再按输入方向平滑混合。
 ---@param Graph LuaAnimStateGraph Cycle 状态的原生 Pose Graph。
 ---@param alignment SekiroCardinalAlignmentConfig 混合前逐分支方向对齐配置。
----@return LuaBlendListByEnumNode pose_node Crouching Cycle 姿势节点。
+---@return LuaAnimNode pose_node Crouching Cycle 姿势节点。
 function Crouching.BuildCycle(Graph, alignment)
     return PoseSelectors.WalkRun(
         Graph,
@@ -117,7 +117,7 @@ end
 
 ---构建 Crouching Walk/Run Stop，使用动作边沿锁存的方向和步态。
 ---@param Graph LuaAnimStateGraph Stop 状态的原生 Pose Graph。
----@return LuaBlendListByEnumNode pose_node Crouching Stop 姿势节点。
+---@return LuaAnimNode pose_node Crouching Stop 姿势节点。
 function Crouching.BuildStop(Graph)
     return PoseSelectors.WalkRun(
         Graph,

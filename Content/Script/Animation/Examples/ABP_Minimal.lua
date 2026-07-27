@@ -2,6 +2,7 @@
 -- 新版 Lua AnimGraph Function 模式的最小动画蓝图示例。
 -- 主文件声明生成变量、每帧更新入口、AnimGraph 节点和连接；状态机拓扑与原生过渡规则拆分到独立模块。
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local MinimalLocomotion = require("Animation.Examples.StateMachines.MinimalLocomotion")
 
 ---@class ABP_Minimal: LuaAnimBlueprint
@@ -21,11 +22,23 @@ function ABP_Minimal:AnimGraph(graph)
 
     local locomotion = graph:StateMachine("MainStateMachine", MinimalLocomotion)
 
-    local saved_locomotion = graph:SaveCachedPose("SavedLocomotion")
+    local saved_locomotion = graph:Node(
+        "SavedLocomotion",
+        EditorNodeClass.SaveCachedPose,
+        { CacheName = "SavedLocomotion" },
+        "SaveCachedPose")
     saved_locomotion.Pose:Connect(locomotion.Pose)
 
-    local reused_locomotion = graph:UseCachedPose("UseLocomotion", saved_locomotion)
-    local inertialization = graph:Inertialization("FinalInertialization")
+    local reused_locomotion = graph:Node(
+        "UseLocomotion",
+        EditorNodeClass.UseCachedPose,
+        { CacheName = saved_locomotion.Name },
+        "UseCachedPose")
+    local inertialization = graph:Node(
+        "FinalInertialization",
+        EditorNodeClass.Inertialization,
+        nil,
+        "Inertialization")
     inertialization.Source:Connect(reused_locomotion.Pose)
 
     graph.Result:Connect(inertialization.Pose)

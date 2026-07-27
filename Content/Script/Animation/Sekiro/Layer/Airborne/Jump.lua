@@ -3,6 +3,7 @@
 -- 非锁定有向跳固定使用前向资产；锁定有向跳经过八方向 Start/InAir 过渡段，长时间滞空才进入通用 Loop。
 
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local Rule = require("Animation.Compiler.TransitionRule")
 local Anim = require("Animation.Sekiro.AnimAssets").Jump
 local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
@@ -37,11 +38,14 @@ local LandAssets = {
 ---@param name string 选择器和属性节点使用的稳定语义前缀。
 ---@param unlocked_pose LuaAnimNode 非锁定模式使用的前向姿势节点。
 ---@param locked_pose LuaAnimNode 锁定模式使用的八方向姿势节点。
----@return LuaBlendListByBoolNode selector 最终锁定模式选择节点。
+---@return LuaAnimNode selector 最终锁定模式选择节点。
 local function select_jump_lock_mode(Graph, name, unlocked_pose, locked_pose)
     local started_locked_on = Graph:Property(name .. "StartedLockedOn", "bJumpStartedLockedOn")
-    local selector = Graph:BlendListByBool(name .. "LockModeSelector")
-    selector.BlendTime = Tuning.JumpBlendDuration
+    local selector = Graph:Node(
+        name .. "LockModeSelector",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.JumpBlendDuration },
+        "BlendListByBool")
     selector.FalsePose:Connect(unlocked_pose.Pose)
     selector.TruePose:Connect(locked_pose.Pose)
     selector.ActiveValue:Connect(started_locked_on.Value)
@@ -53,11 +57,14 @@ end
 ---@param name string 选择器和属性节点使用的稳定语义前缀。
 ---@param stationary_pose LuaAnimNode 原地 Jump 对应的姿势节点。
 ---@param directional_pose LuaAnimNode 八方向 Jump 对应的姿势节点。
----@return LuaBlendListByBoolNode selector 最终 Jump 类型选择节点。
+---@return LuaAnimNode selector 最终 Jump 类型选择节点。
 local function select_jump_type(Graph, name, stationary_pose, directional_pose)
     local directional_jump = Graph:Property(name .. "Directional", "bDirectionalJump")
-    local selector = Graph:BlendListByBool(name .. "TypeSelector")
-    selector.BlendTime = Tuning.JumpBlendDuration
+    local selector = Graph:Node(
+        name .. "TypeSelector",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.JumpBlendDuration },
+        "BlendListByBool")
     selector.FalsePose:Connect(stationary_pose.Pose)
     selector.TruePose:Connect(directional_pose.Pose)
     selector.ActiveValue:Connect(directional_jump.Value)
@@ -136,8 +143,11 @@ function JumpLocomotion.StateGraph_Start(Graph)
     local standing = PoseSelectors.Sequence(Graph, "StandingJumpStart", Anim.Stand_Jump_Start, false, nil)
     local crouching = PoseSelectors.Sequence(Graph, "CrouchingJumpStart", Anim.Crouch_Jump_Start, false, nil)
     local started_crouched = Graph:Property("JumpStartedCrouched", "bJumpStartedCrouchedPose")
-    local stationary = Graph:BlendListByBool("StationaryJumpStartStance")
-    stationary.BlendTime = Tuning.JumpBlendDuration
+    local stationary = Graph:Node(
+        "StationaryJumpStartStance",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.JumpBlendDuration },
+        "BlendListByBool")
     stationary.FalsePose:Connect(standing.Pose)
     stationary.TruePose:Connect(crouching.Pose)
     stationary.ActiveValue:Connect(started_crouched.Value)

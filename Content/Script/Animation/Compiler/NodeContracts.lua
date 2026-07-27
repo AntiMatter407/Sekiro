@@ -397,6 +397,14 @@ function NodeContracts.FindProperty(contract, property_name)
     return nil
 end
 
+---查询可选节点契约，供反射节点复用已有 Pin 和结构型适配信息。
+---未知 NodeType 返回 nil，由 UE 原生节点类和 Schema 在后续阶段完成权威校验。
+---@param node_type string 待查询的稳定 NodeType。
+---@return LuaAnimNodeContract|nil contract 已注册契约；未知类型返回 nil。
+function NodeContracts.Find(node_type)
+    return contracts[node_type]
+end
+
 ---取得 C++ 已注册节点类型的 Lua 镜像；未知类型立即失败，避免继续产生无效 IR。
 ---@param node_type string 待查询的 C++ NodeType 注册名。
 ---@return LuaAnimNodeContract contract 对应的只读前端契约；调用方不得修改其内容。

@@ -838,6 +838,7 @@ bool USekiroAnimGraphIRLibrary::Validate(
                 }
 
                 if (!Node.EditorNodeClass.IsNull()
+                    && NodeContract == nullptr
                     && (!Node.OwnedGraphId.IsEmpty() || Node.Id == Graph.RootNodeId))
                 {
                     AddError(
@@ -1335,8 +1336,10 @@ bool USekiroAnimGraphIRLibrary::Validate(
                     FSekiroAnimGraphNodeRegistry::Find((*SourceNodeResult)->NodeType);
                 const FSekiroAnimIRNodeContract* TargetContract =
                     FSekiroAnimGraphNodeRegistry::Find((*TargetNodeResult)->NodeType);
-                const bool bReflectiveSource = !(*SourceNodeResult)->EditorNodeClass.IsNull();
-                const bool bReflectiveTarget = !(*TargetNodeResult)->EditorNodeClass.IsNull();
+                const bool bReflectiveSource =
+                    !(*SourceNodeResult)->EditorNodeClass.IsNull() && SourceContract == nullptr;
+                const bool bReflectiveTarget =
+                    !(*TargetNodeResult)->EditorNodeClass.IsNull() && TargetContract == nullptr;
                 const FSekiroAnimIRPinContract* SourcePin = SourceContract
                     ? FindPinContract(*SourceContract, Link.Source.PinName)
                     : nullptr;

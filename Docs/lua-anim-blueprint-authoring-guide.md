@@ -11,8 +11,9 @@ Lua 文件直接对应动画蓝图的结构：
 | Lua 内容 | 动画蓝图内容 |
 |---|---|
 | `AnimGraph(graph)` | 主 AnimGraph |
-| `graph:SequencePlayer()` | Sequence Player 节点 |
+| `graph:Node(Name, Class, Properties, NodeType)` | 任意可反射的原生动画节点 |
 | `graph:StateMachine()` | State Machine 节点 |
+| `graph:Property()` | AnimInstance 变量 Getter |
 | `StateMachine(Machine)` | Entry、State、Transition 拓扑 |
 | `StateGraph_Idle(Graph)` | Idle 状态内部 Graph |
 | `Rule.BoolProperty("bIsMoving", true)` | Idle 到 Move 的原生 Transition Rule |
@@ -44,6 +45,7 @@ Content/Script/Animation/Sekiro/
 ```lua
 -- Sekiro 主动画蓝图，只描述 AnimGraph 的节点和连接关系。
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local GroundLocomotion = require(
     "Animation.Sekiro.ABP_Sekiro.StateMachines.GroundLocomotion")
 
@@ -62,15 +64,24 @@ function ABP_Sekiro:AnimGraph(graph)
         "GroundLocomotion",
         GroundLocomotion)
 
-    local saved_locomotion = graph:SaveCachedPose("SavedLocomotion")
+    local saved_locomotion = graph:Node(
+        "SavedLocomotion",
+        EditorNodeClass.SaveCachedPose,
+        { CacheName = "SavedLocomotion" },
+        "SaveCachedPose")
     saved_locomotion.Pose:Connect(locomotion.Pose)
 
-    local locomotion_pose = graph:UseCachedPose(
+    local locomotion_pose = graph:Node(
         "UseLocomotion",
-        saved_locomotion)
+        EditorNodeClass.UseCachedPose,
+        { CacheName = saved_locomotion.Name },
+        "UseCachedPose")
 
-    local final_inertialization = graph:Inertialization(
-        "FinalInertialization")
+    local final_inertialization = graph:Node(
+        "FinalInertialization",
+        EditorNodeClass.Inertialization,
+        nil,
+        "Inertialization")
     final_inertialization.Source:Connect(locomotion_pose.Pose)
 
     graph.Result:Connect(final_inertialization.Pose)
@@ -87,6 +98,8 @@ return ABP_Sekiro:Export()
 -- GroundLocomotion 只描述地面移动状态机。
 local LuaAnimStateMachine = require(
     "Animation.Compiler.LuaAnimStateMachine")
+local EditorNodeClass = require(
+    "Animation.Compiler.NodeClasses.EditorNodeClass")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 
 ---@class GroundLocomotion: LuaAnimStateMachine
@@ -149,26 +162,38 @@ Transition 必须直接在拓扑旁声明完整的强类型 `Rule`。规则会�
 ---@param Graph LuaAnimStateGraph Idle 独占的 StatePose Graph。
 ---@return nil result IdlePlayer 的 Pose 连接到 State Result。
 function GroundLocomotion.StateGraph_Idle(Graph)
-    local idle_player = Graph:SequencePlayer("IdlePlayer")
-    idle_player.Sequence = AnimAssets.Locomotion.Idle
-    idle_player.bLoopAnimation = true
-    idle_player.PlayRate = 1.0
-    idle_player.StartPosition = 0.0
+    local idle_player = Graph:Node(
+        "IdlePlayer",
+        EditorNodeClass.SequencePlayer,
+        {
+            Sequence = AnimAssets.Locomotion.Idle,
+            bLoopAnimation = true,
+            PlayRate = 1.0,
+            StartPosition = 0.0,
+        },
+        "SequencePlayer")
 
     Graph.Result:Connect(idle_player.Pose)
 end
 ```
 
-节点属性采用直接赋值，不需要 settings 表，也不调用 `SetProperty()`：
+普通节点都通过集中登记的 UE 编辑器节点类引用创建，初始属性放在第三个参数的属性表中：
 
 ```lua
-local player = graph:SequencePlayer("WalkPlayer")
-player.Sequence = AnimAssets.Locomotion.Walk_Forward_Loop
-player.bLoopAnimation = true
-player.PlayRate = 1.0
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
+
+local player = graph:Node(
+    "WalkPlayer",
+    EditorNodeClass.SequencePlayer,
+    {
+        Sequence = AnimAssets.Locomotion.Walk_Forward_Loop,
+        bLoopAnimation = true,
+        PlayRate = 1.0,
+    },
+    "SequencePlayer")
 ```
 
-编译器会根据 C++ 节点契约把普通 Lua 值转换为 `Bool`、`Float`、`SoftObjectPath` 等显式 IR 类型。必填属性缺失会在编译阶段报错。
+原生类路径集中在 `Animation.Compiler.NodeClasses.EditorNodeClass`。业务脚本只引用 `EditorNodeClass.UseCachedPose` 等语义字段，不直接保存 `"/Script/..."` 字符串。第四个 `NodeType` 用于复用已有强类型 Pin 契约和结构型 C++ 适配器；现有节点应继续填写。编译器会把普通 Lua 值转换为显式 IR 类型，属性不存在、类型不兼容或必填属性缺失都会在生成阶段报错。
 
 ## 六、Pin 连接
 
@@ -201,11 +226,16 @@ graph.Result:Connect(inertialization.Pose)
 
 ```lua
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 
 function ABP_Sekiro:AnimGraph(Graph)
     Graph.LayoutStyle = LayoutStyle.HierarchicalBlocks
     local machine = Graph:StateMachine("Locomotion", Locomotion)
-    local inertialization = Graph:Inertialization("Inertialization")
+    local inertialization = Graph:Node(
+        "Inertialization",
+        EditorNodeClass.Inertialization,
+        nil,
+        "Inertialization")
     inertialization.Source:Connect(machine.Pose)
     Graph.Result:Connect(inertialization.Pose)
 
@@ -286,15 +316,29 @@ Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
 Cached Pose 对应 UE 原生的 `Save Cached Pose` 和 `Use Cached Pose`。
 
 ```lua
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
+
 local locomotion = graph:StateMachine(
     "GroundLocomotion",
     GroundLocomotion)
 
-local saved = graph:SaveCachedPose("SavedLocomotion")
+local saved = graph:Node(
+    "SavedLocomotion",
+    EditorNodeClass.SaveCachedPose,
+    { CacheName = "SavedLocomotion" },
+    "SaveCachedPose")
 saved.Pose:Connect(locomotion.Pose)
 
-local full_body_base = graph:UseCachedPose("FullBodyBase", saved)
-local upper_body_base = graph:UseCachedPose("UpperBodyBase", saved)
+local full_body_base = graph:Node(
+    "FullBodyBase",
+    EditorNodeClass.UseCachedPose,
+    { CacheName = saved.Name },
+    "UseCachedPose")
+local upper_body_base = graph:Node(
+    "UpperBodyBase",
+    EditorNodeClass.UseCachedPose,
+    { CacheName = saved.Name },
+    "UseCachedPose")
 ```
 
 规则如下：
@@ -346,24 +390,28 @@ StateGraph_<MachineName>_<StateName>
 
 ## 十一、当前节点范围
 
-| Graph API | 生成的原生节点 | 主要 Pin/属性 |
+| 集中类路径引用 | NodeType | 主要 Pin/属性 |
 |---|---|---|
-| `SequencePlayer` | `UAnimGraphNode_SequencePlayer` | `Pose`；Sequence、Loop、PlayRate、StartPosition |
-| `StateMachine` | `UAnimGraphNode_StateMachine` | `Pose`；Owned StateMachine Graph |
-| `Inertialization` | `UAnimGraphNode_Inertialization` | `Source`、`Pose` |
-| `LocalToComponentSpace` | `UAnimGraphNode_LocalToComponentSpace` | `LocalPose`、`ComponentPose` |
-| `OrientationWarping` | `UAnimGraphNode_OrientationWarping` | `ComponentPose`、`OrientationAngle`、`Alpha`、`Pose`；脊柱与 IK 骨骼配置 |
-| `FootPlacement` | `UAnimGraphNode_FootPlacement` | `ComponentPose`、`Alpha`、`Pose`；骨盆、双脚、脚趾和地面检测配置 |
-| `LegIK` | `UAnimGraphNode_LegIK` | `ComponentPose`、`Alpha`、`Pose`；IK/FK 脚骨骼和腿链配置 |
-| `ComponentToLocalSpace` | `UAnimGraphNode_ComponentToLocalSpace` | `ComponentPose`、`Pose` |
-| `SaveCachedPose` | `UAnimGraphNode_SaveCachedPose` | `Pose` 输入、CacheName |
-| `UseCachedPose` | `UAnimGraphNode_UseCachedPose` | `Pose` 输出、CacheName |
+| `EditorNodeClass.SequencePlayer` | `SequencePlayer` | `Pose`；Sequence、Loop、PlayRate、StartPosition |
+| `EditorNodeClass.BlendListByBool` | `BlendListByBool` | TruePose、FalsePose、ActiveValue、Pose；BlendTime |
+| `EditorNodeClass.BlendListByEnum` | `BlendListByEnum` | DefaultPose、Pose0..Pose7、ActiveValue、Pose；EnumType、EnumEntries、BlendTime |
+| `EditorNodeClass.Inertialization` | `Inertialization` | `Source`、`Pose` |
+| `EditorNodeClass.Slot` | `Slot` | Source、Pose；SlotName |
+| `EditorNodeClass.LayeredBlendPerBone` | `LayeredBlendPerBone` | BasePose、BlendPose、BlendWeight、Pose；BranchFilters |
+| `EditorNodeClass.LocalToComponentSpace` | `LocalToComponentSpace` | `LocalPose`、`ComponentPose` |
+| `EditorNodeClass.OrientationWarping` | `OrientationWarping` | `ComponentPose`、角度、Alpha、Pose；脊柱与 IK 骨骼配置 |
+| `EditorNodeClass.FootPlacement` | `FootPlacement` | `ComponentPose`、Alpha、Pose；骨盆、双脚、脚趾和地面检测配置 |
+| `EditorNodeClass.LegIK` | `LegIK` | `ComponentPose`、Alpha、Pose；IK/FK 脚骨骼和腿链配置 |
+| `EditorNodeClass.TwoBoneIK` | `TwoBoneIK` | ComponentPose、Alpha、Pose；IK 骨、末端与关节目标 |
+| `EditorNodeClass.ComponentToLocalSpace` | `ComponentToLocalSpace` | `ComponentPose`、Pose |
+| `EditorNodeClass.SaveCachedPose` | `SaveCachedPose` | Pose 输入、CacheName |
+| `EditorNodeClass.UseCachedPose` | `UseCachedPose` | Pose 输出、CacheName |
 
-`Output Pose` 和 `State Result` 由 Graph 基类自动创建。
+`StateMachine` 和 `Property` 仍使用专用 Graph API；`Output Pose` 和 `State Result` 由 Graph 基类自动创建。
 
 `FootPlacement.PlantLockType` 接受 `Unlocked`、`PivotAroundBall`、`PivotAroundAnkle` 或 `LockRotation`。`Unlocked` 只关闭脚部的世界空间锁定，地面检测、坡面旋转和骨盆高度补偿仍由原生节点执行。`IKFootRootBone` 的局部 Z 轴会被当作输入姿势的地面法线；项目骨架使用不蒙皮的 `IK_Foot_Plane`，避免依赖 `Master` 的横向局部 Z 轴。
 
-Blend、Slot、Layered Blend Per Bone、Aim Offset、Modify Curve 等节点需要先在 C++ NodeFactory 注册契约，Lua 才会开放对应构造函数。业务代码不能通过任意字符串绕过注册表创建未知节点。
+Blend、Slot、Layered Blend Per Bone、Aim Offset、Modify Curve 等普通节点可直接填写原生编辑器类路径，不再要求为每个节点增加 Lua 子类或插件构造函数。已有 C++ 特殊生成逻辑的节点仍传 `NodeType` 复用适配器；未注册节点由 UE 反射写入属性，并由原生 Graph Schema 拒绝非法类、Pin 或连线。
 
 ## 十二、编译期与运行时
 

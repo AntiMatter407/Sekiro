@@ -3,6 +3,7 @@
 
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
+local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local Rule = require("Animation.Compiler.TransitionRule")
 local RootLocomotion = require("Animation.Sekiro.Layer.GroundLocomotion.Root")
 local GuardPose = require("Animation.Sekiro.Layer.Combat.GuardPose")
@@ -62,7 +63,11 @@ end
 ---@return nil result RootLocomotion 经惯性化后连接到 State Result。
 function CombatBasePose.StateGraph_Normal(Graph)
     local locomotion = Graph:StateMachine("RootLocomotion", RootLocomotion)
-    local inertialization = Graph:Inertialization("LocomotionInertialization")
+    local inertialization = Graph:Node(
+        "LocomotionInertialization",
+        EditorNodeClass.Inertialization,
+        nil,
+        "Inertialization")
     inertialization.Source:Connect(locomotion.Pose)
     Graph.Result:Connect(inertialization.Pose)
 end

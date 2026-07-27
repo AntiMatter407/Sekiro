@@ -61,6 +61,6 @@ public:
         bool Result,
         bool bIsFinal);
 
-    /** PIE/SIE 边界清除失败抑制与动态类属性缓存。 */
+    /** 编辑器蓝图编译及 PIE/SIE 边界清除失败抑制与动态类属性缓存。 */
     static void ResetRuntimeCachesForPIESession();
 };

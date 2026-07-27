@@ -9,6 +9,7 @@
 #include "UnLuaBase.h"
 #include "UnLuaModule.h"
 #include "UObject/UnrealType.h"
+#include "UObject/WeakFieldPtr.h"
 #include "lua.hpp"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSekiroLuaTransitionRuntime, Log, All);
@@ -19,8 +20,8 @@ namespace SekiroLuaTransitionRuntimePrivate
     constexpr const char* AnimInstanceObjectField = "Object";
     /** 所有单帧 Inst 代理共用的 Lua registry metatable 名。 */
     constexpr const char* AnimInstanceProxyMetatable = "Sekiro.AnimInstanceProxy";
-    TMap<TWeakObjectPtr<UAnimInstance>, FString> FailedBlueprintUpdateModules; // 本次 PIE 不再重试的更新模块
-    TMap<TWeakObjectPtr<UClass>, TMap<FName, FProperty*>> GeneratedPropertyCache; // 当前 PIE 动态类属性缓存
+    TMap<TWeakObjectPtr<UAnimInstance>, FString> FailedBlueprintUpdateModules; // 本次运行不再重试的更新模块
+    TMap<TWeakObjectPtr<UClass>, TMap<FName, TWeakFieldPtr<FProperty>>> GeneratedPropertyCache; // 动态类属性弱缓存
 
     /**
      * 从 package.loaded 读取已加载模块，不触发 require、CompileIR 或搜索器。
@@ -112,11 +113,11 @@ namespace SekiroLuaTransitionRuntimePrivate
 
     /**
      * 按当前动态 AnimInstance 类缓存属性描述，避免 Lua 高频字段访问重复遍历生成类继承链。
-     * 只能在游戏线程使用；缓存只在当前 PIE 有效，并由 EndPIE 在蓝图可能 Reinstance 前统一清空。
+     * 只能在游戏线程使用；弱字段引用会在蓝图重编译后重新解析，编辑器编译边界也会主动清空缓存。
      *
      * @param AnimInstance 属性所属的真实动画实例，不能为空。
      * @param FieldNameUtf8 Lua VM 提供的 UTF-8 字段名，不能为空。
-     * @return 找到的反射属性；未知字段返回 nullptr，并缓存该未命中结果。
+     * @return 当前动态类上有效的反射属性；字段已删除或未知时返回 nullptr，未命中结果不缓存。
      */
     FProperty* FindCachedAnimInstanceProperty(
         UAnimInstance* AnimInstance,
@@ -124,13 +125,17 @@ namespace SekiroLuaTransitionRuntimePrivate
     {
         UClass* InstanceClass = AnimInstance->GetClass();
         const FName FieldName(UTF8_TO_TCHAR(FieldNameUtf8));
-        TMap<FName, FProperty*>& ClassProperties =
+        TMap<FName, TWeakFieldPtr<FProperty>>& ClassProperties =
             GeneratedPropertyCache.FindOrAdd(TWeakObjectPtr<UClass>(InstanceClass));
-        FProperty** CachedProperty = ClassProperties.Find(FieldName);
-        if (CachedProperty != nullptr) return *CachedProperty;
+        TWeakFieldPtr<FProperty>* CachedProperty = ClassProperties.Find(FieldName);
+        if (CachedProperty != nullptr)
+        {
+            if (FProperty* Property = CachedProperty->Get()) return Property;
+            ClassProperties.Remove(FieldName);
+        }
 
         FProperty* Property = InstanceClass->FindPropertyByName(FieldName);
-        ClassProperties.Add(FieldName, Property);
+        if (Property != nullptr) ClassProperties.Add(FieldName, TWeakFieldPtr<FProperty>(Property));
         return Property;
     }
 
@@ -640,8 +645,8 @@ bool USekiroLuaTransitionRuntimeLibrary::RecordTransitionExpressionDebugValue(
 }
 
 /**
- * 清除当前 PIE 的 Lua Update 失败抑制与动态类属性缓存，隔离蓝图 Reinstance 前后的反射描述。
- * 只能由编辑器 PIE 起止边界在游戏线程调用；不卸载 package.loaded，也不触发 Lua 编译或热重载。
+ * 清除当前运行的 Lua Update 失败抑制与动态类属性缓存，隔离蓝图 Reinstance 前后的反射描述。
+ * 只能由编辑器蓝图编译或 PIE 起止边界在游戏线程调用；不卸载 package.loaded，也不触发 Lua 编译或热重载。
  */
 void USekiroLuaTransitionRuntimeLibrary::ResetRuntimeCachesForPIESession()
 {
