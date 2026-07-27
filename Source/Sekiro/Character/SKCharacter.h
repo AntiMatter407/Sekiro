@@ -37,8 +37,14 @@ public:
 	FORCEINLINE USpringArmComponent* GetCameraBoom() const { return CameraBoom; }
 	FORCEINLINE UCameraComponent* GetFollowCamera() const { return FollowCamera; }
 	FORCEINLINE USKInputManager* GetInputManager() const { return InputManager; }
-	/** 返回角色持有的战斗动作宿主；不转移所有权，角色构造完成后应始终非空。 */
+
+	/**
+	 * 返回角色持有的战斗动作宿主；不转移所有权。
+	 * 该内联接口同时供原生代码、蓝图和 Lua 行为树任务读取，角色构造完成后应始终非空。
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat")
 	FORCEINLINE USKCombatComponent* GetCombatComponent() const { return CombatComponent; }
+
 	FORCEINLINE USKCameraManagerComponent* GetCameraManager() const { return CameraManager; }
 	FORCEINLINE USKLockOnIndicatorComponent* GetLockOnIndicator() const { return LockOnIndicator; }
 	/** 返回角色持有的原生武器管理组件；不转移所有权，角色构造完成后应始终非空。 */

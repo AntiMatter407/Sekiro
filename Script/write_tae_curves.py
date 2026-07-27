@@ -241,17 +241,15 @@ def build_attack_hitbox_keys(events, total_frames):
         for f in range(start, min(end + 1, total_frames + 1)):
             frame_values[f] = hitbox_val
 
-    keys = []
-    prev_val = 0
-    for f in range(0, total_frames + 1):
+    # 显式写入第 0 帧，避免 UE 在首个攻击键之前把曲线外推为首键的非零值。
+    keys = [{"time": 0.0, "value": int(frame_values[0])}]
+    prev_val = frame_values[0]
+    for f in range(1, total_frames + 1):
         val = frame_values[f]
         if val != prev_val:
             time_sec = f / 30.0
             keys.append({"time": round(time_sec, 4), "value": int(val)})
             prev_val = val
-    # 确保曲线至少有一个关键帧（值为 0 的起始帧）
-    if not keys:
-        keys.append({"time": 0.0, "value": 0})
     return keys
 
 

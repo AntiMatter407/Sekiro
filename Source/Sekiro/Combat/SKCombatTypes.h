@@ -16,7 +16,8 @@ enum class ESKCombatActionState : uint8
     Guarding,
     GuardLower,
     DeflectReaction,
-    Dodging
+    Dodging,
+    PostureBroken
 };
 
 UENUM(BlueprintType)
@@ -56,6 +57,15 @@ enum class ESKIncomingAttackType : uint8
     Heavy,
     Thrust,
     Special
+};
+
+UENUM(BlueprintType)
+enum class ESKWeaponContactResult : uint8
+{
+    Ignored,
+    Hit,
+    Guarded,
+    Deflected
 };
 
 USTRUCT(BlueprintType)

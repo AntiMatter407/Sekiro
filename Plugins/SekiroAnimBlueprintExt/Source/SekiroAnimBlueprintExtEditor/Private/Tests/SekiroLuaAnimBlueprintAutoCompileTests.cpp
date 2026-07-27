@@ -1,6 +1,9 @@
 ﻿#include "SekiroLuaAnimBlueprintAutoCompileScheduler.h"
 
+#include "HAL/FileManager.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -10,9 +13,9 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 /**
- * 验证 Lua 文件事件过滤、事件合并、立即标脏请求消费，以及关闭时清空未处理请求。
+ * 验证 Lua 文件事件过滤、内容指纹去重、事件合并、立即标脏请求消费，以及关闭时清空未处理请求。
  * 跟踪器不接收 PIE 参数且没有编译入口，因此同一行为也证明 PIE 期间文件变化只会形成 Dirty 请求。
- * 测试不写入文件系统、不调用 UnLua、不创建或编译 Blueprint。
+ * 测试只在 Saved/Automation 创建并清理一个临时 Lua 文件，不调用 UnLua，也不创建或编译 Blueprint。
  *
  * @param Parameters Automation Framework 参数，本测试不使用。
  * @return 始终返回 true 以完成全部断言收集。
@@ -91,6 +94,55 @@ bool FSekiroLuaAnimBlueprintAutoCompileSchedulerTest::RunTest(const FString& Par
     TestFalse(
         TEXT("Reset clears pending request"),
         Scheduler.ConsumeDirtyRequest());
+
+    const FString SnapshotRoot = FPaths::Combine(
+        FPaths::ProjectSavedDir(),
+        TEXT("Automation/SekiroLuaAnimSourceSnapshot"));
+    const FString SnapshotFile = FPaths::Combine(SnapshotRoot, TEXT("Tracked.lua"));
+    IFileManager::Get().DeleteDirectory(*SnapshotRoot, false, true);
+    IFileManager::Get().MakeDirectory(*SnapshotRoot, true);
+    TestTrue(
+        TEXT("Snapshot test Lua file is created"),
+        FFileHelper::SaveStringToFile(TEXT("return { Value = 1 }\n"), *SnapshotFile));
+
+    FSekiroLuaAnimBlueprintAutoCompileScheduler SnapshotScheduler;
+    SnapshotScheduler.InitializeSourceSnapshot(SnapshotRoot);
+    const FFileChangeData SameContentModified(
+        SnapshotFile,
+        FFileChangeData::FCA_Modified);
+    TestFalse(
+        TEXT("Timestamp-only Modified event is ignored when content hash is unchanged"),
+        SnapshotScheduler.QueueFileChanges({ SameContentModified }));
+
+    TestTrue(
+        TEXT("Snapshot test Lua content is updated"),
+        FFileHelper::SaveStringToFile(TEXT("return { Value = 2 }\n"), *SnapshotFile));
+    TestTrue(
+        TEXT("Modified event queues work when Lua content hash changes"),
+        SnapshotScheduler.QueueFileChanges({ SameContentModified }));
+    TestFalse(
+        TEXT("Repeated Modified event for the same content is deduplicated"),
+        SnapshotScheduler.QueueFileChanges({ SameContentModified }));
+    TestTrue(
+        TEXT("Changed content request remains consumable"),
+        SnapshotScheduler.ConsumeDirtyRequest());
+
+    TestTrue(
+        TEXT("Snapshot test Lua file is removed"),
+        IFileManager::Get().Delete(*SnapshotFile, false, true));
+    const FFileChangeData TrackedFileRemoved(
+        SnapshotFile,
+        FFileChangeData::FCA_Removed);
+    TestTrue(
+        TEXT("Removing a tracked Lua file queues source stale work"),
+        SnapshotScheduler.QueueFileChanges({ TrackedFileRemoved }));
+    TestTrue(
+        TEXT("Removed content request is consumable"),
+        SnapshotScheduler.ConsumeDirtyRequest());
+    TestFalse(
+        TEXT("Repeated removal of an untracked file is ignored"),
+        SnapshotScheduler.QueueFileChanges({ TrackedFileRemoved }));
+    IFileManager::Get().DeleteDirectory(*SnapshotRoot, false, true);
     return true;
 }
 

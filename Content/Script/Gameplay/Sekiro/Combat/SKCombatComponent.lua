@@ -1,5 +1,5 @@
 -- Lua 类型：UnLua UObject 运行时类。self 是真实的 USKCombatComponent。
--- 负责首版攻击、防御、弹反动画编排；不处理碰撞、伤害、生命或躯干值。
+-- 负责攻击、防御、弹反与玩家架势编排；碰撞和伤害来源只提交裁决结果，不直接修改架势。
 
 local CombatConfig = require("Gameplay.Sekiro.Combat.CombatConfig")
 local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
@@ -27,15 +27,29 @@ local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 ---@field ComboNextAction string|nil 当前动作允许衔接的下一段轻攻击 ID。
 ---@field bSideCurveConsumed boolean 当前攻击是否已经提交过一次非零 AttackSide。
 ---@field bReturnToGuardAfterAttack boolean 当前攻击结束时是否允许按 Held 意图返回防御姿态。
+---@field DeflectRaiseStartSide string|nil 当前 Guard Raise 开始时锁存的刀侧。
+---@field DeflectSideResetRemaining number 弹反成功后的刀侧回默认倒计时，单位秒。
 ---@field LastDeflectType string|nil 上一次弹反类型。
----@field LastDeflectTime number 上一次弹反输入时间。
 ---@field DeflectStage number 当前同类型弹反段数。
+---@field PostureRecoveryEligibleTime number 连续满足架势恢复条件的时间，单位秒。
+---@field PostureBrokenElapsedTime number 当前架势打崩输入锁已经持续的时间，单位秒。
+---@field bWeaponHitboxActive boolean Lua 最近一次成功提交的武器攻击碰撞状态。
 
 ---@class SKCombatComponent: USKCombatComponent
 ---@field Runtime SKCombatRuntime
 local SKCombatComponent = UnLua.Class()
 
 local CurveThreshold = 0.5
+local PostureBrokenInputLockReason = "PostureBroken"
+
+---把数值限制在闭区间内，避免调参或异常外部输入把架势公式推离有效范围。
+---@param value number 待限制的数值。
+---@param minimum number 闭区间最小值。
+---@param maximum number 闭区间最大值。
+---@return number clamped 限制后的数值。
+local function clamp(value, minimum, maximum)
+    return math.max(minimum, math.min(value, maximum))
+end
 
 ---把 C++ 攻击侧枚举转换为 Lua 稳定名称。
 ---@param side userdata|number ESKAttackSide 枚举值。
@@ -98,9 +112,13 @@ local function create_runtime(initial_side)
         ComboNextAction = nil,
         bSideCurveConsumed = false,
         bReturnToGuardAfterAttack = false,
+        DeflectRaiseStartSide = nil,
+        DeflectSideResetRemaining = -1.0,
         LastDeflectType = nil,
-        LastDeflectTime = -math.huge,
         DeflectStage = 0,
+        PostureRecoveryEligibleTime = 0.0,
+        PostureBrokenElapsedTime = 0.0,
+        bWeaponHitboxActive = false,
     }
 end
 
@@ -109,6 +127,29 @@ end
 ---@return nil result 仅重置 Lua 私有状态。
 function SKCombatComponent:Initialize(_initializer)
     self.Runtime = create_runtime(CombatConfig.DefaultSide)
+end
+
+---按边沿切换 Owner 当前武器的攻击碰撞，开启前清空单次攻击命中记录。
+---碰撞物理状态由 C++ 承载；Lua 只在原版攻击曲线跨越零值边界时调用，避免每帧重复修改组件。
+---@param active boolean true 开启攻击查询，false 关闭攻击查询。
+---@return boolean applied 目标状态已经成立或本次切换已成功提交。
+function SKCombatComponent:SetWeaponHitboxActive(active)
+    local target_active = active == true
+    if self.Runtime.bWeaponHitboxActive == target_active then
+        return true
+    end
+
+    if target_active == true then
+        local activated = self:ActivateOwnerWeaponHitbox(true) == true
+        if activated == true then
+            self.Runtime.bWeaponHitboxActive = true
+        end
+        return activated
+    end
+
+    local deactivated = self:DeactivateOwnerWeaponHitbox() == true
+    self.Runtime.bWeaponHitboxActive = false
+    return deactivated
 end
 
 ---把刀侧规范化后同步到 Lua 与 C++ 战斗宿主。
@@ -145,6 +186,7 @@ end
 ---@param clear_pending boolean 是否同时丢弃尚未 Completed 的攻击输入。
 ---@return nil result 运行时状态和 C++ 刀侧被同步重置。
 function SKCombatComponent:ResetAttackRetention(clear_pending)
+    self:SetWeaponHitboxActive(false)
     if clear_pending == true then
         self.Runtime.PendingAttack = nil
     end
@@ -167,6 +209,345 @@ function SKCombatComponent:ReceiveBeginPlay()
     self:ClearCombatPosture()
     local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
     self:SetCommittedAttackSide(name_to_side(default_side))
+    self:SetMaxPosture(CombatConfig.Posture.MaxValue)
+    self:ResetPosture()
+    self:SetPostureBroken(false)
+    self:SetOwnerExternalInputLock(PostureBrokenInputLockReason, false)
+    self:DeactivateOwnerWeaponHitbox()
+    self.Runtime.bWeaponHitboxActive = false
+end
+
+---根据当前架势计算本次增加倍率；架势越高，继续增加得越慢。
+---@return number gain_scale 当前架势对应的增加倍率。
+function SKCombatComponent:GetPostureGainScale()
+    local max_posture = math.max(self:GetMaxPosture(), 0.0001)
+    local normalized = clamp(self:GetCurrentPosture() / max_posture, 0.0, 1.0)
+    local remaining = 1.0 - normalized
+    local falloff = remaining ^ CombatConfig.Posture.GainFalloffExponent
+    return CombatConfig.Posture.MinGainScale
+        + (1.0 - CombatConfig.Posture.MinGainScale) * falloff
+end
+
+---进入架势打崩状态；立即中断当前战斗动作、清空遗留输入并锁住玩法输入。
+---@return boolean entered 本次是否首次进入打崩状态。
+function SKCombatComponent:EnterPostureBroken()
+    if self:IsPostureBroken() == true then
+        return false
+    end
+
+    self:StopOwnerAIMovement()
+    self:StopCombatAnimation(0.0)
+    self:InvalidateCombatAction(0)
+    self:ClearCombatInputEvents()
+    self:ClearOwnerGameplayInputForScript()
+    self:SetOwnerExternalInputLock(PostureBrokenInputLockReason, true)
+    self:ResetAttackRetention(true)
+    self:ClearCombatPosture()
+
+    self.Runtime.ActionId = "PostureBroken"
+    self.Runtime.PostureRecoveryEligibleTime = 0.0
+    self.Runtime.PostureBrokenElapsedTime = 0.0
+    self:SetPostureBroken(true)
+    self:ResetPosture()
+
+    local action_serial = self:BeginCombatAction(UE.ESKCombatActionState.PostureBroken)
+    self.Runtime.ActionSerial = action_serial
+    local break_config = CombatConfig.Posture.Break
+    self.Runtime.bWasAnimationPlaying = self:PlayCombatAnimationByPath(
+        break_config.AnimationPath,
+        break_config.BlendInTime,
+        break_config.BlendOutTime,
+        1.0,
+        1) == true
+    return true
+end
+
+---结束架势打崩状态并恢复输入；动画结束和最短锁定时间必须同时满足才会调用。
+---@return nil result 状态恢复到 Neutral，架势保持为零。
+function SKCombatComponent:ExitPostureBroken()
+    self:ClearOwnerGameplayInputForScript()
+    self:SetOwnerExternalInputLock(PostureBrokenInputLockReason, false)
+    self:SetPostureBroken(false)
+    self:ResetAttackRetention(true)
+    self:ClearCombatPosture()
+    self:ClearCombatInputEvents()
+    self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+    self.Runtime.ActionId = nil
+    self.Runtime.PostureRecoveryEligibleTime = 0.0
+    self.Runtime.PostureBrokenElapsedTime = 0.0
+    self.Runtime.bWasAnimationPlaying = false
+end
+
+---应用一次已经裁决完成的防御结果；伤害来源无需知道架势公式。
+---@param result_name string 防御结果或 AttackSuccess、AttackGuarded、AttackDeflected。
+---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
+---@return boolean posture_broken 本次处理后是否处于架势打崩状态。
+function SKCombatComponent:ApplyPostureImpact(result_name, attack_type)
+    if self:IsPostureBroken() == true then
+        return true
+    end
+
+    local base_gain = CombatConfig.Posture.Gain[result_name]
+    if base_gain == nil then
+        return false
+    end
+
+    self.Runtime.PostureRecoveryEligibleTime = 0.0
+    local type_name = incoming_type_to_name(attack_type)
+    local strength = CombatConfig.Posture.AttackStrength[type_name] or 1.0
+    local gain = base_gain * strength * self:GetPostureGainScale()
+    local current_posture = self:GetCurrentPosture()
+    local max_posture = math.max(self:GetMaxPosture(), 0.0001)
+
+    local non_breaking_cap = nil
+    if result_name == "DeflectSuccess" then
+        non_breaking_cap =
+            max_posture * CombatConfig.Posture.SuccessCapNormalized
+    elseif result_name == "AttackSuccess"
+        or result_name == "AttackGuarded"
+        or result_name == "AttackDeflected" then
+        non_breaking_cap =
+            max_posture * CombatConfig.Posture.AttackCapNormalized
+    end
+    if non_breaking_cap ~= nil then
+        if current_posture < non_breaking_cap then
+            self:SetCurrentPosture(
+                math.min(current_posture + gain, non_breaking_cap))
+        end
+        return false
+    end
+
+    local next_posture = math.min(current_posture + gain, max_posture)
+    self:SetCurrentPosture(next_posture)
+    if next_posture >= max_posture then
+        self:EnterPostureBroken()
+        return true
+    end
+    return false
+end
+
+---根据当前防御阶段收敛外部裁决，确保弹反成功只可能发生在 Guard Raise。
+---外部错误提交的成功结果会在稳定防御时降级为 Guarded，其他状态降级为 DeflectFailed。
+---@param result_name string DeflectSuccess、Guarded 或 DeflectFailed。
+---@return string resolved_result 结合当前动作状态得到的最终防御结果。
+function SKCombatComponent:ResolvePostureImpactResult(result_name)
+    if result_name ~= "DeflectSuccess" then
+        return result_name
+    end
+
+    local state = self:GetCombatActionState()
+    if state == UE.ESKCombatActionState.GuardRaise then
+        return "DeflectSuccess"
+    end
+    if state == UE.ESKCombatActionState.Guarding then
+        return "Guarded"
+    end
+    return "DeflectFailed"
+end
+
+---处理一条拼刀结果；攻击结果增加攻击者架势，被弹反时再播放独立反应。
+---@param result_name string AttackSuccess、AttackGuarded、AttackDeflected 或防御结果。
+---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
+---@return boolean handled 是否成功接收并执行了该防御结果。
+function SKCombatComponent:ProcessPostureImpact(result_name, attack_type)
+    if result_name == "AttackDeflected" then
+        if self:ApplyPostureImpact(result_name, attack_type) == true then
+            return false
+        end
+        return self:StartAttackDeflected()
+    end
+    if result_name == "AttackSuccess" or result_name == "AttackGuarded" then
+        return self:ApplyPostureImpact(result_name, attack_type) ~= true
+    end
+
+    local resolved_result = self:ResolvePostureImpactResult(result_name)
+    if resolved_result == "DeflectSuccess" then
+        if self:StartDeflect() ~= true then
+            return false
+        end
+        self:ApplyPostureImpact(resolved_result, attack_type)
+        return true
+    end
+
+    local posture_broken = self:ApplyPostureImpact(resolved_result, attack_type)
+    if posture_broken ~= true and resolved_result == "Guarded" then
+        self:StartGuardImpact()
+    end
+    if posture_broken ~= true and resolved_result == "DeflectFailed" then
+        self:StartDeflectFailed(attack_type)
+    end
+    return true
+end
+
+---接收 C++ 或其他脚本提交的拼刀裁决，统一进入可复用的 Lua 结果处理流程。
+---@param result_name string 三种攻击结果或 DeflectSuccess、Guarded、DeflectFailed。
+---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
+---@return nil result 架势和必要的动作状态已经更新。
+function SKCombatComponent:HandlePostureImpact(result_name, attack_type)
+    self:ProcessPostureImpact(result_name, attack_type)
+end
+
+---根据当前攻击动作向碰撞桥接报告抽象强度；蓄力突刺沿用 Thrust，其余攻击使用 Light。
+---@return userdata|number attack_type ESKIncomingAttackType 枚举值。
+function SKCombatComponent:ResolveOutgoingAttackType()
+    if self.Runtime ~= nil and self.Runtime.ActiveAttackKind == "Heavy" then
+        return UE.ESKIncomingAttackType.Thrust
+    end
+    return UE.ESKIncomingAttackType.Light
+end
+
+---处理刀身与角色碰撞产生的一次真实接触，并同步更新攻防双方的架势与反应动画。
+---Guard Raise 整段是当前弹反成功窗口，稳定 Guarding 只执行普通防御；其他状态按真实命中处理。
+---@param attacker_combat USKCombatComponent|nil 攻击者战斗组件，可为空。
+---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
+---@return userdata|number contact_result ESKWeaponContactResult 枚举值。
+function SKCombatComponent:ResolveIncomingWeaponContact(attacker_combat, attack_type)
+    if attacker_combat == self then
+        return UE.ESKWeaponContactResult.Ignored
+    end
+
+    local state = self:GetCombatActionState()
+    if self:IsPostureBroken() ~= true
+        and state == UE.ESKCombatActionState.GuardRaise then
+        local deflected = self:ProcessPostureImpact(
+            "DeflectSuccess",
+            attack_type) == true
+        if deflected == true then
+            if attacker_combat ~= nil then
+                attacker_combat:HandlePostureImpact(
+                    "AttackDeflected",
+                    attack_type)
+            end
+            return UE.ESKWeaponContactResult.Deflected
+        end
+
+        -- 成功动画异常时仍按普通防御结算，不能因为展示资源缺失穿透防御。
+        self:ProcessPostureImpact("Guarded", attack_type)
+        if attacker_combat ~= nil then
+            attacker_combat:HandlePostureImpact("AttackGuarded", attack_type)
+        end
+        return UE.ESKWeaponContactResult.Guarded
+    end
+
+    if self:IsPostureBroken() ~= true
+        and state == UE.ESKCombatActionState.Guarding then
+        self:ProcessPostureImpact("Guarded", attack_type)
+        if attacker_combat ~= nil then
+            attacker_combat:HandlePostureImpact("AttackGuarded", attack_type)
+        end
+        return UE.ESKWeaponContactResult.Guarded
+    end
+
+    if attacker_combat ~= nil then
+        attacker_combat:HandlePostureImpact("AttackSuccess", attack_type)
+    end
+    return UE.ESKWeaponContactResult.Hit
+end
+
+---接收行为树提交的抽象攻击请求，并复用玩家战斗状态机启动一次地面轻攻击。
+---AI 不生成玩家输入序列；请求只在完全中立、动画空闲且架势未崩坏时成立。
+---@param attack_request string|userdata 行为树提交的稳定请求名，当前只支持 AutoLight。
+---@return boolean started 是否成功开始了一次 AI 攻击。
+function SKCombatComponent:RequestAIAttack(attack_request)
+    if tostring(attack_request) ~= "AutoLight"
+        or self:IsPostureBroken() == true
+        or self:GetCombatActionState() ~= UE.ESKCombatActionState.Neutral
+        or self:IsCombatAnimationPlaying() == true then
+        return false
+    end
+
+    if self.Runtime == nil then
+        self.Runtime = create_runtime(side_to_name(self:GetNextAttackSide()))
+    end
+
+    local attack_side = side_to_name(self:GetNextAttackSide())
+    if attack_side ~= "Left" and attack_side ~= "Right" then
+        attack_side = self.Runtime.RestingSide
+    end
+    if attack_side ~= "Left" and attack_side ~= "Right" then
+        attack_side = CombatConfig.DefaultSide
+    end
+
+    self:StopOwnerAIMovement()
+    return self:StartLightAttack(attack_side, "Ground")
+end
+
+---每帧更新架势恢复和打崩解锁；只有完全中立且未 Sprint、未 Step 时才累计恢复速度。
+---@param delta_seconds number 本帧时长，单位秒。
+---@return nil result 必要时降低架势或结束打崩状态。
+function SKCombatComponent:UpdatePosture(delta_seconds)
+    local safe_delta_seconds = math.max(delta_seconds or 0.0, 0.0)
+    if self:IsPostureBroken() == true then
+        self.Runtime.PostureBrokenElapsedTime =
+            self.Runtime.PostureBrokenElapsedTime + safe_delta_seconds
+        local minimum_duration = CombatConfig.Posture.Break.MinimumLockDuration
+        if self.Runtime.PostureBrokenElapsedTime >= minimum_duration
+            and self:IsCombatAnimationPlaying() ~= true then
+            self:ExitPostureBroken()
+        end
+        return
+    end
+
+    local current_posture = self:GetCurrentPosture()
+    if current_posture <= 0.0 then
+        self.Runtime.PostureRecoveryEligibleTime = 0.0
+        return
+    end
+
+    local can_recover = self:GetCombatActionState() == UE.ESKCombatActionState.Neutral
+        and self:IsCombatAnimationPlaying() ~= true
+        and self:IsOwnerSprinting() ~= true
+        and self:IsOwnerDodgingOrStepActive() ~= true
+    if can_recover ~= true then
+        self.Runtime.PostureRecoveryEligibleTime = 0.0
+        return
+    end
+
+    local recovery_config = CombatConfig.Posture.Recovery
+    self.Runtime.PostureRecoveryEligibleTime =
+        self.Runtime.PostureRecoveryEligibleTime + safe_delta_seconds
+    if self.Runtime.PostureRecoveryEligibleTime <= recovery_config.Delay then
+        return
+    end
+
+    local ramp_duration = math.max(recovery_config.RampDuration, 0.0001)
+    local recovery_alpha = clamp(
+        (self.Runtime.PostureRecoveryEligibleTime - recovery_config.Delay) / ramp_duration,
+        0.0,
+        1.0)
+    local recovery_rate = recovery_config.RateMin
+        + (recovery_config.RateMax - recovery_config.RateMin) * recovery_alpha
+    self:SetCurrentPosture(current_posture - recovery_rate * safe_delta_seconds)
+end
+
+---更新成功弹反后的现有刀侧保留时间，并只在安全的 Neutral 状态恢复默认刀侧。
+---倒计时从弹反动画结束后开始；攻击、防御或其他战斗 Montage 活动时不会强制翻侧。
+---@param delta_seconds number 本帧时长，单位秒。
+---@return nil result 到期且满足安全条件时同步恢复 RestingSide、NextAttackSide 与 CommittedAttackSide。
+function SKCombatComponent:UpdateDeflectSideReset(delta_seconds)
+    local remaining = self.Runtime.DeflectSideResetRemaining
+    if remaining < 0.0 then
+        return
+    end
+    if self:GetCombatActionState() == UE.ESKCombatActionState.DeflectReaction then
+        -- 保留时间从成功弹反动画结束后开始，避免动画尚未完成便恢复默认刀侧。
+        return
+    end
+
+    if remaining > 0.0 then
+        remaining = math.max(0.0, remaining - math.max(delta_seconds or 0.0, 0.0))
+        self.Runtime.DeflectSideResetRemaining = remaining
+    end
+    if remaining > 0.0
+        or self:GetCombatActionState() ~= UE.ESKCombatActionState.Neutral
+        or self:IsCombatAnimationPlaying() == true then
+        return
+    end
+
+    local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
+    self:SetCommittedAttackSide(name_to_side(default_side))
+    self.Runtime.DeflectRaiseStartSide = nil
+    self.Runtime.DeflectSideResetRemaining = -1.0
 end
 
 ---播放一个离散全身动作，并用新的 ActionSerial 使旧回调失效。
@@ -175,6 +556,7 @@ end
 ---@param animation_path string UAnimSequence 对象路径。
 ---@return boolean started 动作是否成功加载并开始播放。
 function SKCombatComponent:StartAction(state, action_id, animation_path)
+    self:SetWeaponHitboxActive(false)
     local serial = self:BeginCombatAction(state)
     if self:PlayCombatAnimationByPath(
         animation_path,
@@ -349,6 +731,7 @@ end
 ---@param force_air boolean|nil true 表示物理 Jump 已请求，本帧直接使用空中举刀动作。
 ---@return boolean started 举刀动画是否成功开始。
 function SKCombatComponent:StartGuardRaise(force_air)
+    self.Runtime.DeflectRaiseStartSide = self.Runtime.RestingSide
     self:ResetAttackRetention(true)
     self:SetGuardCombatPosture(force_air)
     local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
@@ -386,44 +769,137 @@ function SKCombatComponent:StartGuardLower()
     return false
 end
 
----按来袭类型和同类型连续段数选择弹反动画，并暂时使用左侧刀位。
----@param attack_type userdata|number ESKIncomingAttackType 枚举值。
----@param event_time number 触发弹反的 Guard Started 世界时间。
----@return boolean started 弹反动画是否成功开始。
-function SKCombatComponent:StartDeflect(attack_type, event_time)
-    local type_name = incoming_type_to_name(attack_type)
-    local chain = CombatConfig.DeflectByType[type_name]
-    if chain == nil or #chain == 0 then
+---播放稳定防御被刀命中时的震刀动作，并在动作结束后按防御键状态恢复 Guarding 或 Neutral。
+---@return boolean started 防御震刀动作是否成功开始。
+function SKCombatComponent:StartGuardImpact()
+    if self:GetCombatActionState() ~= UE.ESKCombatActionState.Guarding then
         return false
     end
 
-    if self.Runtime.LastDeflectType ~= type_name
-        or event_time - self.Runtime.LastDeflectTime > CombatConfig.DeflectChainResetTime then
-        self.Runtime.DeflectStage = 1
-    else
-        self.Runtime.DeflectStage = self.Runtime.DeflectStage % #chain + 1
-    end
-    self.Runtime.LastDeflectType = type_name
-    self.Runtime.LastDeflectTime = event_time
     self:ResetAttackRetention(true)
     self:SetGuardCombatPosture(false)
     local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
     self:SetCommittedAttackSide(name_to_side(defense_side))
+    return self:StartAction(
+        UE.ESKCombatActionState.DeflectReaction,
+        "Guard_Impact",
+        CombatConfig.GuardImpactAnimation)
+end
+
+---只在 Guard Raise 阶段按起始刀侧选择成功弹反动画，并锁存动作结束后的相反刀侧。
+---@return boolean started 弹反动画是否成功开始。
+function SKCombatComponent:StartDeflect()
+    if self:GetCombatActionState() ~= UE.ESKCombatActionState.GuardRaise then
+        return false
+    end
+
+    local start_side = self.Runtime.DeflectRaiseStartSide or self.Runtime.RestingSide
+    local deflect_config = CombatConfig.DeflectBySide[start_side]
+    if deflect_config == nil then
+        return false
+    end
+
+    self:ResetAttackRetention(true)
+    self:SetGuardCombatPosture(false)
+    local end_side = self:SetRestingSide(deflect_config.EndSide)
+    self:SetCommittedAttackSide(name_to_side(end_side))
+    self.Runtime.DeflectRaiseStartSide = nil
+    self.Runtime.DeflectSideResetRemaining = CombatConfig.DeflectSideResetDelay
     if self:StartAction(
         UE.ESKCombatActionState.DeflectReaction,
-        "Deflect_" .. type_name .. "_" .. tostring(self.Runtime.DeflectStage),
-        chain[self.Runtime.DeflectStage]) == true then
+        "Deflect_" .. start_side .. "_To_" .. end_side,
+        deflect_config.AnimationPath) == true then
         return true
     end
+
+    self.Runtime.DeflectSideResetRemaining = -1.0
     self:ClearCombatPosture()
+    local restored_side = self:SetRestingSide(start_side)
+    self:SetCommittedAttackSide(name_to_side(restored_side))
+    return false
+end
+
+---中断当前攻击并按已提交的攻击刀侧播放被弹开动作；反应结束后仍保持原刀侧。
+---必须读取 CommittedAttackSide，而不是可能已被 AttackSide 曲线提前更新的下一刀侧。
+---@return boolean started 对应的攻击被弹开动画是否成功开始。
+function SKCombatComponent:StartAttackDeflected()
+    local state = self:GetCombatActionState()
+    local is_attacking = state == UE.ESKCombatActionState.LightAttack
+        or state == UE.ESKCombatActionState.HeavyAttack
+        or state == UE.ESKCombatActionState.PendingAttack
+    if is_attacking ~= true then
+        return false
+    end
+
+    local attack_side = side_to_name(self:GetCommittedAttackSide())
+    if attack_side ~= "Left" and attack_side ~= "Right" then
+        attack_side = self.Runtime.RestingSide
+    end
+    local reaction_config = CombatConfig.AttackDeflectedBySide[attack_side]
+    if reaction_config == nil then
+        return false
+    end
+
+    self:StopOwnerAIMovement()
+    self:ClearCombatInputEvents()
+    self:ResetAttackRetention(true)
+    self:ClearCombatPosture()
+    local retained_side = self:SetRestingSide(reaction_config.EndSide)
+    self:SetCommittedAttackSide(name_to_side(retained_side))
+    self.Runtime.DeflectRaiseStartSide = nil
+    self.Runtime.DeflectSideResetRemaining = CombatConfig.DeflectSideResetDelay
+    if self:StartAction(
+        UE.ESKCombatActionState.DeflectReaction,
+        "AttackDeflected_" .. attack_side,
+        reaction_config.AnimationPath) == true then
+        return true
+    end
+
+    self.Runtime.DeflectSideResetRemaining = -1.0
+    return false
+end
+
+---按来袭类型选择对应的弹反失败动作；编号与成功弹反保持同段对应关系。
+---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
+---@return boolean started 弹反失败动画是否成功开始。
+function SKCombatComponent:StartDeflectFailed(attack_type)
+    local type_name = incoming_type_to_name(attack_type)
+    local chain = CombatConfig.DeflectFailedByType[type_name]
+    if chain == nil or #chain == 0 then
+        return false
+    end
+
+    local stage = self.Runtime.DeflectStage
+    if self.Runtime.LastDeflectType ~= type_name or stage <= 0 then
+        stage = 1
+    else
+        stage = (stage - 1) % #chain + 1
+    end
+    self.Runtime.LastDeflectType = type_name
+    self.Runtime.DeflectStage = stage
+    self:ResetAttackRetention(true)
+    self:ClearCombatPosture()
+    local defense_side = self:SetRestingSide(CombatConfig.DefenseSide)
+    self:SetCommittedAttackSide(name_to_side(defense_side))
+    if self:StartAction(
+        UE.ESKCombatActionState.DeflectReaction,
+        "DeflectFailed_" .. type_name .. "_" .. tostring(stage),
+        chain[stage]) == true then
+        return true
+    end
+
     self:SetRestingSide(CombatConfig.DefaultSide)
     return false
 end
 
----尝试让新的 Guard Started 消费当前模拟来袭；只有成功消费才触发弹反。
----@param input_event FSKCombatInputEvent 新的防御按下事件。
+---在 Guard Raise 已经成立后尝试消费当前模拟来袭；其他动作阶段绝不判定弹反成功。
+---@param input_event FSKCombatInputEvent 启动本次 Guard Raise 的防御按下事件。
 ---@return boolean deflected 是否成功消费来袭并开始弹反。
 function SKCombatComponent:TryStartDeflect(input_event)
+    if self:GetCombatActionState() ~= UE.ESKCombatActionState.GuardRaise then
+        return false
+    end
+
     local has_context, context = self:GetIncomingAttackAnimationContext()
     if has_context ~= true or context == nil then
         return false
@@ -435,7 +911,7 @@ function SKCombatComponent:TryStartDeflect(input_event)
     if consumed ~= true then
         return false
     end
-    return self:StartDeflect(attack_type, input_event.EventTimeSeconds)
+    return self:ProcessPostureImpact("DeflectSuccess", attack_type)
 end
 
 ---读取当前攻击配置是否允许在曲线窗口内判定后续重攻击。
@@ -665,18 +1141,17 @@ function SKCombatComponent:HandleAttackCompleted(input_event)
     self:ResolveAttackInput(pending, is_heavy)
 end
 
----处理防御 Started，弹反始终优先；普通防御严格采样动画内取消曲线。
+---处理防御 Started：先实际进入 Guard Raise，再允许当前模拟来袭在 Raise 阶段判定成功。
+---攻击取消仍严格采样动画曲线；未能进入 Raise 时不会越过当前动作直接弹反。
 ---@param input_event FSKCombatInputEvent 防御按下事件。
----@return nil result 根据裁决启动弹反或 Guard Raise。
+---@return nil result 根据当前动作启动 Guard Raise，并在 Raise 成功建立后尝试弹反。
 function SKCombatComponent:HandleGuardStarted(input_event)
-    if self:TryStartDeflect(input_event) == true then
-        return
-    end
-
     local state = self:GetCombatActionState()
     if state == UE.ESKCombatActionState.Neutral
         or state == UE.ESKCombatActionState.PendingAttack then
-        self:StartGuardRaise()
+        if self:StartGuardRaise() == true then
+            self:TryStartDeflect(input_event)
+        end
         return
     end
     if (state == UE.ESKCombatActionState.LightAttack
@@ -684,7 +1159,9 @@ function SKCombatComponent:HandleGuardStarted(input_event)
         and self:SampleActiveSequenceCurveAtTime(
             CurveNames.CanCancelToGuard,
             input_event.EventTimeSeconds) >= CurveThreshold then
-        self:StartGuardRaise()
+        if self:StartGuardRaise() == true then
+            self:TryStartDeflect(input_event)
+        end
     end
 end
 
@@ -754,6 +1231,10 @@ end
 ---@return nil result 进入稳定 Guard、收刀、下一攻击或 Neutral。
 function SKCombatComponent:HandleAnimationFinished()
     local state = self:GetCombatActionState()
+    if state == UE.ESKCombatActionState.PostureBroken then
+        -- 打崩状态必须同时满足最短锁定时间，统一交给 UpdatePosture 收尾。
+        return
+    end
     if state == UE.ESKCombatActionState.PendingAttack then
         local pending = self.Runtime.PendingAttack
         local return_to_guard = pending ~= nil
@@ -775,6 +1256,7 @@ function SKCombatComponent:HandleAnimationFinished()
     end
     if state == UE.ESKCombatActionState.GuardRaise then
         self.Runtime.ActionId = nil
+        self.Runtime.DeflectRaiseStartSide = nil
         if self:IsGuardHeld() == true then
             self:SetGuardCombatPosture(false)
             self:SetCombatActionState(UE.ESKCombatActionState.Guarding)
@@ -785,6 +1267,8 @@ function SKCombatComponent:HandleAnimationFinished()
         return
     end
     if state == UE.ESKCombatActionState.DeflectReaction then
+        local should_preserve_success_side =
+            self.Runtime.DeflectSideResetRemaining >= 0.0
         self.Runtime.ActionId = nil
         if self:IsGuardHeld() == true then
             self:SetGuardCombatPosture(false)
@@ -792,8 +1276,10 @@ function SKCombatComponent:HandleAnimationFinished()
         else
             self:ClearCombatPosture()
             self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
-            local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
-            self:SetCommittedAttackSide(name_to_side(default_side))
+            if should_preserve_success_side ~= true then
+                local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
+                self:SetCommittedAttackSide(name_to_side(default_side))
+            end
         end
         return
     end
@@ -803,6 +1289,7 @@ function SKCombatComponent:HandleAnimationFinished()
         self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
         local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
         self:SetCommittedAttackSide(name_to_side(default_side))
+        self.Runtime.DeflectSideResetRemaining = -1.0
         return
     end
     if state == UE.ESKCombatActionState.LightAttack
@@ -849,13 +1336,35 @@ function SKCombatComponent:UpdateAttackSideCurve()
         self:SampleActiveSequenceCurve(CurveNames.CanCancelToGuard))
 end
 
----每帧按确定顺序消费输入、提交动画内下一刀侧并检测自有 Montage 结束。
+---每帧采样原版 TAE 攻击框曲线，只在 Light/Heavy 动作的非零窗口开启武器碰撞。
+---状态离开攻击或曲线缺失时失败关闭；每次上升沿都会清空目标去重集合，允许下一刀重新命中。
+---@return nil result 必要时提交一次武器碰撞开启或关闭边沿。
+function SKCombatComponent:UpdateWeaponHitboxCurve()
+    local state = self:GetCombatActionState()
+    local is_attacking = state == UE.ESKCombatActionState.LightAttack
+        or state == UE.ESKCombatActionState.HeavyAttack
+    if is_attacking ~= true then
+        self:SetWeaponHitboxActive(false)
+        return
+    end
+
+    local curve_value = self:SampleActiveSequenceCurve(CurveNames.AttackHitbox)
+    self:SetWeaponHitboxActive(curve_value >= CurveThreshold)
+end
+
+---每帧按确定顺序更新架势、消费输入、提交攻击曲线状态并检测自有 Montage 结束。
 ---该入口由原生组件显式 require 后调用，不依赖纯原生组件的 Blueprint ReceiveTick 分发。
----@param _delta_seconds number 本帧时长；当前实现使用 Sequence 曲线和事件绝对时间。
+---@param delta_seconds number 本帧时长，单位秒。
 ---@return boolean handled 始终返回 true，表示本帧战斗动画逻辑已执行。
-function SKCombatComponent:HandleCombatTick(_delta_seconds)
+function SKCombatComponent:HandleCombatTick(delta_seconds)
     if self.Runtime == nil then
         self.Runtime = create_runtime(side_to_name(self:GetNextAttackSide()))
+    end
+    if self:IsPostureBroken() == true then
+        self:SetWeaponHitboxActive(false)
+        self:UpdatePosture(delta_seconds)
+        self.Runtime.bWasAnimationPlaying = self:IsCombatAnimationPlaying() == true
+        return true
     end
     self:TryTransitionAirAttackToLand()
     self:UpdateSustainedCombatPosture()
@@ -868,6 +1377,7 @@ function SKCombatComponent:HandleCombatTick(_delta_seconds)
     end
 
     self:TryCommitGuardAttackStartup()
+    self:UpdateWeaponHitboxCurve()
     self:UpdateAttackSideCurve()
     local is_playing = self:IsCombatAnimationPlaying() == true
     if self.Runtime.bWasAnimationPlaying == true and is_playing ~= true then
@@ -875,6 +1385,8 @@ function SKCombatComponent:HandleCombatTick(_delta_seconds)
         is_playing = self:IsCombatAnimationPlaying() == true
     end
     self.Runtime.bWasAnimationPlaying = is_playing
+    self:UpdatePosture(delta_seconds)
+    self:UpdateDeflectSideReset(delta_seconds)
     return true
 end
 

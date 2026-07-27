@@ -348,6 +348,7 @@ void FSekiroAnimBlueprintExtEditorModule::RegisterScriptWatcher()
         return;
     }
 
+    Scheduler->InitializeSourceSnapshot(WatchedAnimationScriptRoot);
     FDirectoryWatcherModule& WatcherModule =
         FModuleManager::LoadModuleChecked<FDirectoryWatcherModule>(TEXT("DirectoryWatcher"));
     IDirectoryWatcher* DirectoryWatcher = WatcherModule.Get();
@@ -478,7 +479,7 @@ void FSekiroAnimBlueprintExtEditorModule::HandleEndPIE(
 }
 
 /**
- * 在游戏线程消费一次已合并 Lua 文件变化，并将全部已加载 Lua 动画蓝图标记 Source Dirty。
+ * 在游戏线程消费一次已合并 Lua 内容变化，并将全部已加载 Lua 动画蓝图标记为源码过期。
  * Animation 目录内脚本可能是共享基类或节点模块，因此当前依赖图建立前采用保守全量标脏；不会执行 HotReload 或编译。
  *
  * @param WeakScheduler 线程安全请求合并器弱引用；模块关闭后失效并安全跳过。
@@ -496,7 +497,7 @@ void FSekiroAnimBlueprintExtEditorModule::MarkPendingSourceChanges(
     UE_LOG(
         LogSekiroAnimBlueprintExtEditor,
         Verbose,
-        TEXT("Lua animation source changed; marked %d loaded Lua AnimBlueprint asset(s) dirty."),
+        TEXT("Lua animation source changed; marked %d loaded Lua AnimBlueprint source(s) stale without dirtying packages."),
         DirtyCount);
 }
 

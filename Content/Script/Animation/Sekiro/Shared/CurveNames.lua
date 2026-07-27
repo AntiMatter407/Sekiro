@@ -18,6 +18,7 @@
 ---@field CanCancelToGuard string 当前动作允许被防御输入取消。
 ---@field CanCancelToJump string 当前地面攻击允许被跳跃输入取消。
 ---@field CanCancelToDodge string 当前动作允许被闪避输入取消。
+---@field AttackHitbox string 原版 TAE 攻击框类型；非零区间开启当前武器攻击碰撞。
 ---@field WeaponHandIK string 收拔刀换挂点附近约束右手到刀柄目标的连续权重。
 local CurveNames = {
     CanEnterLoop = "CanEnterLoop",
@@ -35,6 +36,7 @@ local CurveNames = {
     CanCancelToGuard = "CanCancelToGuard",
     CanCancelToJump = "CanCancelToJump",
     CanCancelToDodge = "CanCancelToDodge",
+    AttackHitbox = "AttackHitbox",
     WeaponHandIK = "WeaponHandIK",
 }
 

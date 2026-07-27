@@ -1,6 +1,7 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SKWeapon.h"
+#include "Combat/SKCombatComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/DamageEvents.h"
@@ -215,8 +216,9 @@ void ASKWeapon::ClearHitActors()
 }
 
 /**
- * 处理攻击碰撞开始重叠，对有效且未命中过的 Actor 应用一次基础点伤害并记录去重。
- * 委托由游戏线程触发；函数不负责阵营筛选、攻击窗口或展示状态切换。
+ * 处理攻击碰撞开始重叠，并把角色目标交给其战斗组件裁决为命中、格挡或弹反。
+ * 只有普通命中继续应用基础点伤害；格挡和弹反仍会记录去重，避免同一攻击窗口重复结算。
+ * 委托由游戏线程触发；函数不负责阵营筛选、攻击窗口或具体架势数值规则。
  *
  * @param Overlapped 触发事件的碰撞组件，仅作为委托上下文，不保留引用。
  * @param OtherActor 被重叠的目标 Actor，可为空；自身拥有者和重复目标会被忽略。
@@ -236,8 +238,38 @@ void ASKWeapon::OnHitboxOverlap(
     if (!OtherActor || OtherActor == GetOwner()) return;
     if (AlreadyHitActors.Contains(OtherActor)) return;
 
-    const float BaseDamage = 100.f;
-    FPointDamageEvent DamageEvent(BaseDamage, FHitResult(), GetActorForwardVector(), nullptr);
-    OtherActor->TakeDamage(BaseDamage, DamageEvent, GetInstigatorController(), GetOwner());
+    AActor* AttackerActor = GetOwner();
+    USKCombatComponent* AttackerCombat = AttackerActor
+        ? AttackerActor->FindComponentByClass<USKCombatComponent>()
+        : nullptr;
+    USKCombatComponent* DefenderCombat =
+        OtherActor->FindComponentByClass<USKCombatComponent>();
+
+    ESKWeaponContactResult ContactResult = ESKWeaponContactResult::Hit;
+    if (DefenderCombat)
+    {
+        const ESKIncomingAttackType AttackType = AttackerCombat
+            ? AttackerCombat->ResolveOutgoingAttackType()
+            : ESKIncomingAttackType::Light;
+        ContactResult = DefenderCombat->ResolveIncomingWeaponContact(
+            AttackerCombat,
+            AttackType);
+    }
+
+    if (ContactResult == ESKWeaponContactResult::Ignored) return;
+    if (ContactResult == ESKWeaponContactResult::Hit)
+    {
+        const float BaseDamage = 100.f;
+        FPointDamageEvent DamageEvent(
+            BaseDamage,
+            SweepResult,
+            GetActorForwardVector(),
+            nullptr);
+        OtherActor->TakeDamage(
+            BaseDamage,
+            DamageEvent,
+            GetInstigatorController(),
+            AttackerActor);
+    }
     AlreadyHitActors.Add(OtherActor);
 }

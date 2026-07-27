@@ -115,7 +115,7 @@ void USekiroLuaAnimBlueprintExtension::MarkCompileFailed(const FString& Message)
 
 /**
  * 递增资产观察到的 Lua 源修订并标记待编译，不修改 Graph、GeneratedClass 或成功修订。
- * 只能在游戏线程调用；调用方负责 Modify、Blueprint 状态通知与 package 标脏。
+ * 只能在游戏线程调用；源码监听器可仅更新内存状态，实际改变资产结构的调用方才负责事务与 package 标脏。
  *
  * @param Message 面向资产详情的变更原因；允许为空。
  */

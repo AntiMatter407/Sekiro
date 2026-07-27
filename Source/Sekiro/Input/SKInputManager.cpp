@@ -223,11 +223,118 @@ FName USKInputManager::GetOwnerWeaponPresentationName() const
         : FName(TEXT("Drawn"));
 }
 
+/**
+ * 按稳定原因名增删一个外部玩法输入锁，允许多个系统安全叠加所有权。
+ * 首个锁生效时立即清理现有玩法输入，避免旧 Held、缓冲或移动意图在锁内继续执行；
+ * 移除未知原因是幂等操作，Reason 为 None 时拒绝修改。只能在游戏线程调用。
+ *
+ * @param Reason 调用系统拥有的非 None 原因名；调用方只能释放自己添加的原因。
+ * @param bLocked true 添加原因，false 移除原因。
+ */
+void USKInputManager::SetExternalInputLock(FName Reason, bool bLocked)
+{
+    if (Reason.IsNone())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SKInputManager rejected external input lock with None reason. Owner=%s"), *GetNameSafe(GetOwner()));
+        return;
+    }
+
+    const bool bWasLocked = IsExternalInputLocked();
+    if (bLocked)
+    {
+        ExternalInputLockReasons.Add(Reason);
+    }
+    else
+    {
+        ExternalInputLockReasons.Remove(Reason);
+    }
+
+    if (!bWasLocked && IsExternalInputLocked()) ClearAllGameplayInputForScript();
+}
+
+/**
+ * 查询是否存在至少一个外部玩法输入锁，不修改锁集合或输入状态。
+ * 只能在游戏线程读取。
+ *
+ * @return 任一原因仍持有锁时返回 true，否则返回 false。
+ */
+bool USKInputManager::IsExternalInputLocked() const
+{
+    return !ExternalInputLockReasons.IsEmpty();
+}
+
+/**
+ * 清除移动、动作按下/按住、缓冲、连段和 Dodge 活动窗口，并终止角色跳跃与冲刺意图。
+ * 当前仍按住的成对物理动作会被锁存到释放集合，确保解锁后仅收到旧 Completed 边沿时不会误触发；
+ * LookIntent、Pause、Menu 和锁原因集合保持不变。本函数只清理意图，不停止战斗动画或 Root Motion，
+ * 只能在游戏线程调用。
+ */
+void USKInputManager::ClearAllGameplayInputForScript()
+{
+    if (!MoveIntent.IsNearlyZero()) SuppressedActionsUntilRelease.Add(TEXT("Move"));
+    if (bAttackHeld) SuppressedActionsUntilRelease.Add(TEXT("Attack"));
+    if (bGuardHeld) SuppressedActionsUntilRelease.Add(TEXT("Guard"));
+    if (bDodgeHeld) SuppressedActionsUntilRelease.Add(TEXT("Dodge"));
+    if (bWalkHeld) SuppressedActionsUntilRelease.Add(TEXT("Walk"));
+    if (bProstheticHeld) SuppressedActionsUntilRelease.Add(TEXT("Prosthetic"));
+
+    MoveIntent = FVector2D::ZeroVector;
+    MoveInputAmount = 0.f;
+    MoveInputReleaseBufferRemaining = 0.f;
+
+    bAttackPressed = false;
+    bJumpPressed = false;
+    bDodgePressed = false;
+    bInteractPressed = false;
+    bUseItemPressed = false;
+    bHealingGourdPressed = false;
+    bGrapplePressed = false;
+    bProstheticPressed = false;
+    bLockOnPressed = false;
+    bCrouchToggled = false;
+    bCycleItemNext = false;
+    bCycleItemPrev = false;
+
+    bAttackHeld = false;
+    bGuardHeld = false;
+    bDodgeHeld = false;
+    bWalkHeld = false;
+    bProstheticHeld = false;
+
+    AttackHoldTime = 0.f;
+    ProstheticHoldTime = 0.f;
+    DodgeHoldTime = 0.f;
+    DodgeActiveTimeRemaining = 0.f;
+    bDodgeActive = false;
+    ComboIndex = 0;
+    TimeSinceLastAttack = 0.f;
+    AttackPressedTimeSeconds = 0.0;
+    GuardPressedTimeSeconds = 0.0;
+    ActiveAttackInputSerial = 0;
+    ActiveGuardInputSerial = 0;
+    InputBuffer.Reset();
+
+    ACharacter* Owner = OwnerCharacter.Get();
+    if (!Owner) return;
+
+    Owner->ConsumeMovementInputVector();
+    Owner->StopJumping();
+    if (ASKCharacter* SekiroOwner = Cast<ASKCharacter>(Owner))
+    {
+        SekiroOwner->SetDodging(false);
+    }
+    if (USKMovementComponent* MovementComponent = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
+    {
+        MovementComponent->CurrentMovementTier = ESKMovementTier::Idle;
+    }
+}
+
 //////////////////////////////////////////////////////////////////////////
 // 消费型意图
 
 bool USKInputManager::ConsumeAttackPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bAttackPressed)
 	{
 		bAttackPressed = false;
@@ -238,6 +345,7 @@ bool USKInputManager::ConsumeAttackPressed()
 
 bool USKInputManager::ConsumeJumpPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bJumpPressed)
 	{
 		bJumpPressed = false;
@@ -248,6 +356,7 @@ bool USKInputManager::ConsumeJumpPressed()
 
 bool USKInputManager::ConsumeDodgePressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bDodgePressed)
 	{
 		bDodgePressed = false;
@@ -258,6 +367,7 @@ bool USKInputManager::ConsumeDodgePressed()
 
 bool USKInputManager::ConsumeInteractPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bInteractPressed)
 	{
 		bInteractPressed = false;
@@ -268,6 +378,7 @@ bool USKInputManager::ConsumeInteractPressed()
 
 bool USKInputManager::ConsumeUseItemPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bUseItemPressed)
 	{
 		bUseItemPressed = false;
@@ -278,6 +389,7 @@ bool USKInputManager::ConsumeUseItemPressed()
 
 bool USKInputManager::ConsumeHealingGourdPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bHealingGourdPressed)
 	{
 		bHealingGourdPressed = false;
@@ -288,6 +400,7 @@ bool USKInputManager::ConsumeHealingGourdPressed()
 
 bool USKInputManager::ConsumeGrapplePressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bGrapplePressed)
 	{
 		bGrapplePressed = false;
@@ -298,6 +411,7 @@ bool USKInputManager::ConsumeGrapplePressed()
 
 bool USKInputManager::ConsumeProstheticPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bProstheticPressed)
 	{
 		bProstheticPressed = false;
@@ -308,6 +422,7 @@ bool USKInputManager::ConsumeProstheticPressed()
 
 bool USKInputManager::ConsumeLockOnPressed()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bLockOnPressed)
 	{
 		bLockOnPressed = false;
@@ -318,6 +433,7 @@ bool USKInputManager::ConsumeLockOnPressed()
 
 bool USKInputManager::ConsumeCrouchToggled()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bCrouchToggled)
 	{
 		bCrouchToggled = false;
@@ -328,6 +444,7 @@ bool USKInputManager::ConsumeCrouchToggled()
 
 bool USKInputManager::ConsumeCycleItemNext()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bCycleItemNext)
 	{
 		bCycleItemNext = false;
@@ -338,6 +455,7 @@ bool USKInputManager::ConsumeCycleItemNext()
 
 bool USKInputManager::ConsumeCycleItemPrev()
 {
+	if (IsExternalInputLocked()) return false;
 	if (bCycleItemPrev)
 	{
 		bCycleItemPrev = false;
@@ -371,6 +489,8 @@ bool USKInputManager::ConsumeMenuPressed()
 
 bool USKInputManager::ConsumeBufferedInput(FName Action)
 {
+	if (IsExternalInputLocked()) return false;
+
 	// 升序遍历：移除匹配的第一个条目（FIFO 消费，先入先出）
 	for (int32 i = 0; i < InputBuffer.Num(); ++i)
 	{
@@ -393,12 +513,12 @@ void USKInputManager::ClearInputBuffer()
 
 FVector2D USKInputManager::GetMoveIntent() const
 {
-	return MoveIntent;
+	return IsExternalInputLocked() ? FVector2D::ZeroVector : MoveIntent;
 }
 
 float USKInputManager::GetMoveInputAmount() const
 {
-	return MoveInputAmount;
+	return IsExternalInputLocked() ? 0.f : MoveInputAmount;
 }
 
 FVector2D USKInputManager::GetLookIntent() const
@@ -408,42 +528,42 @@ FVector2D USKInputManager::GetLookIntent() const
 
 bool USKInputManager::IsAttackHeld() const
 {
-	return bAttackHeld;
+	return !IsExternalInputLocked() && bAttackHeld;
 }
 
 bool USKInputManager::IsGuardHeld() const
 {
-	return bGuardHeld;
+	return !IsExternalInputLocked() && bGuardHeld;
 }
 
 bool USKInputManager::IsProstheticHeld() const
 {
-	return bProstheticHeld;
+	return !IsExternalInputLocked() && bProstheticHeld;
 }
 
 bool USKInputManager::IsDodgeHeld() const
 {
-	return bDodgeHeld;
+	return !IsExternalInputLocked() && bDodgeHeld;
 }
 
 bool USKInputManager::IsDodgeActive() const
 {
-	return bDodgeActive;
+	return !IsExternalInputLocked() && bDodgeActive;
 }
 
 bool USKInputManager::IsWalkHeld() const
 {
-	return bWalkHeld;
+	return !IsExternalInputLocked() && bWalkHeld;
 }
 
 float USKInputManager::GetAttackHoldTime() const
 {
-	return AttackHoldTime;
+	return IsExternalInputLocked() ? 0.f : AttackHoldTime;
 }
 
 float USKInputManager::GetProstheticHoldTime() const
 {
-	return ProstheticHoldTime;
+	return IsExternalInputLocked() ? 0.f : ProstheticHoldTime;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -499,6 +619,7 @@ float USKInputManager::GetMoveInputReleaseBufferRemaining() const
 
 void USKInputManager::SetMoveInputReleaseBufferRemaining(float RemainingTime)
 {
+	if (IsExternalInputLocked()) return;
 	MoveInputReleaseBufferRemaining = FMath::Max(0.f, RemainingTime);
 }
 
@@ -519,6 +640,7 @@ float USKInputManager::GetDodgeHoldTime() const
 
 void USKInputManager::SetDodgeHoldTime(float NewDodgeHoldTime)
 {
+	if (IsExternalInputLocked()) return;
 	DodgeHoldTime = FMath::Max(0.f, NewDodgeHoldTime);
 }
 
@@ -529,22 +651,26 @@ float USKInputManager::GetDodgeActiveTimeRemaining() const
 
 void USKInputManager::SetDodgeActiveState(bool bNewDodgeActive, float ActiveTimeRemaining)
 {
+	if (IsExternalInputLocked() && bNewDodgeActive) return;
 	bDodgeActive = bNewDodgeActive;
 	DodgeActiveTimeRemaining = FMath::Max(0.f, ActiveTimeRemaining);
 }
 
 void USKInputManager::SetAttackHoldTime(float NewAttackHoldTime)
 {
+	if (IsExternalInputLocked()) return;
 	AttackHoldTime = FMath::Max(0.f, NewAttackHoldTime);
 }
 
 void USKInputManager::SetProstheticHoldTime(float NewProstheticHoldTime)
 {
+	if (IsExternalInputLocked()) return;
 	ProstheticHoldTime = FMath::Max(0.f, NewProstheticHoldTime);
 }
 
 void USKInputManager::SetComboState(int32 NewComboIndex, float NewTimeSinceLastAttack)
 {
+	if (IsExternalInputLocked()) return;
 	ComboIndex = FMath::Max(0, NewComboIndex);
 	TimeSinceLastAttack = FMath::Max(0.f, NewTimeSinceLastAttack);
 }
@@ -568,6 +694,12 @@ USKCombatComponent* USKInputManager::GetOwnerCombatComponent() const
 
 void USKInputManager::SetMoveIntentForScript(float InputX, float InputY, float InputAmount, float ReleaseBufferRemaining)
 {
+	if (IsExternalInputLocked())
+	{
+		ClearMoveIntentForScript();
+		return;
+	}
+
 	MoveIntent = FVector2D(InputX, InputY);
 	MoveInputAmount = FMath::Clamp(InputAmount, 0.f, 1.f);
 	MoveInputReleaseBufferRemaining = FMath::Max(0.f, ReleaseBufferRemaining);
@@ -587,6 +719,8 @@ void USKInputManager::SetLookIntentForScript(float InputX, float InputY)
 
 bool USKInputManager::AddMovementInputFromScreen(float InputX, float InputY)
 {
+	if (IsExternalInputLocked()) return false;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return false;
 
@@ -607,6 +741,8 @@ bool USKInputManager::AddMovementInputFromScreen(float InputX, float InputY)
 
 bool USKInputManager::AddMovementImpulseFromScreen(float InputX, float InputY, float VelocityChange)
 {
+	if (IsExternalInputLocked()) return false;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return false;
 
@@ -636,6 +772,8 @@ bool USKInputManager::AddMovementImpulseFromScreen(float InputX, float InputY, f
  */
 bool USKInputManager::SetHorizontalVelocityFromScreen(float InputX, float InputY, float HorizontalSpeed)
 {
+	if (IsExternalInputLocked()) return false;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return false;
 
@@ -724,6 +862,8 @@ bool USKInputManager::CanOwnerAirDodge() const
 
 void USKInputManager::JumpOwner()
 {
+	if (IsExternalInputLocked()) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (Owner)
 	{
@@ -742,6 +882,8 @@ void USKInputManager::StopJumpingOwner()
 
 void USKInputManager::CrouchOwner()
 {
+	if (IsExternalInputLocked()) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (Owner)
 	{
@@ -760,6 +902,8 @@ void USKInputManager::UnCrouchOwner()
 
 void USKInputManager::SetOwnerDodging(bool bNewDodging)
 {
+	if (IsExternalInputLocked() && bNewDodging) return;
+
 	ASKCharacter* SekiroOwner = Cast<ASKCharacter>(OwnerCharacter.Get());
 	if (SekiroOwner)
 	{
@@ -803,6 +947,8 @@ FName USKInputManager::GetMovementTierName() const
 
 void USKInputManager::SetMovementTierByName(FName TierName)
 {
+	if (IsExternalInputLocked()) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
 
@@ -815,6 +961,13 @@ void USKInputManager::SetMovementTierByName(FName TierName)
 void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
 {
 	const FString NormalizedName = ActionName.ToString().ToLower();
+	if (IsExternalInputLocked()
+		&& NormalizedName != TEXT("pause")
+		&& NormalizedName != TEXT("menu"))
+	{
+		return;
+	}
+
 	if (NormalizedName == TEXT("attack")) bAttackPressed = bPressed;
 	else if (NormalizedName == TEXT("jump")) bJumpPressed = bPressed;
 	else if (NormalizedName == TEXT("dodge")) bDodgePressed = bPressed;
@@ -833,6 +986,8 @@ void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
 
 void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
 {
+	if (IsExternalInputLocked()) return;
+
 	const FString NormalizedName = ActionName.ToString().ToLower();
 	if (NormalizedName == TEXT("attack")) bAttackHeld = bHeld;
 	else if (NormalizedName == TEXT("guard")) bGuardHeld = bHeld;
@@ -843,6 +998,8 @@ void USKInputManager::SetHeldFlag(FName ActionName, bool bHeld)
 
 void USKInputManager::AddBufferedInput(FName Action, int32 Priority, float Lifetime)
 {
+	if (IsExternalInputLocked()) return;
+
 	FSKBufferedInput Entry;
 	Entry.Action = Action;
 	Entry.Priority = Priority;
@@ -883,6 +1040,8 @@ void USKInputManager::ClearPressedFlagsForScript()
 
 bool USKInputManager::ToggleLockTargetInViewForScript()
 {
+	if (IsExternalInputLocked()) return false;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return false;
 
@@ -931,6 +1090,7 @@ void USKInputManager::TickComponent(float DeltaTime, ELevelTick TickType, FActor
  */
 void USKInputManager::HandleInputTick_Implementation(float DeltaTime)
 {
+	if (IsExternalInputLocked()) return;
 
 	// ── 长按计时 ──
 	if (bAttackHeld)
@@ -1029,26 +1189,100 @@ void USKInputManager::HandleInputTick_Implementation(float DeltaTime)
  */
 void USKInputManager::OnMoveInput(const FInputActionValue& Value)
 {
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Move"));
+		return;
+	}
+	if (SuppressedActionsUntilRelease.Contains(TEXT("Move"))) return;
+
 	const FVector2D Input = Value.Get<FVector2D>();
 	HandleMoveInput(Input.X, Input.Y);
 }
 
-void USKInputManager::OnMoveCompletedInput(const FInputActionValue& /*Value*/) { HandleMoveCompleted(); }
+void USKInputManager::OnMoveCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Move")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked())
+	{
+		ClearMoveIntentForScript();
+		return;
+	}
+
+	HandleMoveCompleted();
+}
+
 void USKInputManager::OnLookInput(const FInputActionValue& Value)
 {
 	const FVector2D Input = Value.Get<FVector2D>();
 	HandleLookInput(Input.X, Input.Y);
 }
-void USKInputManager::OnJumpStartedInput(const FInputActionValue& /*Value*/) { HandleJumpStarted(); }
-void USKInputManager::OnJumpCompletedInput(const FInputActionValue& /*Value*/) { HandleJumpCompleted(); }
-void USKInputManager::OnDodgeStartedInput(const FInputActionValue& /*Value*/) { HandleDodgeStarted(); }
-void USKInputManager::OnDodgeCompletedInput(const FInputActionValue& /*Value*/) { HandleDodgeCompleted(); }
-void USKInputManager::OnWalkModifierStartedInput(const FInputActionValue& /*Value*/) { HandleWalkModifierStarted(); }
-void USKInputManager::OnWalkModifierCompletedInput(const FInputActionValue& /*Value*/) { HandleWalkModifierCompleted(); }
-void USKInputManager::OnCrouchStartedInput(const FInputActionValue& /*Value*/) { HandleCrouchStarted(); }
+
+void USKInputManager::OnJumpStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Jump"));
+		return;
+	}
+	HandleJumpStarted();
+}
+
+void USKInputManager::OnJumpCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Jump")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked()) return;
+	HandleJumpCompleted();
+}
+
+void USKInputManager::OnDodgeStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Dodge"));
+		return;
+	}
+	HandleDodgeStarted();
+}
+
+void USKInputManager::OnDodgeCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Dodge")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked()) return;
+	HandleDodgeCompleted();
+}
+
+void USKInputManager::OnWalkModifierStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Walk"));
+		return;
+	}
+	HandleWalkModifierStarted();
+}
+
+void USKInputManager::OnWalkModifierCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Walk")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked()) return;
+	HandleWalkModifierCompleted();
+}
+
+void USKInputManager::OnCrouchStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleCrouchStarted();
+}
 
 void USKInputManager::OnAttackStartedInput(const FInputActionValue& /*Value*/)
 {
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Attack"));
+		return;
+	}
+
 	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
 	++NextCombatInputSerial;
 	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
@@ -1060,6 +1294,13 @@ void USKInputManager::OnAttackStartedInput(const FInputActionValue& /*Value*/)
 
 void USKInputManager::OnAttackCompletedInput(const FInputActionValue& /*Value*/)
 {
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Attack")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked())
+	{
+		ActiveAttackInputSerial = 0;
+		return;
+	}
+
 	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
 	const float HoldDuration = ActiveAttackInputSerial > 0 ? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - AttackPressedTimeSeconds)) : 0.f;
 	PublishCombatInputEvent(ESKCombatInputAction::Attack, ESKCombatInputPhase::Completed, ActiveAttackInputSerial, EventTimeSeconds, HoldDuration);
@@ -1069,6 +1310,12 @@ void USKInputManager::OnAttackCompletedInput(const FInputActionValue& /*Value*/)
 
 void USKInputManager::OnGuardStartedInput(const FInputActionValue& /*Value*/)
 {
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Guard"));
+		return;
+	}
+
 	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
 	++NextCombatInputSerial;
 	if (NextCombatInputSerial <= 0) NextCombatInputSerial = 1;
@@ -1080,6 +1327,13 @@ void USKInputManager::OnGuardStartedInput(const FInputActionValue& /*Value*/)
 
 void USKInputManager::OnGuardCompletedInput(const FInputActionValue& /*Value*/)
 {
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Guard")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked())
+	{
+		ActiveGuardInputSerial = 0;
+		return;
+	}
+
 	const double EventTimeSeconds = GetWorld() ? static_cast<double>(GetWorld()->GetTimeSeconds()) : 0.0;
 	const float HoldDuration = ActiveGuardInputSerial > 0 ? static_cast<float>(FMath::Max(0.0, EventTimeSeconds - GuardPressedTimeSeconds)) : 0.f;
 	PublishCombatInputEvent(ESKCombatInputAction::Guard, ESKCombatInputPhase::Completed, ActiveGuardInputSerial, EventTimeSeconds, HoldDuration);
@@ -1087,20 +1341,72 @@ void USKInputManager::OnGuardCompletedInput(const FInputActionValue& /*Value*/)
 	HandleGuardCompleted();
 }
 
-void USKInputManager::OnLockOnStartedInput(const FInputActionValue& /*Value*/) { HandleLockOnStarted(); }
-void USKInputManager::OnProstheticStartedInput(const FInputActionValue& /*Value*/) { HandleProstheticStarted(); }
-void USKInputManager::OnProstheticCompletedInput(const FInputActionValue& /*Value*/) { HandleProstheticCompleted(); }
-void USKInputManager::OnGrappleStartedInput(const FInputActionValue& /*Value*/) { HandleGrappleStarted(); }
-void USKInputManager::OnInteractStartedInput(const FInputActionValue& /*Value*/) { HandleInteractStarted(); }
-void USKInputManager::OnUseItemStartedInput(const FInputActionValue& /*Value*/) { HandleUseItemStarted(); }
-void USKInputManager::OnHealingGourdStartedInput(const FInputActionValue& /*Value*/) { HandleHealingGourdStarted(); }
-void USKInputManager::OnCycleItemNextStartedInput(const FInputActionValue& /*Value*/) { HandleCycleItemNextStarted(); }
-void USKInputManager::OnCycleItemPrevStartedInput(const FInputActionValue& /*Value*/) { HandleCycleItemPrevStarted(); }
+void USKInputManager::OnLockOnStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleLockOnStarted();
+}
+
+void USKInputManager::OnProstheticStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked())
+	{
+		SuppressedActionsUntilRelease.Add(TEXT("Prosthetic"));
+		return;
+	}
+	HandleProstheticStarted();
+}
+
+void USKInputManager::OnProstheticCompletedInput(const FInputActionValue& /*Value*/)
+{
+	const bool bWasSuppressed = SuppressedActionsUntilRelease.Remove(TEXT("Prosthetic")) > 0;
+	if (bWasSuppressed || IsExternalInputLocked()) return;
+	HandleProstheticCompleted();
+}
+
+void USKInputManager::OnGrappleStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleGrappleStarted();
+}
+
+void USKInputManager::OnInteractStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleInteractStarted();
+}
+
+void USKInputManager::OnUseItemStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleUseItemStarted();
+}
+
+void USKInputManager::OnHealingGourdStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleHealingGourdStarted();
+}
+
+void USKInputManager::OnCycleItemNextStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleCycleItemNextStarted();
+}
+
+void USKInputManager::OnCycleItemPrevStartedInput(const FInputActionValue& /*Value*/)
+{
+	if (IsExternalInputLocked()) return;
+	HandleCycleItemPrevStarted();
+}
+
 void USKInputManager::OnPauseStartedInput(const FInputActionValue& /*Value*/) { HandlePauseStarted(); }
 void USKInputManager::OnMenuStartedInput(const FInputActionValue& /*Value*/) { HandleMenuStarted(); }
 
 void USKInputManager::HandleMoveInput_Implementation(float InputX, float InputY)
 {
+	if (IsExternalInputLocked()) return;
+
 	const FVector2D LuaInput(InputX, InputY);
 
 	ACharacter* Owner = OwnerCharacter.Get();
@@ -1160,6 +1466,11 @@ void USKInputManager::HandleMoveInput_Implementation(float InputX, float InputY)
  */
 void USKInputManager::HandleMoveCompleted_Implementation()
 {
+	if (IsExternalInputLocked())
+	{
+		ClearMoveIntentForScript();
+		return;
+	}
 
 	MoveIntent = FVector2D::ZeroVector;
 	MoveInputAmount = 0.f;
@@ -1196,6 +1507,7 @@ void USKInputManager::HandleLookInput_Implementation(float InputX, float InputY)
 
 void USKInputManager::HandleJumpStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bJumpPressed = true;
 
@@ -1216,6 +1528,7 @@ void USKInputManager::HandleJumpStarted_Implementation()
 
 void USKInputManager::HandleJumpCompleted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (Owner)
@@ -1229,6 +1542,7 @@ void USKInputManager::HandleJumpCompleted_Implementation()
 
 void USKInputManager::HandleDodgeStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
@@ -1245,6 +1559,7 @@ void USKInputManager::HandleDodgeStarted_Implementation()
 
 void USKInputManager::HandleDodgeCompleted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	const bool bWasShortPress = DodgeHoldTime < SprintHoldThreshold;
 	bDodgeHeld = false;
@@ -1267,6 +1582,7 @@ void USKInputManager::HandleDodgeCompleted_Implementation()
 
 void USKInputManager::HandleWalkModifierStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bWalkHeld = true;
 
@@ -1284,6 +1600,7 @@ void USKInputManager::HandleWalkModifierStarted_Implementation()
 
 void USKInputManager::HandleWalkModifierCompleted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bWalkHeld = false;
 
@@ -1304,6 +1621,7 @@ void USKInputManager::HandleWalkModifierCompleted_Implementation()
 
 void USKInputManager::HandleCrouchStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bCrouchToggled = true;
 
@@ -1333,6 +1651,8 @@ void USKInputManager::HandleCrouchStarted_Implementation()
 
 void USKInputManager::HandleAttackStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
+
 	bAttackPressed = true;
 	bAttackHeld = true;
 	AttackHoldTime = 0.f;
@@ -1360,12 +1680,16 @@ void USKInputManager::HandleAttackStarted_Implementation()
 
 void USKInputManager::HandleAttackCompleted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
+
 	bAttackHeld = false;
 	AttackHoldTime = 0.f;
 }
 
 void USKInputManager::HandleGuardStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
+
 	bGuardHeld = true;
 
 	// Guard 也入缓冲，但消费方优先使用 IsGuardHeld 持续状态
@@ -1379,11 +1703,14 @@ void USKInputManager::HandleGuardStarted_Implementation()
 
 void USKInputManager::HandleGuardCompleted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
+
 	bGuardHeld = false;
 }
 
 void USKInputManager::HandleLockOnStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bLockOnPressed = true;
 
@@ -1398,6 +1725,7 @@ void USKInputManager::HandleLockOnStarted_Implementation()
 
 void USKInputManager::HandleProstheticStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bProstheticPressed = true;
 	bProstheticHeld = true;
@@ -1414,6 +1742,7 @@ void USKInputManager::HandleProstheticStarted_Implementation()
 
 void USKInputManager::HandleProstheticCompleted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bProstheticHeld = false;
 	ProstheticHoldTime = 0.f;
@@ -1421,6 +1750,7 @@ void USKInputManager::HandleProstheticCompleted_Implementation()
 
 void USKInputManager::HandleGrappleStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bGrapplePressed = true;
 
@@ -1438,6 +1768,7 @@ void USKInputManager::HandleGrappleStarted_Implementation()
 
 void USKInputManager::HandleInteractStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bInteractPressed = true;
 
@@ -1452,6 +1783,7 @@ void USKInputManager::HandleInteractStarted_Implementation()
 
 void USKInputManager::HandleUseItemStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bUseItemPressed = true;
 
@@ -1466,6 +1798,7 @@ void USKInputManager::HandleUseItemStarted_Implementation()
 
 void USKInputManager::HandleHealingGourdStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bHealingGourdPressed = true;
 
@@ -1480,12 +1813,14 @@ void USKInputManager::HandleHealingGourdStarted_Implementation()
 
 void USKInputManager::HandleCycleItemNextStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bCycleItemNext = true;
 }
 
 void USKInputManager::HandleCycleItemPrevStarted_Implementation()
 {
+	if (IsExternalInputLocked()) return;
 
 	bCycleItemPrev = true;
 }
@@ -1523,6 +1858,8 @@ void USKInputManager::PublishCombatInputEvent(
 	double EventTimeSeconds,
 	float HoldDuration)
 {
+	if (IsExternalInputLocked()) return;
+
 	AActor* Owner = GetOwner();
 	USKCombatComponent* CombatComponent = Owner ? Owner->FindComponentByClass<USKCombatComponent>() : nullptr;
 	if (!CombatComponent) return;
@@ -1538,6 +1875,8 @@ void USKInputManager::PublishCombatInputEvent(
 
 ESKMovementTier USKInputManager::ResolveMovementTierFromInput(float InputMagnitude) const
 {
+	if (IsExternalInputLocked()) return ESKMovementTier::Idle;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return ESKMovementTier::Run;
 
@@ -1587,6 +1926,8 @@ ESKMovementTier USKInputManager::ResolveMovementTierByName(FName TierName) const
 
 void USKInputManager::ApplyDesiredMovementTier(float InputMagnitude)
 {
+	if (IsExternalInputLocked()) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
 
@@ -1598,6 +1939,8 @@ void USKInputManager::ApplyDesiredMovementTier(float InputMagnitude)
 
 void USKInputManager::QueueDodgePressed()
 {
+	if (IsExternalInputLocked()) return;
+
 	ACharacter* Owner = OwnerCharacter.Get();
 	if (!Owner) return;
 

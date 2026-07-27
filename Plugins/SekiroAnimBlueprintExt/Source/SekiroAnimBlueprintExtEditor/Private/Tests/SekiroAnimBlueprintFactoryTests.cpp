@@ -3252,6 +3252,61 @@ bool FSekiroAnimBlueprintFactoryUpsertSkeletalMeshSocketTest::RunTest(const FStr
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroLuaAnimBlueprintSourceStalePackageTest,
+    "Sekiro.AnimGraphIR.DirtyCompile.SourceStaleDoesNotDirtyPackage",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Lua 文件监听产生的源码过期状态只留在内存，不创建事务或把 AnimBlueprint package 标记为待保存。
+ * 测试创建唯一临时 package 和标准 UAnimBlueprint，不读取 Lua、不生成 Graph，也不写入磁盘。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成全部断言收集和临时对象清理。
+ */
+bool FSekiroLuaAnimBlueprintSourceStalePackageTest::RunTest(
+    const FString& Parameters)
+{
+    const FString PackageName = FString::Printf(
+        TEXT("/Temp/SekiroLuaSourceStale_%s"),
+        *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+    UPackage* Package = CreatePackage(*PackageName);
+    UAnimBlueprint* AnimBlueprint = NewObject<UAnimBlueprint>(
+        Package,
+        TEXT("ABP_SourceStale"),
+        RF_Public | RF_Standalone | RF_Transactional);
+    USekiroLuaAnimBlueprintExtension* Extension =
+        USekiroLuaAnimBlueprintExtension::Request(AnimBlueprint);
+    TestNotNull(TEXT("Source stale test package is created"), Package);
+    TestNotNull(TEXT("Source stale test AnimBlueprint is created"), AnimBlueprint);
+    TestNotNull(TEXT("Source stale test extension is attached"), Extension);
+    if (Package == nullptr || AnimBlueprint == nullptr || Extension == nullptr) return true;
+
+    Extension->LuaModuleName = TEXT("Animation.Tests.SourceStale");
+    Extension->bSourceDirty = false;
+    const int32 SourceRevisionBefore = Extension->SourceRevision;
+    Package->SetDirtyFlag(false);
+
+    const int32 StaleSourceCount =
+        USekiroAnimBlueprintFactoryLibrary::MarkLoadedLuaAnimBlueprintsDirty(
+            TEXT("Automation source change."));
+    TestTrue(TEXT("Loaded Lua source is marked stale"), StaleSourceCount > 0);
+    TestTrue(TEXT("Source stale state is updated in memory"), Extension->bSourceDirty);
+    TestEqual(
+        TEXT("Source stale state increments the observed revision"),
+        Extension->SourceRevision,
+        SourceRevisionBefore + 1);
+    TestFalse(
+        TEXT("Source stale state does not dirty the AnimBlueprint package"),
+        Package->IsDirty());
+
+    AnimBlueprint->ClearFlags(RF_Public | RF_Standalone);
+    AnimBlueprint->SetFlags(RF_Transient);
+    AnimBlueprint->MarkAsGarbage();
+    Package->SetDirtyFlag(false);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FSekiroLuaAnimBlueprintInPlaceCompileTest,
     "Sekiro.AnimGraphIR.Factory.LuaAssetInPlaceCompile",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

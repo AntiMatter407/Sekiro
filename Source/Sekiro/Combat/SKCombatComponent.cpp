@@ -1,15 +1,19 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/SKCombatComponent.h"
+#include "AIController.h"
 #include "Animation/AnimCompositeBase.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
+#include "Character/SKCharacter.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Input/SKInputManager.h"
+#include "Movement/SKMovementComponent.h"
+#include "Weapon/SKWeaponManagerComponent.h"
 
 /**
  * 创建可由 Lua 编排的战斗动作宿主并启用 PrePhysics Tick。
@@ -41,6 +45,81 @@ FString USKCombatComponent::GetModuleName_Implementation() const
 void USKCombatComponent::HandleCombatTick_Implementation(float DeltaTime)
 {
     (void)DeltaTime;
+}
+
+/**
+ * 将命中裁决产生的抽象防御结果交给脚本层处理。
+ * 默认实现不解释 ResultName、不计算架势增量且不切换动作状态；UnLua 可用同名方法覆盖。
+ * 只能在游戏线程调用。
+ *
+ * @param ResultName 由 Lua 解释的稳定结果名，例如 DeflectSuccess、Guarded 或 DeflectFailed。
+ * @param AttackType 本次来袭的抽象攻击强度类型，不携带资产或数值策略。
+ */
+void USKCombatComponent::HandlePostureImpact_Implementation(
+    FName ResultName,
+    ESKIncomingAttackType AttackType)
+{
+    (void)ResultName;
+    (void)AttackType;
+}
+
+/**
+ * 提供脚本未绑定时的攻击类型回退，使普通攻击仍能进入接触裁决。
+ * 默认只根据离散动作状态区分轻攻击与重攻击；Lua 可进一步把蓄力突刺映射为 Thrust。
+ * 本函数只读当前战斗状态，不加载资源且不修改组件，必须在游戏线程调用。
+ *
+ * @return HeavyAttack 返回 Heavy，其他状态返回 Light。
+ */
+ESKIncomingAttackType USKCombatComponent::ResolveOutgoingAttackType_Implementation() const
+{
+    return CombatActionState == ESKCombatActionState::HeavyAttack
+        ? ESKIncomingAttackType::Heavy
+        : ESKIncomingAttackType::Light;
+}
+
+/**
+ * 提供脚本未绑定时的武器接触回退，避免通用碰撞桥接依赖项目战斗规则。
+ * 默认把接触视为普通命中；Lua 覆盖负责检查防御阶段、更新双方架势并播放对应反应。
+ * 本函数不应用伤害、不记录去重且不保留攻击者引用，必须在游戏线程调用。
+ *
+ * @param AttackerCombat 发起攻击的战斗组件，可为空；默认实现不访问该对象。
+ * @param AttackType 本次攻击的抽象类型；默认实现不解释该值。
+ * @return 脚本未接管时返回 Hit，由武器继续应用基础伤害。
+ */
+ESKWeaponContactResult USKCombatComponent::ResolveIncomingWeaponContact_Implementation(
+    USKCombatComponent* AttackerCombat,
+    ESKIncomingAttackType AttackType)
+{
+    (void)AttackerCombat;
+    (void)AttackType;
+    return ESKWeaponContactResult::Hit;
+}
+
+/**
+ * 提供 Lua 战斗规则未绑定时的 AI 攻击安全回退。
+ * 默认不解释请求名、不启动动画且不修改战斗状态；只能在游戏线程由行为树或玩法代码调用。
+ *
+ * @param AttackRequest 脚本层定义的抽象攻击请求名；默认实现不保存该名称。
+ * @return 默认返回 false，表示没有脚本规则接管本次请求。
+ */
+bool USKCombatComponent::RequestAIAttack_Implementation(FName AttackRequest)
+{
+    (void)AttackRequest;
+    return false;
+}
+
+/**
+ * 停止 Owner 当前由 AIController 发起的路径跟随请求，防止攻击反应或架势崩坏期间继续导航滑行。
+ * 玩家控制器和没有 Pawn Owner 的组件会安全忽略；函数不清理行为树、不改变战斗状态。
+ * 只能在游戏线程调用。
+ */
+void USKCombatComponent::StopOwnerAIMovement()
+{
+    const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+    AAIController* AIController = OwnerPawn
+        ? Cast<AAIController>(OwnerPawn->GetController())
+        : nullptr;
+    if (AIController) AIController->StopMovement();
 }
 
 /**
@@ -132,6 +211,39 @@ bool USKCombatComponent::IsOwnerFalling() const
     return MovementComponent && MovementComponent->IsFalling();
 }
 
+/**
+ * 查询所属角色移动组件当前发布的速度档位是否为 Sprint。
+ * 本函数只提供瞬时事实，不推断战斗状态或决定架势能否恢复；只能在游戏线程读取。
+ *
+ * @return Owner 使用 USKMovementComponent 且当前档位为 Sprint 时返回 true，否则返回 false。
+ */
+bool USKCombatComponent::IsOwnerSprinting() const
+{
+    const ACharacter* Character = Cast<ACharacter>(GetOwner());
+    const USKMovementComponent* MovementComponent = Character
+        ? Cast<USKMovementComponent>(Character->GetCharacterMovement())
+        : nullptr;
+    return MovementComponent && MovementComponent->IsMovementTierSprint();
+}
+
+/**
+ * 查询所属角色是否仍处于 Dodge/Step 活动窗口。
+ * 同时读取输入组件活动窗口、角色原生 Dodge 快照和战斗动作状态，避免组件间一帧更新差导致误判；
+ * 本函数不结束 Dodge、不推进状态机，只能在游戏线程读取。
+ *
+ * @return 任一现有 Dodge/Step 事实为活动状态时返回 true，否则返回 false。
+ */
+bool USKCombatComponent::IsOwnerDodgingOrStepActive() const
+{
+    const ASKCharacter* Character = Cast<ASKCharacter>(GetOwner());
+    const USKInputManager* InputManager = Character
+        ? Character->FindComponentByClass<USKInputManager>()
+        : nullptr;
+    return CombatActionState == ESKCombatActionState::Dodging
+        || (InputManager && InputManager->IsDodgeActive())
+        || (Character && Character->IsDodging());
+}
+
 /** 查询当前动作序列号；仅允许游戏线程读取。 */
 int32 USKCombatComponent::GetActionSerial() const
 {
@@ -181,6 +293,160 @@ void USKCombatComponent::InvalidateCombatAction(int32 ExpectedActionSerial)
 bool USKCombatComponent::IsActionSerialValid(int32 ExpectedActionSerial) const
 {
     return ExpectedActionSerial > 0 && ExpectedActionSerial == ActionSerial;
+}
+
+/** 查询当前架势值；仅允许游戏线程读取，不推进恢复或打崩流程。 */
+float USKCombatComponent::GetCurrentPosture() const
+{
+    return CurrentPosture;
+}
+
+/** 查询当前架势上限；仅允许游戏线程读取。 */
+float USKCombatComponent::GetMaxPosture() const
+{
+    return MaxPosture;
+}
+
+/**
+ * 查询当前架势比例，供 Lua 公式、动画和 UI 使用。
+ * 当上限为零时稳定返回零，函数不修改任何状态；仅允许游戏线程读取。
+ *
+ * @return 限制在 [0, 1] 的架势比例，零上限时返回 0。
+ */
+float USKCombatComponent::GetPostureNormalized() const
+{
+    return MaxPosture > UE_SMALL_NUMBER
+        ? FMath::Clamp(CurrentPosture / MaxPosture, 0.f, 1.f)
+        : 0.f;
+}
+
+/** 查询当前是否处于架势打崩流程；仅允许游戏线程读取。 */
+bool USKCombatComponent::IsPostureBroken() const
+{
+    return bPostureBroken;
+}
+
+/**
+ * 写入 Lua 配置提供的架势上限，并把当前值同步限制到新范围。
+ * 上限负值按零处理；只有上限或当前值实际变化时才广播一次完整架势快照。
+ * 本函数不执行打崩判定且只能在游戏线程调用。
+ *
+ * @param NewMaxPosture 新架势上限，非有限业务值应由脚本层预先过滤，负值会限制为零。
+ */
+void USKCombatComponent::SetMaxPosture(float NewMaxPosture)
+{
+    const float SafeMaxPosture = FMath::Max(0.f, NewMaxPosture);
+    const float SafeCurrentPosture = FMath::Clamp(CurrentPosture, 0.f, SafeMaxPosture);
+    if (FMath::IsNearlyEqual(MaxPosture, SafeMaxPosture)
+        && FMath::IsNearlyEqual(CurrentPosture, SafeCurrentPosture))
+    {
+        return;
+    }
+
+    MaxPosture = SafeMaxPosture;
+    CurrentPosture = SafeCurrentPosture;
+    BroadcastPostureChanged();
+}
+
+/**
+ * 写入 Lua 已完成数值策略计算后的当前架势，并限制到 [0, MaxPosture]。
+ * 只有限制后的数值实际变化时才广播；本函数不判断结果类型，也不自动进入打崩状态。
+ * 只能在游戏线程调用。
+ *
+ * @param NewCurrentPosture Lua 计算后的目标架势值，超出范围时会被安全限制。
+ */
+void USKCombatComponent::SetCurrentPosture(float NewCurrentPosture)
+{
+    const float SafeCurrentPosture = FMath::Clamp(NewCurrentPosture, 0.f, MaxPosture);
+    if (FMath::IsNearlyEqual(CurrentPosture, SafeCurrentPosture)) return;
+
+    CurrentPosture = SafeCurrentPosture;
+    BroadcastPostureChanged();
+}
+
+/**
+ * 将当前架势归零并复用统一变化广播。
+ * 本函数不改变 bPostureBroken 或动作状态，便于 Lua 明确编排打崩进入与退出顺序；
+ * 只能在游戏线程调用。
+ */
+void USKCombatComponent::ResetPosture()
+{
+    SetCurrentPosture(0.f);
+}
+
+/**
+ * 写入 Lua 编排的架势打崩状态，并在状态真正变化时广播。
+ * 本函数不播放动画、不重置架势、不修改动作状态或输入锁；只能在游戏线程调用。
+ *
+ * @param bNewPostureBroken true 表示进入打崩流程，false 表示流程恢复完成。
+ */
+void USKCombatComponent::SetPostureBroken(bool bNewPostureBroken)
+{
+    if (bPostureBroken == bNewPostureBroken) return;
+
+    bPostureBroken = bNewPostureBroken;
+    OnPostureBrokenChanged.Broadcast(bPostureBroken);
+}
+
+/**
+ * 将一个稳定原因名的输入锁请求转发给同 Owner 的输入组件。
+ * 本函数不解释原因、不持有锁副本；Reason 为 None 或输入组件缺失时安全忽略。
+ * 只能在游戏线程调用。
+ *
+ * @param Reason 调用系统拥有的稳定锁原因，必须非 None。
+ * @param bLocked true 添加该原因，false 仅移除该原因。
+ */
+void USKCombatComponent::SetOwnerExternalInputLock(FName Reason, bool bLocked)
+{
+    AActor* Owner = GetOwner();
+    USKInputManager* InputManager = Owner ? Owner->FindComponentByClass<USKInputManager>() : nullptr;
+    if (InputManager) InputManager->SetExternalInputLock(Reason, bLocked);
+}
+
+/**
+ * 清除 Owner 输入组件中所有玩法意图，并同步丢弃本组件尚未裁决的战斗输入与 Guard Held 快照。
+ * Look、Pause 和 Menu 由输入组件保留；本函数不增删外部锁原因，只能在游戏线程调用。
+ */
+void USKCombatComponent::ClearOwnerGameplayInputForScript()
+{
+    AActor* Owner = GetOwner();
+    USKInputManager* InputManager = Owner ? Owner->FindComponentByClass<USKInputManager>() : nullptr;
+    if (InputManager) InputManager->ClearAllGameplayInputForScript();
+
+    PendingInputEvents.Reset();
+    bGuardHeld = false;
+}
+
+/**
+ * 可选清空 Owner 当前武器的单次攻击去重集合，再开启其 QueryOnly 攻击碰撞。
+ * 本函数只桥接组件查找与物理碰撞接口，不判断动作状态或动画窗口；这些业务边界由 Lua 编排。
+ * 只能在游戏线程调用，不缓存 WeaponManager 或武器引用。
+ *
+ * @param bResetHitActors true 表示开启前清空本轮已命中目标，false 保留现有去重集合。
+ * @return Owner、WeaponManager 和当前武器均有效，且碰撞开启请求已提交时返回 true；否则返回 false。
+ */
+bool USKCombatComponent::ActivateOwnerWeaponHitbox(bool bResetHitActors)
+{
+    AActor* Owner = GetOwner();
+    USKWeaponManagerComponent* WeaponManager =
+        Owner ? Owner->FindComponentByClass<USKWeaponManagerComponent>() : nullptr;
+    if (!WeaponManager) return false;
+    if (bResetHitActors && !WeaponManager->ClearWeaponHitActors()) return false;
+    return WeaponManager->ActivateWeaponHitbox();
+}
+
+/**
+ * 关闭 Owner 当前武器的攻击碰撞，供 Lua 在窗口结束、动作切换或异常中断时统一收敛。
+ * 本函数不清空已命中集合、不改变武器挂载或展示状态；只能在游戏线程调用且不缓存引用。
+ *
+ * @return Owner、WeaponManager 和当前武器均有效，且关闭请求已提交时返回 true；否则返回 false。
+ */
+bool USKCombatComponent::DeactivateOwnerWeaponHitbox()
+{
+    AActor* Owner = GetOwner();
+    USKWeaponManagerComponent* WeaponManager =
+        Owner ? Owner->FindComponentByClass<USKWeaponManagerComponent>() : nullptr;
+    return WeaponManager && WeaponManager->DeactivateWeaponHitbox();
 }
 
 /**
@@ -632,4 +898,13 @@ double USKCombatComponent::GetWorldTimeSeconds() const
 {
     const UWorld* World = GetWorld();
     return World ? static_cast<double>(World->GetTimeSeconds()) : 0.0;
+}
+
+/**
+ * 广播当前架势值、上限和安全归一化比例的同帧一致快照。
+ * 仅由已确认状态发生变化的写接口在游戏线程调用，不进行额外去重或状态修改。
+ */
+void USKCombatComponent::BroadcastPostureChanged()
+{
+    OnPostureChanged.Broadcast(CurrentPosture, MaxPosture, GetPostureNormalized());
 }

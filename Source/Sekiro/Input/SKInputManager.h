@@ -81,6 +81,17 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
     FName GetOwnerWeaponPresentationName() const;     // 查询所属角色武器展示状态
 
+    // ── 外部输入锁 ────────────────────────────────────────────
+
+    UFUNCTION(BlueprintCallable, Category = "Input|Restriction")
+    void SetExternalInputLock(FName Reason, bool bLocked); // 按原因增删通用玩法输入锁
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
+    bool IsExternalInputLocked() const;               // 是否存在至少一个外部输入锁
+
+    UFUNCTION(BlueprintCallable, Category = "Input|Restriction")
+    void ClearAllGameplayInputForScript();            // 清理全部玩法输入意图
+
 	// ── 消费型意图（读取后自动清零）─────────────────────────
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
@@ -485,6 +496,9 @@ private:
 	// ── 消费型意图标记（帧末清零）───────────────────────────
 
     int32 RestrictedZoneCount = 0;                    // 当前重叠禁战区域数量
+
+    TSet<FName> ExternalInputLockReasons;             // 当前生效的外部输入锁原因集合
+    TSet<FName> SuppressedActionsUntilRelease;        // 加锁时已按住且需等待释放的动作集合
 
 	bool bAttackPressed = false;                     // 攻击按下标记
 	bool bJumpPressed = false;                       // 跳跃按下标记

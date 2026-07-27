@@ -30,8 +30,8 @@ function BT_SKAICharacter:DeclareBlackboard(blackboard)
         false)
 end
 
----声明“目标追击优先、无目标巡逻兜底”的原生 Selector。
----TargetActor 改变时 Blackboard Decorator 会中止当前分支，使感知结果能立即切换追击与巡逻。
+---声明“战斗反应、近身攻击、目标追击、无目标巡逻”的优先级 Selector。
+---TargetActor 改变时 Blackboard Decorator 会中止整个目标分支；精确攻击生命周期由 Lua Task 等待。
 ---@param tree LuaBehaviorTreeDefinition 行为树编译期声明器。
 ---@return nil result 本函数只追加原生行为树节点声明。
 function BT_SKAICharacter:BehaviorTree(tree)
@@ -62,7 +62,33 @@ function BT_SKAICharacter:BehaviorTree(tree)
             }),
         })
 
-    chase_target:Task(
+    local combat_decision = chase_target:Composite(
+        "/Script/AIModule.BTComposite_Selector",
+        "CombatDecision")
+
+    combat_decision:LuaTask(
+        "CombatReactionWait",
+        "AI.Tasks.SKCombatReactionWait",
+        "")
+
+    local attack_target = combat_decision:Composite(
+        "/Script/AIModule.BTComposite_Sequence",
+        "AttackTarget")
+
+    attack_target:LuaTask(
+        "CombatAttack",
+        "AI.Tasks.SKCombatAttack",
+        "230.0,40.0,0.25")
+
+    attack_target:Task(
+        "/Script/AIModule.BTTask_Wait",
+        "AttackCooldown",
+        {
+            WaitTime = Value.Float(0.45),
+            RandomDeviation = Value.Float(0.20),
+        })
+
+    combat_decision:Task(
         "/Script/AIModule.BTTask_MoveTo",
         "MoveToTarget",
         {

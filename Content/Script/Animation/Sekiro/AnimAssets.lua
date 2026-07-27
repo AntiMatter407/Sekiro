@@ -217,6 +217,32 @@ SekiroAnimations.Deflect = {
     Type_04_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_130700.Anim_Sekiro_a050_130700",
 }
 
+-- 弹反失败动作与成功弹反保持相同 Type/Stage 编号，只把原版动作编号的 130 前缀替换为 120。
+-- 独立分组避免与持续防御的 Interrupted 语义混用，后续可直接按同一类型和段数选择失败反馈。
+SekiroAnimations.DeflectFailed = {
+    Type_01_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120100.Anim_Sekiro_a050_120100",
+    Type_01_Stage_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120101.Anim_Sekiro_a050_120101",
+    Type_01_Stage_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120102.Anim_Sekiro_a050_120102",
+    Type_02_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120200.Anim_Sekiro_a050_120200",
+    Type_02_Stage_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120201.Anim_Sekiro_a050_120201",
+    Type_02_Stage_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120202.Anim_Sekiro_a050_120202",
+    Type_03_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120300.Anim_Sekiro_a050_120300",
+    Type_03_Stage_02 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120301.Anim_Sekiro_a050_120301",
+    Type_03_Stage_03 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120302.Anim_Sekiro_a050_120302",
+    Type_04_Stage_01 = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_120700.Anim_Sekiro_a050_120700",
+}
+
+-- 攻击者的刀被对方成功弹开后的反馈；动作结束后保持原攻击刀侧。
+SekiroAnimations.AttackDeflected = {
+    Right = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_150000.Anim_Sekiro_a050_150000",
+    Left = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_150001.Anim_Sekiro_a050_150001",
+}
+
+-- 玩家架势条被完全打崩后的全身反馈；当前只确认一个通用动作，保留分组便于后续扩展方向或伤害等级。
+SekiroAnimations.PostureBreak = {
+    Default = "/Game/Characters/Sekiro/Animations/Anim_Sekiro_a050_190100.Anim_Sekiro_a050_190100",
+}
+
 -- 人工核验的基础攻击动画。
 -- Combo_01~03 是短按连段；Charged_Thrust_* 只用于长按攻击，不能打断已经开始的短按连段。
 SekiroAnimations.Attack = {
@@ -264,6 +290,9 @@ register_lua_asset_names("Jump", SekiroAnimations.Jump)
 register_lua_asset_names("Weapon", SekiroAnimations.Weapon)
 register_lua_asset_names("Guard", SekiroAnimations.Guard)
 register_lua_asset_names("Deflect", SekiroAnimations.Deflect)
+register_lua_asset_names("DeflectFailed", SekiroAnimations.DeflectFailed)
+register_lua_asset_names("AttackDeflected", SekiroAnimations.AttackDeflected)
+register_lua_asset_names("PostureBreak", SekiroAnimations.PostureBreak)
 register_lua_asset_names("Attack", SekiroAnimations.Attack)
 
 ---查询 ShowDebug Animation 中原生动画资产对应的 Lua 语义名。

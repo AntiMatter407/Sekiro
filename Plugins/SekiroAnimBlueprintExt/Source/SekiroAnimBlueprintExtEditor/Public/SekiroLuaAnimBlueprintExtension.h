@@ -55,7 +55,7 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
     int32 SuccessfulSourceRevision = 0; // 最近成功编译采用的 Lua 源修订号
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
     int32 LastCheckedSourceRevision = INDEX_NONE; // 最近成功 Check Lua 对应的源码修订号
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
@@ -68,10 +68,10 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
     FString LastCompileMessage; // 最近一次编译结果摘要
 
-    UPROPERTY()
+    UPROPERTY(Transient)
     FSekiroAnimBlueprintIR LastSuccessfulIR; // 最近一次成功 Check Lua 生成的 IR 缓存
 
-    UPROPERTY()
+    UPROPERTY(Transient)
     bool bHasLastSuccessfulIR = false; // 是否存在可用于失败恢复的成功 IR
 
     UPROPERTY()

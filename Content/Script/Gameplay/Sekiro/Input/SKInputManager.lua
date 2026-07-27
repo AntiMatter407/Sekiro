@@ -109,11 +109,19 @@ local function is_restricted(input_manager)
     return input_manager:IsRestrictedZoneActive() == true
 end
 
----查询收刀或拔刀过渡是否正在临时禁止移动以外的输入。
+---查询收拔刀过渡或外部玩法系统是否正在限制动作输入。
 ---@param input_manager SKInputManager 输入管理器实例。
 ---@return boolean restricted 任一限制来源生效时返回 true。
 local function is_action_restricted(input_manager)
     return input_manager.bWeaponTransitionInputLock == true
+        or input_manager:IsExternalInputLocked() == true
+end
+
+---查询战斗系统等外部玩法模块是否要求完全冻结玩家操作。
+---@param input_manager SKInputManager 输入管理器实例。
+---@return boolean locked 外部输入锁生效时返回 true。
+local function is_external_input_locked(input_manager)
+    return input_manager:IsExternalInputLocked() == true
 end
 
 ---查询武器状态是否禁止需要拔刀的战斗输入。
@@ -219,7 +227,8 @@ function SKInputManager:HandleInputTick(delta_seconds)
             zone_restricted and "sheathe" or "draw"))
     end
 
-    local restricted = self.bWeaponTransitionInputLock == true
+    local external_input_locked = is_external_input_locked(self)
+    local restricted = is_action_restricted(self)
 
     if restricted then
         self.SprintInputHoldTime = 0
@@ -228,9 +237,19 @@ function SKInputManager:HandleInputTick(delta_seconds)
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
-        if not self:IsOwnerFalling() then
+        if not external_input_locked and not self:IsOwnerFalling() then
             self:SetMovementTierByName("Walk")
         end
+    end
+    if external_input_locked then
+        -- 打崩等外部硬锁必须连移动意图一起清除；视角、暂停和菜单仍由独立入口保留。
+        self.CurrentMoveInputX = 0
+        self.CurrentMoveInputY = 0
+        self.CurrentMoveInputAmount = 0
+        self.MoveInputActive = false
+        self.MoveStartedThisFrame = false
+        self:ClearMoveIntentForScript()
+        self:SetMovementTierByName("Idle")
     end
 
     if self:IsAttackHeld() then
@@ -331,7 +350,9 @@ function SKInputManager:HandleInputTick(delta_seconds)
         end
     elseif restricted then
         self.SprintRequested = false
-        if not self:IsOwnerFalling() then
+        if external_input_locked then
+            self:SetMovementTierByName("Idle")
+        elseif not self:IsOwnerFalling() then
             self:SetMovementTierByName("Walk")
         end
     elseif tostring(self:GetMovementTierName()) == "Sprint" then
@@ -365,6 +386,17 @@ end
 ---@param input_y number|nil 屏幕空间纵向输入，通常为 -1..1，负值表示后退。
 ---@return boolean handled 始终返回 true，表示移动输入已写入 C++ 组件。
 function SKInputManager:HandleMoveInput(input_x, input_y)
+    if is_external_input_locked(self) then
+        self.CurrentMoveInputX = 0
+        self.CurrentMoveInputY = 0
+        self.CurrentMoveInputAmount = 0
+        self.MoveInputActive = false
+        self.MoveStartedThisFrame = false
+        self:ClearMoveIntentForScript()
+        self:SetMovementTierByName("Idle")
+        return true
+    end
+
     local x = input_x or 0
     local y = input_y or 0
     local normalized_x, normalized_y, raw_amount = normalize2(x, y)
@@ -392,7 +424,9 @@ function SKInputManager:HandleMoveInput(input_x, input_y)
     self:LogMoveIntentDebug("OnMoveInput", false)
 
     -- Sprint 只由 Tick 的持续输入判定写入；OnMove 仅维护非 Sprint 的基础移动档位。
-    if is_action_restricted(self) and not self:IsOwnerFalling() then
+    if is_external_input_locked(self) then
+        self:SetMovementTierByName("Idle")
+    elseif is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
     elseif tostring(self:GetMovementTierName()) ~= "Sprint"
         and not self:IsOwnerFalling() then
@@ -428,7 +462,9 @@ function SKInputManager:HandleMoveCompleted()
     self.SprintRequested = false
     self:ClearMoveIntentForScript()
 
-    if is_action_restricted(self) and not self:IsOwnerFalling() then
+    if is_external_input_locked(self) then
+        self:SetMovementTierByName("Idle")
+    elseif is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
     elseif not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
@@ -457,6 +493,11 @@ end
 ---处理跳跃按下：先由战斗状态机裁决取消窗口，再缓存起跳姿态并请求 Character Jump。
 ---@return boolean handled 始终返回 true，表示跳跃按下已处理。
 function SKInputManager:HandleJumpStarted()
+    if is_action_restricted(self) then
+        self:SetPressedFlag("Jump", false)
+        return true
+    end
+
     local combat = self:GetOwnerCombatComponent()
     local jump_allowed = true
     local resume_air_guard = false
@@ -569,7 +610,9 @@ function SKInputManager:HandleDodgeCompleted()
         tostring(self:IsOwnerDodging())))
 
     local input_amount = self.CurrentMoveInputAmount or 0
-    if is_action_restricted(self) then
+    if is_external_input_locked(self) then
+        self:SetMovementTierByName("Idle")
+    elseif is_action_restricted(self) then
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
@@ -606,6 +649,12 @@ end
 ---处理 Walk 修饰键按下，把当前非 Sprint 移动档位切换为 Walk。
 ---@return boolean handled 始终返回 true，表示 Walk 修饰键按下已处理。
 function SKInputManager:HandleWalkModifierStarted()
+    if is_external_input_locked(self) then
+        self:SetHeldFlag("Walk", false)
+        self:SetMovementTierByName("Idle")
+        return true
+    end
+
     self:SetHeldFlag("Walk", true)
     if tostring(self:GetMovementTierName()) ~= "Sprint" and not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
@@ -621,7 +670,9 @@ end
 ---@return boolean handled 始终返回 true，表示 Walk 修饰键释放已处理。
 function SKInputManager:HandleWalkModifierCompleted()
     self:SetHeldFlag("Walk", false)
-    if is_action_restricted(self) and not self:IsOwnerFalling() then
+    if is_external_input_locked(self) then
+        self:SetMovementTierByName("Idle")
+    elseif is_action_restricted(self) and not self:IsOwnerFalling() then
         self:SetMovementTierByName("Walk")
     elseif tostring(self:GetMovementTierName()) == "Walk" and not self:IsOwnerFalling() then
         local input_amount = self:GetMoveInputAmount() or 0
@@ -645,7 +696,8 @@ function SKInputManager:HandleCrouchStarted()
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
-        self:SetMovementTierByName("Walk")
+        self:SetMovementTierByName(
+            is_external_input_locked(self) and "Idle" or "Walk")
         return true
     end
 

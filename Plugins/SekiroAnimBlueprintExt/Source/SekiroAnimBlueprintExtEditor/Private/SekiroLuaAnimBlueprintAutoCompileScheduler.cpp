@@ -1,11 +1,43 @@
 ﻿#include "SekiroLuaAnimBlueprintAutoCompileScheduler.h"
 
+#include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeLock.h"
 
 /**
- * 过滤一批 DirectoryWatcher 事件，并把至少一个有效 Lua 变化合并为单次标脏请求。
- * 可从 watcher 回调线程或游戏线程调用；函数不读取文件、不访问 UObject，也不触发编译。
+ * 扫描 Animation Lua 根目录并保存规范化路径与内容 MD5，作为后续 Modified 事件去重基线。
+ * 只能在注册 DirectoryWatcher 前的游戏线程调用；函数只读取 Lua 文件，不访问 UObject 或触发编译。
+ *
+ * @param SourceRoot 要递归扫描的 Animation Lua 目录绝对路径；目录不存在时建立空基线。
+ */
+void FSekiroLuaAnimBlueprintAutoCompileScheduler::InitializeSourceSnapshot(
+    const FString& SourceRoot)
+{
+    TArray<FString> LuaFiles;
+    IFileManager::Get().FindFilesRecursive(
+        LuaFiles,
+        *SourceRoot,
+        TEXT("*.lua"),
+        true,
+        false,
+        false);
+
+    TMap<FString, FMD5Hash> NewSourceFileHashes;
+    for (FString LuaFile : LuaFiles)
+    {
+        FPaths::NormalizeFilename(LuaFile);
+        const FMD5Hash FileHash = FMD5Hash::HashFile(*LuaFile);
+        if (FileHash.IsValid()) NewSourceFileHashes.Add(LuaFile, FileHash);
+    }
+
+    FScopeLock Lock(&Mutex);
+    SourceFileHashes = MoveTemp(NewSourceFileHashes);
+    bSourceSnapshotInitialized = true;
+}
+
+/**
+ * 过滤一批 DirectoryWatcher 事件，对 Added/Modified 文件比较内容指纹，并把真实变化合并为单次标脏请求。
+ * 可从 watcher 回调线程或游戏线程调用；函数读取变化文件但不访问 UObject，也不触发编译。
  * 返回 true 仅表示调用方需要派发新的游戏线程任务，已有任务尚未消费时继续合并并返回 false。
  *
  * @param FileChanges DirectoryWatcher 提供的不可变变化数组。
@@ -17,11 +49,30 @@ bool FSekiroLuaAnimBlueprintAutoCompileScheduler::QueueFileChanges(
     bool bContainsRelevantChange = false;
     for (const FFileChangeData& FileChange : FileChanges)
     {
-        if (IsRelevantLuaFileChange(FileChange))
+        if (!IsRelevantLuaFileChange(FileChange)) continue;
+
+        FString Filename = FileChange.Filename;
+        FPaths::NormalizeFilename(Filename);
+        if (FileChange.Action == FFileChangeData::FCA_Removed)
+        {
+            FScopeLock Lock(&Mutex);
+            const bool bWasTracked = SourceFileHashes.Remove(Filename) > 0;
+            bContainsRelevantChange |= bWasTracked || !bSourceSnapshotInitialized;
+            continue;
+        }
+
+        const FMD5Hash CurrentHash = FMD5Hash::HashFile(*Filename);
+        if (!CurrentHash.IsValid())
         {
             bContainsRelevantChange = true;
-            break;
+            continue;
         }
+
+        FScopeLock Lock(&Mutex);
+        const FMD5Hash* PreviousHash = SourceFileHashes.Find(Filename);
+        if (PreviousHash != nullptr && *PreviousHash == CurrentHash) continue;
+        SourceFileHashes.Add(Filename, CurrentHash);
+        bContainsRelevantChange = true;
     }
     if (!bContainsRelevantChange) return false;
 

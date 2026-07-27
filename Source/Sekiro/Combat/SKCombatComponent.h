@@ -14,6 +14,8 @@ class UAnimSequence;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSKCombatInputEventSignature, const FSKCombatInputEvent&, InputEvent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSKCombatAnimationEndedSignature, int32, ActionSerial, bool, bInterrupted);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSKPostureChangedSignature, float, Current, float, Maximum, float, Normalized);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSKPostureBrokenChangedSignature, bool, bBroken);
 
 UCLASS(ClassGroup = (Combat), meta = (BlueprintSpawnableComponent))
 class SEKIRO_API USKCombatComponent : public UActorComponent, public IUnLuaInterface
@@ -30,6 +32,28 @@ public:
     /** Lua 可覆盖的战斗逐帧编排入口。 */
     UFUNCTION(BlueprintNativeEvent, Category = "Combat|Gameplay")
     void HandleCombatTick(float DeltaTime);
+
+    /** 将一次抽象防御结果交给 Lua 战斗规则裁决。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "Combat|Posture")
+    void HandlePostureImpact(FName ResultName, ESKIncomingAttackType AttackType);
+
+    /** 由攻击者查询本次武器接触使用的抽象攻击类型。 */
+    UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "Combat|Clash")
+    ESKIncomingAttackType ResolveOutgoingAttackType() const;
+
+    /** 将武器与角色的接触交给 Lua 裁决为命中、格挡或弹反。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "Combat|Clash")
+    ESKWeaponContactResult ResolveIncomingWeaponContact(
+        USKCombatComponent* AttackerCombat,
+        ESKIncomingAttackType AttackType);
+
+    /** 将一个抽象 AI 攻击请求交给 Lua 战斗规则启动。 */
+    UFUNCTION(BlueprintNativeEvent, Category = "Combat|AI")
+    bool RequestAIAttack(FName AttackRequest);
+
+    /** 停止 Owner 当前由 AIController 发起的导航移动。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|AI")
+    void StopOwnerAIMovement();
 
     // ── 状态与序列号 ──────────────────────────────────────────
 
@@ -65,6 +89,12 @@ public:
     bool IsOwnerFalling() const;
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
+    bool IsOwnerSprinting() const;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
+    bool IsOwnerDodgingOrStepActive() const;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
     int32 GetActionSerial() const;
 
     UFUNCTION(BlueprintCallable, Category = "Combat|State")
@@ -75,6 +105,56 @@ public:
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
     bool IsActionSerialValid(int32 ExpectedActionSerial) const;
+
+    // ── 架势 ──────────────────────────────────────────────────
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|Posture")
+    float GetCurrentPosture() const;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|Posture")
+    float GetMaxPosture() const;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|Posture")
+    float GetPostureNormalized() const;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|Posture")
+    bool IsPostureBroken() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
+    void SetMaxPosture(float NewMaxPosture);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
+    void SetCurrentPosture(float NewCurrentPosture);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
+    void ResetPosture();
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
+    void SetPostureBroken(bool bNewPostureBroken);
+
+    UPROPERTY(BlueprintAssignable, Category = "Combat|Posture")
+    FSKPostureChangedSignature OnPostureChanged; // 架势数值快照变化通知
+
+    UPROPERTY(BlueprintAssignable, Category = "Combat|Posture")
+    FSKPostureBrokenChangedSignature OnPostureBrokenChanged; // 架势崩溃状态变化通知
+
+    // ── Owner 输入桥接 ────────────────────────────────────────
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Input")
+    void SetOwnerExternalInputLock(FName Reason, bool bLocked);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Input")
+    void ClearOwnerGameplayInputForScript();
+
+    // ── Owner 武器碰撞桥接 ────────────────────────────────────
+
+    /** 清空可选命中记录并开启 Owner 当前武器的攻击碰撞。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
+    bool ActivateOwnerWeaponHitbox(bool bResetHitActors = true);
+
+    /** 关闭 Owner 当前武器的攻击碰撞。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
+    bool DeactivateOwnerWeaponHitbox();
 
     // ── 输入事件 ──────────────────────────────────────────────
 
@@ -152,6 +232,7 @@ private:
     void HandleCombatMontageEnded(UAnimMontage* Montage, bool bInterrupted, int32 EndedActionSerial);
     void ClearOwnedAnimationState();
     double GetWorldTimeSeconds() const;
+    void BroadcastPostureChanged();
 
     // ── 配置 ──────────────────────────────────────────────────
 
@@ -177,6 +258,15 @@ private:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|State", meta = (AllowPrivateAccess = "true"))
     bool bGuardHeld = false; // 防御键实时按住状态
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Posture", meta = (AllowPrivateAccess = "true"))
+    float CurrentPosture = 0.f; // 当前角色架势值
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+    float MaxPosture = 100.f; // 当前角色架势上限
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Posture", meta = (AllowPrivateAccess = "true"))
+    bool bPostureBroken = false; // 是否处于架势打崩流程
 
     UPROPERTY(Transient)
     TObjectPtr<UAnimSequence> ActiveSequence; // 当前战斗动作源 Sequence

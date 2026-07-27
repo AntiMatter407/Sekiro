@@ -5911,7 +5911,8 @@ bool USekiroAnimBlueprintFactoryLibrary::CompileLuaAnimBlueprintInPlace(
 /**
  * 将当前编辑器进程中全部已加载、已配置 Lua 模块的标准 AnimBlueprint 标记为源已过期。
  * Animation 目录内任意 Lua 都可能是多个蓝图共享的基类或节点依赖，因此在缺少依赖图时保守标脏全部已加载 Lua 资产。
- * 函数不读取 Lua、不重建 Graph、不调用 HotReload，PIE 期间也可以安全调用。只能在游戏线程调用。
+ * 函数只更新扩展内存状态，不创建事务、不标脏 package，也不读取 Lua、重建 Graph 或调用 HotReload。
+ * PIE 期间也可以安全调用；只能在游戏线程调用。
  *
  * @param Reason 写入扩展 LastCompileMessage 的变更原因；允许为空。
  * @return 本次标记的已加载 Lua AnimBlueprint 数量；非游戏线程返回 0。
@@ -5921,7 +5922,7 @@ int32 USekiroAnimBlueprintFactoryLibrary::MarkLoadedLuaAnimBlueprintsDirty(
 {
     if (!IsInGameThread()) return 0;
 
-    int32 DirtyAssetCount = 0;
+    int32 StaleSourceCount = 0;
     for (TObjectIterator<UAnimBlueprint> Iterator; Iterator; ++Iterator)
     {
         UAnimBlueprint* AnimBlueprint = *Iterator;
@@ -5936,13 +5937,10 @@ int32 USekiroAnimBlueprintFactoryLibrary::MarkLoadedLuaAnimBlueprintsDirty(
             USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
         if (Extension == nullptr || Extension->LuaModuleName.IsEmpty()) continue;
 
-        AnimBlueprint->Modify();
-        Extension->Modify();
         Extension->MarkSourceDirty(Reason);
-        FBlueprintEditorUtils::MarkBlueprintAsModified(AnimBlueprint);
-        ++DirtyAssetCount;
+        ++StaleSourceCount;
     }
-    return DirtyAssetCount;
+    return StaleSourceCount;
 }
 
 /**
