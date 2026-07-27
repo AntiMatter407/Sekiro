@@ -20,9 +20,33 @@
 // ASKCharacter
 // ============================================================================
 
+/**
+ * 使用项目玩家移动组件构造标准主角，并委托给可保留派生类移动组件覆盖的公共初始化路径。
+ * 本函数只在 UObject 构造阶段调用；ObjectInitializer 由引擎提供，不应跨构造过程保存。
+ *
+ * @param ObjectInitializer 当前角色的默认子对象初始化器；函数会为 CharacterMovement 指定玩家移动类型。
+ */
 ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer.SetDefaultSubobjectClass<USKMovementComponent>(ACharacter::CharacterMovementComponentName))
+	: ASKCharacter(
+		ObjectInitializer.SetDefaultSubobjectClass<USKMovementComponent>(ACharacter::CharacterMovementComponentName),
+		FSKMovementComponentOverrideTag())
 {
+}
+
+/**
+ * 初始化玩家与 AI 角色共享的胶囊、移动参数、武器和战斗组件，并创建未被派生类抑制的可选玩家组件。
+ * 本函数只在 UObject 构造阶段调用；不访问世界、控制器或运行时 Lua 环境。
+ *
+ * @param ObjectInitializer 已包含最终 CharacterMovement 类型及可选子对象抑制规则的初始化器。
+ * @param OverrideTag 仅用于区分派生类构造路径的类型标签，不携带运行时状态。
+ */
+ASKCharacter::ASKCharacter(
+	const FObjectInitializer& ObjectInitializer,
+	FSKMovementComponentOverrideTag OverrideTag)
+	: Super(ObjectInitializer)
+{
+	static_cast<void>(OverrideTag);
+
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
 	bUseControllerRotationPitch = false;
@@ -45,27 +69,40 @@ ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	bAllowAirDodge = false;
 	bIsDodging = false;
 
-	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
-	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->TargetArmLength = 400.0f;
-	CameraBoom->bUsePawnControlRotation = true;
-	// 原生默认值保证 Lua 环境尚未创建时镜头仍可过滤 Root Motion 位移抖动；Gameplay Camera Lua 可在运行时覆盖调参。
-	CameraBoom->bEnableCameraLag = true;
-	CameraBoom->CameraLagSpeed = 25.0f;
-	CameraBoom->CameraLagMaxDistance = 30.0f;
-	CameraBoom->bUseCameraLagSubstepping = true;
-	CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
+	CameraBoom = CreateOptionalDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
+	if (CameraBoom)
+	{
+		CameraBoom->SetupAttachment(RootComponent);
+		CameraBoom->TargetArmLength = 400.0f;
+		CameraBoom->bUsePawnControlRotation = true;
+		// 原生默认值保证 Lua 环境尚未创建时镜头仍可过滤 Root Motion 位移抖动；Gameplay Camera Lua 可在运行时覆盖调参。
+		CameraBoom->bEnableCameraLag = true;
+		CameraBoom->CameraLagSpeed = 25.0f;
+		CameraBoom->CameraLagMaxDistance = 30.0f;
+		CameraBoom->bUseCameraLagSubstepping = true;
+		CameraBoom->CameraLagMaxTimeStep = 1.0f / 60.0f;
+	}
 
-	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
-	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
-	FollowCamera->bUsePawnControlRotation = false;
+	FollowCamera = CreateOptionalDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
+	if (FollowCamera)
+	{
+		if (CameraBoom)
+		{
+			FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
+		}
+		else
+		{
+			FollowCamera->SetupAttachment(RootComponent);
+		}
+		FollowCamera->bUsePawnControlRotation = false;
+	}
 
 	// 沿用旧蓝图序列化的默认子对象名称；类型与业务实现均已迁移到 WeaponManager。
 	WeaponManager = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
-	InputManager = CreateDefaultSubobject<USKInputManager>(TEXT("InputManager"));
+	InputManager = CreateOptionalDefaultSubobject<USKInputManager>(TEXT("InputManager"));
 	CombatComponent = CreateDefaultSubobject<USKCombatComponent>(TEXT("CombatComponent"));
-	CameraManager = CreateDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
-	LockOnIndicator = CreateDefaultSubobject<USKLockOnIndicatorComponent>(TEXT("LockOnIndicator"));
+	CameraManager = CreateOptionalDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
+	LockOnIndicator = CreateOptionalDefaultSubobject<USKLockOnIndicatorComponent>(TEXT("LockOnIndicator"));
 }
 
 void ASKCharacter::PossessedBy(AController* NewController)

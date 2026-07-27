@@ -37,6 +37,86 @@ local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass"
 ---@field RootNodeId string 固定结果节点稳定 ID。
 local LuaAnimGraph = CompilerClass:Extend("LuaAnimGraph")
 
+---@class LuaLinkedAnimLayerConfig
+---@field LayerName string 目标 Animation Layer 函数名。
+---@field InstanceClass string|nil 可选的实际 Linked Anim Layer AnimInstance 类软路径；为空时使用 Self。
+---@field InterfaceClass string|nil 提供 Layer 签名的 Animation Layer Interface 类软路径。
+---@field Parameters SekiroAnimIRFunctionParameter[]|nil 目标函数输入签名；用于生成可连接的动态输入 Pin。
+
+---@class LuaLinkedAnimGraphConfig
+---@field InstanceClass string 目标 AnimBlueprint GeneratedClass 软路径。
+---@field GraphName string|nil 目标动画图函数名；省略时使用 AnimGraph。
+---@field Parameters SekiroAnimIRFunctionParameter[]|nil 目标函数输入签名；用于生成可连接的动态输入 Pin。
+
+---创建一个函数签名动态 Pin，并补齐稳定声明顺序。
+---@param name string 目标 UFunction 参数名或标准 Pose 输出名。
+---@param direction SekiroAnimIRPinDirection 相对当前节点的数据流方向。
+---@param data_type string IR 与 C++ 注册表共同识别的参数类型名。
+---@param allow_multiple_connections boolean 是否允许同一 Pin 被多个 Link 使用。
+---@param declaration_order number 当前节点内从零开始的 Pin 顺序整数。
+---@return SekiroAnimIRPin pin 可直接写入节点 IR 的动态 Pin。
+local function make_dynamic_pin(
+    name,
+    direction,
+    data_type,
+    allow_multiple_connections,
+    declaration_order)
+    return {
+        Name = IRSchema.RequireSemanticName(name, "Dynamic Pin"),
+        Direction = direction,
+        DataType = IRSchema.RequireSemanticName(data_type, "Dynamic Pin Type"),
+        bAllowMultipleConnections = allow_multiple_connections,
+        DeclarationOrder = declaration_order,
+    }
+end
+
+---按目标动画函数签名生成 Linked Anim Layer/Graph 的输入 Pin 和标准 Pose 输出。
+---@param parameters SekiroAnimIRFunctionParameter[]|nil 目标函数的输入参数声明。
+---@return SekiroAnimIRPin[] pins 完整动态 Pin 列表；最后一个 Pin 固定为 Pose 输出。
+local function make_linked_function_pins(parameters)
+    local pins = {}
+    for _, parameter in ipairs(parameters or {}) do
+        table.insert(pins, make_dynamic_pin(
+            parameter.Name,
+            "Input",
+            parameter.DataType,
+            false,
+            #pins))
+    end
+    table.insert(pins, make_dynamic_pin(
+        "Pose",
+        "Output",
+        "Pose",
+        true,
+        #pins))
+    return pins
+end
+
+---按 Layer 签名生成单个 Linked Input Pose 节点的输出 Pin。
+---普通参数只附着在第一个 Pose 输入节点，避免 UE 编译器重复收集同名函数参数。
+---@param pose_parameter SekiroAnimIRFunctionParameter 当前 Pose 输入参数。
+---@param scalar_parameters SekiroAnimIRFunctionParameter[] 由第一个 Pose 节点承载的普通参数；其他 Pose 节点传空表。
+---@return SekiroAnimIRPin[] pins 当前 Linked Input Pose 的完整输出 Pin。
+local function make_layer_input_pins(pose_parameter, scalar_parameters)
+    local pins = {
+        make_dynamic_pin(
+            pose_parameter.Name,
+            "Output",
+            pose_parameter.DataType,
+            true,
+            0),
+    }
+    for _, parameter in ipairs(scalar_parameters) do
+        table.insert(pins, make_dynamic_pin(
+            parameter.Name,
+            "Output",
+            parameter.DataType,
+            true,
+            #pins))
+    end
+    return pins
+end
+
 ---初始化可输出 Pose 的 Graph，并创建与 Graph 类型匹配的固定结果节点。
 ---@param config LuaAnimGraphConfig 所属 Blueprint、Layer、Graph 名称和源码位置。
 ---@return nil result 该函数只初始化 Graph 和根节点，不返回业务值。
@@ -212,6 +292,121 @@ function LuaAnimGraph:Node(name, editor_node_class, properties, node_type)
     end
     self:AddNode(node)
     return node
+end
+
+---创建并登记一个由函数签名提供动态 Pin 的结构型原生 AnimGraph 节点。
+---该入口只供编译器内部的 Layer/Linked Graph API 使用；业务 Lua 应调用具名方法而不是手工提供 Pins。
+---@param name string Graph 内节点语义名。
+---@param editor_node_class string 原生编辑器节点类路径。
+---@param node_type string C++ NodeFactory 注册的结构型 NodeType。
+---@param properties table<string, boolean|number|string|SekiroAnimIRValue>|nil 节点配置属性。
+---@param dynamic_pins SekiroAnimIRPin[] 已根据函数签名生成的完整 Pin 断言。
+---@return LuaAnimNode node 可通过具名 Pin 直接参与连接的节点。
+function LuaAnimGraph:DynamicNode(
+    name,
+    editor_node_class,
+    node_type,
+    properties,
+    dynamic_pins)
+    assert(
+        type(dynamic_pins) == "table" and #dynamic_pins > 0,
+        "Graph:DynamicNode requires function signature Pins")
+    ---@type LuaAnimNode
+    local node = LuaAnimNode:New({
+        Graph = self,
+        Name = name,
+        NodeType = node_type,
+        EditorNodeClass = editor_node_class,
+        DynamicPins = dynamic_pins,
+        SourceLocation = IRSchema.CaptureSourceLocation(
+            self.Blueprint.SourceModule,
+            3),
+    })
+    local property_names = {}
+    for property_name in pairs(properties or {}) do
+        table.insert(property_names, property_name)
+    end
+    table.sort(property_names)
+    for _, property_name in ipairs(property_names) do
+        node:AssignProperty(property_name, properties[property_name])
+    end
+    self:AddNode(node)
+    return node
+end
+
+---创建 Animation Layer Function Graph 的原生 Linked Input Pose 节点。
+---调用方由 LuaAnimLayer 统一管理 Pose 索引和普通参数归属，业务动画脚本不直接调用。
+---@param name string Graph 内节点语义名。
+---@param pose_parameter SekiroAnimIRFunctionParameter 当前 Pose 输入参数。
+---@param scalar_parameters SekiroAnimIRFunctionParameter[] 第一个 Pose 输入节点承载的普通参数。
+---@return LuaAnimNode node 输出 Pose 参数及可选普通参数的函数输入节点。
+function LuaAnimGraph:LinkedInputPose(
+    name,
+    pose_parameter,
+    scalar_parameters)
+    return self:DynamicNode(
+        name,
+        EditorNodeClass.LinkedInputPose,
+        "LinkedInputPose",
+        {
+            PoseName = pose_parameter.Name,
+        },
+        make_layer_input_pins(
+            pose_parameter,
+            scalar_parameters or {}))
+end
+
+---创建调用 Animation Layer 函数的原生 Linked Anim Layer 节点。
+---动态 Pin 必须与接口或目标 AnimInstance 上的 UFunction 签名一致，最终仍由 UE Schema 复核。
+---@param name string Graph 内节点语义名。
+---@param config LuaLinkedAnimLayerConfig Layer 名、接口/实例类与函数输入签名。
+---@return LuaAnimNode node 提供签名输入 Pin 和标准 Pose 输出的 Linked Anim Layer 节点。
+function LuaAnimGraph:LinkedAnimLayer(name, config)
+    assert(type(config) == "table", "LinkedAnimLayer requires config")
+    local properties = {
+        LayerName = assert(config.LayerName, "LinkedAnimLayer requires LayerName"),
+    }
+    if config.InstanceClass ~= nil and config.InstanceClass ~= "" then
+        properties.InstanceClass = IRSchema.RequireClassObjectPath(
+            config.InstanceClass,
+            "Linked Anim Layer InstanceClass")
+    end
+    if config.InterfaceClass ~= nil and config.InterfaceClass ~= "" then
+        properties.InterfaceClass = IRSchema.RequireClassObjectPath(
+            config.InterfaceClass,
+            "Linked Anim Layer InterfaceClass")
+    end
+    return self:DynamicNode(
+        name,
+        EditorNodeClass.LinkedAnimLayer,
+        "LinkedAnimLayer",
+        properties,
+        make_linked_function_pins(config.Parameters))
+end
+
+---创建调用另一个 AnimBlueprint 动画图函数的原生 Linked Anim Graph 节点。
+---目标类必须与当前 Skeleton 兼容；GraphName 为空时由生成器绑定目标主 AnimGraph。
+---@param name string Graph 内节点语义名。
+---@param config LuaLinkedAnimGraphConfig 目标 AnimInstance 类、图函数名与输入签名。
+---@return LuaAnimNode node 提供签名输入 Pin和标准 Pose 输出的 Linked Anim Graph 节点。
+function LuaAnimGraph:LinkedAnimGraph(name, config)
+    assert(type(config) == "table", "LinkedAnimGraph requires config")
+    local properties = {
+        InstanceClass = IRSchema.RequireClassObjectPath(
+            assert(
+                config.InstanceClass,
+                "LinkedAnimGraph requires InstanceClass"),
+            "Linked Anim Graph InstanceClass"),
+    }
+    if config.GraphName ~= nil and config.GraphName ~= "" then
+        properties.GraphName = config.GraphName
+    end
+    return self:DynamicNode(
+        name,
+        EditorNodeClass.LinkedAnimGraph,
+        "LinkedAnimGraph",
+        properties,
+        make_linked_function_pins(config.Parameters))
 end
 
 ---创建原生 Inertialization 节点，用于消费请求并平滑连接输入姿势。

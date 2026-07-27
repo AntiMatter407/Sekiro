@@ -80,6 +80,11 @@ public:
     /** 查找资产已有的 Lua 动画蓝图扩展。 */
     static USekiroLuaAnimBlueprintExtension* Find(const UAnimBlueprint* AnimBlueprint);
 
+    /** 查找当前资产或最近父 AnimBlueprint 提供的有效 Lua 源扩展。 */
+    static const USekiroLuaAnimBlueprintExtension* FindEffective(
+        const UAnimBlueprint* AnimBlueprint,
+        bool* bOutInherited = nullptr);
+
     /** 获取或创建资产唯一的 Lua 动画蓝图扩展。 */
     static USekiroLuaAnimBlueprintExtension* Request(UAnimBlueprint* AnimBlueprint);
 

@@ -20,6 +20,7 @@
 #include "SekiroBehaviorTreeIRLibrary.h"
 #include "SekiroBehaviorTreeReflectionWriter.h"
 #include "UObject/SavePackage.h"
+#include "UObject/MetaData.h"
 #include "UObject/UnrealType.h"
 
 namespace SekiroBehaviorTreeFactory
@@ -30,6 +31,9 @@ namespace SekiroBehaviorTreeFactory
     const FName SaveFailed(TEXT("BT.Factory.SaveFailed"));
     const FName ObjectCreationFailed(TEXT("BT.Factory.ObjectCreationFailed"));
     const FName SubtreeCycle(TEXT("BT.Factory.SubtreeCycle"));
+    const FName MissingAssetConfiguration(TEXT("BT.Factory.MissingAssetConfiguration"));
+    const FName LuaModuleMetaKey(TEXT("SekiroLuaBehaviorTree.LuaModuleName"));
+    const FName BlackboardPathMetaKey(TEXT("SekiroLuaBehaviorTree.BlackboardPackagePath"));
 
     /**
      * 追加资产生成诊断，不记录日志。
@@ -354,17 +358,28 @@ namespace SekiroBehaviorTreeFactory
             AddError(Diagnostics, ObjectCreationFailed, TEXT("BehaviorTreeEditor Graph 类型不可用。"), BehaviorTree->GetPathName());
             return false;
         }
-        UEdGraph* Graph = FBlueprintEditorUtils::CreateNewGraph(
-            BehaviorTree,
-            TEXT("BehaviorTreeGraph"),
-            GraphClass,
-            SchemaClass);
+        UEdGraph* Graph = BehaviorTree->BTGraph;
+        if (Graph && !Graph->IsA(GraphClass)) Graph = nullptr;
+        if (!Graph)
+        {
+            Graph = FBlueprintEditorUtils::CreateNewGraph(
+                BehaviorTree,
+                TEXT("BehaviorTreeGraph"),
+                GraphClass,
+                SchemaClass);
+        }
         if (!Graph)
         {
             AddError(Diagnostics, ObjectCreationFailed, TEXT("无法创建 BehaviorTreeGraph。"), BehaviorTree->GetPathName());
             return false;
         }
         BehaviorTree->BTGraph = Graph;
+        Graph->Modify();
+        const TArray<TObjectPtr<UEdGraphNode>> ExistingNodes = Graph->Nodes;
+        for (UEdGraphNode* ExistingNode : ExistingNodes)
+        {
+            if (ExistingNode) Graph->RemoveNode(ExistingNode);
+        }
         const UEdGraphSchema* Schema = Graph->GetSchema();
         Schema->CreateDefaultNodesForGraph(*Graph);
 
@@ -603,5 +618,193 @@ bool USekiroBehaviorTreeFactoryLibrary::GenerateFromIR(
     {
         return false;
     }
+    return true;
+}
+
+/**
+ * 从 UBehaviorTree 所属包的 UMetaData 读取每资产 Lua 模块与 Blackboard 路径配置。
+ * 只能在游戏线程调用；缺少元数据字段不是错误，输出对应空字符串。
+ *
+ * @param BehaviorTree 待读取资产，不能为空。
+ * @param OutConfiguration 接收配置值；函数开始时重置。
+ * @return 资产及其 Package/MetaData 有效时返回 true。
+ */
+bool USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+    UBehaviorTree* BehaviorTree,
+    FSekiroLuaBehaviorTreeAssetConfiguration& OutConfiguration)
+{
+    using namespace SekiroBehaviorTreeFactory;
+
+    OutConfiguration = FSekiroLuaBehaviorTreeAssetConfiguration();
+    if (!IsInGameThread() || !BehaviorTree) return false;
+    UPackage* Package = BehaviorTree->GetOutermost();
+    UMetaData* MetaData = Package ? Package->GetMetaData() : nullptr;
+    if (!MetaData) return false;
+
+    OutConfiguration.LuaModuleName =
+        MetaData->GetValue(BehaviorTree, LuaModuleMetaKey);
+    OutConfiguration.BlackboardPackagePath =
+        MetaData->GetValue(BehaviorTree, BlackboardPathMetaKey);
+    return true;
+}
+
+/**
+ * 把每资产 Lua 配置写入 BehaviorTree Package 的 UMetaData，并标记包 Dirty。
+ * 只能在编辑器游戏线程调用；函数不检查 Lua 模块是否存在，也不创建 Blackboard。
+ *
+ * @param BehaviorTree 目标资产，不能为空且必须属于 Package。
+ * @param Configuration 要持久化的模块名和可选 Blackboard 长包路径。
+ * @return 元数据写入成功时返回 true。
+ */
+bool USekiroBehaviorTreeFactoryLibrary::SetLuaAssetConfiguration(
+    UBehaviorTree* BehaviorTree,
+    const FSekiroLuaBehaviorTreeAssetConfiguration& Configuration)
+{
+    using namespace SekiroBehaviorTreeFactory;
+
+    if (!IsInGameThread() || !BehaviorTree) return false;
+    UPackage* Package = BehaviorTree->GetOutermost();
+    UMetaData* MetaData = Package ? Package->GetMetaData() : nullptr;
+    if (!MetaData) return false;
+
+    BehaviorTree->Modify();
+    MetaData->SetValue(
+        BehaviorTree,
+        LuaModuleMetaKey,
+        *Configuration.LuaModuleName);
+    MetaData->SetValue(
+        BehaviorTree,
+        BlackboardPathMetaKey,
+        *Configuration.BlackboardPackagePath);
+    Package->MarkPackageDirty();
+    return true;
+}
+
+/**
+ * 按同目录命名约定从 BehaviorTree 长包路径推导 Blackboard 长包路径。
+ * 资产名以 BT_ 开头时替换为 BB_；否则在原资产名前添加 BB_。
+ * 本函数只处理字符串，不访问文件系统或 AssetRegistry，可从任意线程调用。
+ *
+ * @param BehaviorTreePackagePath BehaviorTree 长包路径。
+ * @return 推导后的长包路径；输入不是合法长包路径时返回空字符串。
+ */
+FString USekiroBehaviorTreeFactoryLibrary::DeriveBlackboardPackagePath(
+    const FString& BehaviorTreePackagePath)
+{
+    if (!FPackageName::IsValidLongPackageName(BehaviorTreePackagePath))
+        return FString();
+
+    const FString AssetName =
+        FPackageName::GetLongPackageAssetName(BehaviorTreePackagePath);
+    const FString PackageDirectory =
+        FPackageName::GetLongPackagePath(BehaviorTreePackagePath);
+    const FString BlackboardName = AssetName.StartsWith(TEXT("BT_"))
+        ? TEXT("BB_") + AssetName.RightChop(3)
+        : TEXT("BB_") + AssetName;
+    return PackageDirectory / BlackboardName;
+}
+
+/**
+ * 使用资产元数据中的 LuaModuleName 执行纯导入与校验，不修改 BehaviorTree 或 Blackboard。
+ * 只能在游戏线程调用；空模块配置返回结构化 MissingAssetConfiguration 诊断。
+ *
+ * @param BehaviorTree 已配置或待配置的目标资产。
+ * @param OutDiagnostics 接收全部导入与配置诊断。
+ * @return 配置存在且 Lua IR 合法时返回 true。
+ */
+bool USekiroBehaviorTreeFactoryLibrary::CheckConfiguredBehaviorTree(
+    UBehaviorTree* BehaviorTree,
+    TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics)
+{
+    using namespace SekiroBehaviorTreeFactory;
+
+    OutDiagnostics.Reset();
+    FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+    if (!GetLuaAssetConfiguration(BehaviorTree, Configuration)
+        || Configuration.LuaModuleName.IsEmpty())
+    {
+        AddError(
+            OutDiagnostics,
+            MissingAssetConfiguration,
+            TEXT("行为树尚未配置 LuaModuleName。"),
+            BehaviorTree ? BehaviorTree->GetPathName() : TEXT("None"));
+        return false;
+    }
+    return CheckLuaBehaviorTree(
+        Configuration.LuaModuleName,
+        OutDiagnostics);
+}
+
+/**
+ * 使用当前资产配置原地重建 BehaviorTree，并优先复用当前 BlackboardAsset。
+ * 当前树没有 Blackboard 时依次使用已保存路径和 BT_→BB_ 推导路径；成功后回写实际路径。
+ * 只能在编辑器游戏线程调用，不启动 PIE；bSaveAssets=false 时仅标记相关包 Dirty。
+ *
+ * @param BehaviorTree 要原地更新的目标资产。
+ * @param bSaveAssets 是否立即保存 BehaviorTree 与 Blackboard 包。
+ * @param OutBlackboard 接收实际生成或复用的 Blackboard。
+ * @param OutGeneratedBehaviorTree 接收工厂返回资产，成功时与输入位于同一路径。
+ * @param OutDiagnostics 接收配置、导入、反射和 Graph 诊断。
+ * @return 配置合法且两个资产完成生成及可选保存时返回 true。
+ */
+bool USekiroBehaviorTreeFactoryLibrary::GenerateConfiguredBehaviorTree(
+    UBehaviorTree* BehaviorTree,
+    const bool bSaveAssets,
+    UBlackboardData*& OutBlackboard,
+    UBehaviorTree*& OutGeneratedBehaviorTree,
+    TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics)
+{
+    using namespace SekiroBehaviorTreeFactory;
+
+    OutBlackboard = nullptr;
+    OutGeneratedBehaviorTree = nullptr;
+    OutDiagnostics.Reset();
+    FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+    if (!GetLuaAssetConfiguration(BehaviorTree, Configuration)
+        || Configuration.LuaModuleName.IsEmpty())
+    {
+        AddError(
+            OutDiagnostics,
+            MissingAssetConfiguration,
+            TEXT("行为树尚未配置 LuaModuleName。"),
+            BehaviorTree ? BehaviorTree->GetPathName() : TEXT("None"));
+        return false;
+    }
+
+    const FString BehaviorTreePackagePath =
+        BehaviorTree->GetOutermost()->GetName();
+    FString BlackboardPackagePath;
+    if (BehaviorTree->BlackboardAsset)
+        BlackboardPackagePath = BehaviorTree->BlackboardAsset->GetOutermost()->GetName();
+    else if (!Configuration.BlackboardPackagePath.IsEmpty())
+        BlackboardPackagePath = Configuration.BlackboardPackagePath;
+    else
+        BlackboardPackagePath = DeriveBlackboardPackagePath(BehaviorTreePackagePath);
+
+    if (!GenerateFromLua(
+            Configuration.LuaModuleName,
+            BlackboardPackagePath,
+            BehaviorTreePackagePath,
+            bSaveAssets,
+            OutBlackboard,
+            OutGeneratedBehaviorTree,
+            OutDiagnostics))
+    {
+        return false;
+    }
+
+    Configuration.BlackboardPackagePath = BlackboardPackagePath;
+    if (!SetLuaAssetConfiguration(OutGeneratedBehaviorTree, Configuration))
+    {
+        AddError(
+            OutDiagnostics,
+            MissingAssetConfiguration,
+            TEXT("生成成功，但无法回写行为树 Lua 资产配置。"),
+            OutGeneratedBehaviorTree->GetPathName());
+        return false;
+    }
+    OutGeneratedBehaviorTree->PostEditChange();
+    if (bSaveAssets && !SaveAsset(OutGeneratedBehaviorTree, OutDiagnostics))
+        return false;
     return true;
 }

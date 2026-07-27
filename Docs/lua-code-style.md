@@ -376,7 +376,11 @@ end
 
 动画 Lua 继续遵守 `Docs/lua-anim-blueprint-authoring-guide.md`，并补充以下风格要求：
 
-- `ABP_xxx.lua` 继承 `Animation.Compiler.LuaAnimBlueprint`，只 override `AnimGraph(graph)`；禁止业务类 override `BuildDeclaredAnimGraph()` 或重新创建默认 Main Layer。
+- `ABP_xxx.lua` 继承 `Animation.Compiler.LuaAnimBlueprint`；主图 override `AnimGraph(graph)`，Animation Layer 统一在 `DeclareAnimationLayers()` 中通过 `self:AnimLayer()` 声明。禁止业务类 override `BuildDeclaredAnimGraph()` 或重新创建默认 Main Layer。
+- Animation Layer Interface 同样继承 `LuaAnimBlueprint`，但必须设置 `BlueprintKind = "AnimationLayerInterface"`，且不得声明主 `AnimGraph` 或 `TargetSkeleton`。
+- 实现接口的 AnimBlueprint 必须在 `ImplementedInterfaces` 中登记 GeneratedClass 软路径；接口实现和父 Layer 覆写都显式设置 `bOverride = true`。
+- 子 AnimBlueprint 只声明需要覆写的 Layer；未覆写的父 Layer 交给 UE 原生继承，不在 Lua 中复制。
+- `LinkedAnimLayer`、`LinkedAnimGraph` 和 Layer 函数参数使用结构型专用入口；业务脚本不得手写动态 Pin、`LinkedInputPose` 或底层 IR。
 - 普通 `ABP_xxx.lua` 必须在类定义中显式填写 `TargetSkeleton = "/Package/Asset.Asset"`；禁止从动画资源、父类或磁盘路径隐式推导。
 - `AnimAssets.lua` 只放语义资源名与 UE 对象路径，不写状态逻辑。
 - 编译器通用类放在 `Animation/Compiler/`，其中禁止出现项目角色名、状态名和资源路径。
@@ -407,8 +411,9 @@ end
 1. `require` 编译器基类与 `AnimAssets`。
 2. 动画蓝图类和 Skeleton/ParentClass 配置。
 3. `AnimGraph(graph)` 主图函数。
-4. 点号声明的内联状态机 `StateMachine_*(Machine)` 和 `StateGraph_*(Graph)`；大型状态机移到独立文件。
-5. `return ABP_Class:Export()`。
+4. 可选的 `DeclareAnimationLayers()` 接口实现或子类 Layer 覆写。
+5. 点号声明的内联状态机 `StateMachine_*(Machine)` 和 `StateGraph_*(Graph)`；大型状态机移到独立文件。
+6. `return ABP_Class:Export()`。
 
 Transition 声明必须写明影响过渡质量的设置：
 

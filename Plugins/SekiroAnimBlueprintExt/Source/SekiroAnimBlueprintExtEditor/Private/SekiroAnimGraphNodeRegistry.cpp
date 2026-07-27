@@ -11,7 +11,7 @@ namespace SekiroAnimGraphNodeRegistryPrivate
     TArray<FSekiroAnimIRNodeContract> BuildContracts()
     {
         TArray<FSekiroAnimIRNodeContract> Contracts;
-        Contracts.Reserve(22);
+        Contracts.Reserve(25);
 
         FSekiroAnimIRNodeContract& OutputPose = Contracts.AddDefaulted_GetRef();
         OutputPose.NodeType = SekiroAnimGraphIRNames::OutputPoseNode;
@@ -534,6 +534,53 @@ namespace SekiroAnimGraphNodeRegistryPrivate
         FSekiroAnimIRPropertyContract& BlendRootMotion = LayeredBlend.Properties.AddDefaulted_GetRef();
         BlendRootMotion.Name = TEXT("bBlendRootMotionBasedOnRootBone");
         BlendRootMotion.ValueType = ESekiroAnimIRValueType::Bool;
+
+        FSekiroAnimIRNodeContract& LinkedLayer = Contracts.AddDefaulted_GetRef();
+        LinkedLayer.NodeType = SekiroAnimGraphIRNames::LinkedAnimLayerNode;
+        LinkedLayer.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_LinkedAnimLayer"));
+        LinkedLayer.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        LinkedLayer.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        LinkedLayer.bDynamicPins = true;
+        FSekiroAnimIRPropertyContract& LinkedLayerName = LinkedLayer.Properties.AddDefaulted_GetRef();
+        LinkedLayerName.Name = TEXT("LayerName");
+        LinkedLayerName.ValueType = ESekiroAnimIRValueType::Name;
+        LinkedLayerName.bRequired = true;
+        FSekiroAnimIRPropertyContract& LinkedLayerInstanceClass =
+            LinkedLayer.Properties.AddDefaulted_GetRef();
+        LinkedLayerInstanceClass.Name = TEXT("InstanceClass");
+        LinkedLayerInstanceClass.ValueType = ESekiroAnimIRValueType::SoftClassPath;
+        FSekiroAnimIRPropertyContract& LinkedLayerInterfaceClass =
+            LinkedLayer.Properties.AddDefaulted_GetRef();
+        LinkedLayerInterfaceClass.Name = TEXT("InterfaceClass");
+        LinkedLayerInterfaceClass.ValueType = ESekiroAnimIRValueType::SoftClassPath;
+
+        FSekiroAnimIRNodeContract& LinkedGraph = Contracts.AddDefaulted_GetRef();
+        LinkedGraph.NodeType = SekiroAnimGraphIRNames::LinkedAnimGraphNode;
+        LinkedGraph.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_LinkedAnimGraph"));
+        LinkedGraph.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        LinkedGraph.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::StatePoseGraph);
+        LinkedGraph.bDynamicPins = true;
+        FSekiroAnimIRPropertyContract& LinkedGraphInstanceClass =
+            LinkedGraph.Properties.AddDefaulted_GetRef();
+        LinkedGraphInstanceClass.Name = TEXT("InstanceClass");
+        LinkedGraphInstanceClass.ValueType = ESekiroAnimIRValueType::SoftClassPath;
+        LinkedGraphInstanceClass.bRequired = true;
+        FSekiroAnimIRPropertyContract& LinkedGraphName = LinkedGraph.Properties.AddDefaulted_GetRef();
+        LinkedGraphName.Name = TEXT("GraphName");
+        LinkedGraphName.ValueType = ESekiroAnimIRValueType::Name;
+
+        FSekiroAnimIRNodeContract& LinkedInput = Contracts.AddDefaulted_GetRef();
+        LinkedInput.NodeType = SekiroAnimGraphIRNames::LinkedInputPoseNode;
+        LinkedInput.EditorNodeClassPath =
+            FSoftClassPath(TEXT("/Script/AnimGraph.AnimGraphNode_LinkedInputPose"));
+        LinkedInput.AllowedGraphTypes.Add(SekiroAnimGraphIRNames::PoseGraph);
+        LinkedInput.bDynamicPins = true;
+        FSekiroAnimIRPropertyContract& LinkedInputName = LinkedInput.Properties.AddDefaulted_GetRef();
+        LinkedInputName.Name = TEXT("PoseName");
+        LinkedInputName.ValueType = ESekiroAnimIRValueType::Name;
+        LinkedInputName.bRequired = true;
 
         return Contracts;
     }

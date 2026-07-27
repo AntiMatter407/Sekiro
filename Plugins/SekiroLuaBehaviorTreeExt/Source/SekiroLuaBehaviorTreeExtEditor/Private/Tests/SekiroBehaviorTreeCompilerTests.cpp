@@ -8,6 +8,9 @@
 #include "SekiroBehaviorTreeFactoryLibrary.h"
 #include "SekiroBehaviorTreeIRLibrary.h"
 #include "SekiroBehaviorTreeReflectionWriter.h"
+#include "SekiroLuaBehaviorTreeTask.h"
+#include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 
 namespace SekiroBehaviorTreeCompilerTests
 {
@@ -211,6 +214,117 @@ bool FSekiroBehaviorTreeLuaImporterTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Example has one Blackboard Key"), IR.BlackboardKeys.Num(), 1);
     TestTrue(TEXT("Example property uses explicit Float value"), IR.Values.Num() > 0
         && IR.Values[0].Type == ESekiroBehaviorTreeValueType::Float);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroBehaviorTreeAssetConfigurationTest,
+    "Sekiro.LuaBehaviorTree.Factory.AssetConfiguration",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证每资产 Lua 元数据可往返读取，且配置式 API 会原地生成并复用目标 UBehaviorTree。
+ * 测试使用内存包且 bSaveAssets=false，不写磁盘、不启动 PIE。
+ *
+ * @param Parameters Automation 框架保留参数，本测试不使用。
+ * @return 元数据、路径推导与原地生成断言均成立时返回 true。
+ */
+bool FSekiroBehaviorTreeAssetConfigurationTest::RunTest(const FString& Parameters)
+{
+    UPackage* BehaviorTreePackage =
+        CreatePackage(TEXT("/Game/__SekiroLuaBTTests/BT_Configured"));
+    UBehaviorTree* BehaviorTree = NewObject<UBehaviorTree>(
+        BehaviorTreePackage,
+        TEXT("BT_Configured"),
+        RF_Public | RF_Standalone);
+    FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+    Configuration.LuaModuleName = TEXT("AI.Examples.BT_ReflectionExample");
+
+    TestTrue(
+        TEXT("Configuration writes to package metadata"),
+        USekiroBehaviorTreeFactoryLibrary::SetLuaAssetConfiguration(
+            BehaviorTree,
+            Configuration));
+    FSekiroLuaBehaviorTreeAssetConfiguration ReadConfiguration;
+    TestTrue(
+        TEXT("Configuration reads from package metadata"),
+        USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+            BehaviorTree,
+            ReadConfiguration));
+    TestEqual(
+        TEXT("Lua module metadata round-trips"),
+        ReadConfiguration.LuaModuleName,
+        Configuration.LuaModuleName);
+    TestEqual(
+        TEXT("BT prefix derives BB path"),
+        USekiroBehaviorTreeFactoryLibrary::DeriveBlackboardPackagePath(
+            TEXT("/Game/AI/BT_Guard")),
+        FString(TEXT("/Game/AI/BB_Guard")));
+
+    UBlackboardData* Blackboard = nullptr;
+    UBehaviorTree* GeneratedBehaviorTree = nullptr;
+    TArray<FSekiroBehaviorTreeDiagnostic> Diagnostics;
+    TestTrue(
+        TEXT("Configured generation succeeds in place"),
+        USekiroBehaviorTreeFactoryLibrary::GenerateConfiguredBehaviorTree(
+            BehaviorTree,
+            false,
+            Blackboard,
+            GeneratedBehaviorTree,
+            Diagnostics));
+    TestTrue(
+        TEXT("Configured generation keeps the same BehaviorTree object"),
+        GeneratedBehaviorTree == BehaviorTree);
+    TestNotNull(TEXT("Configured generation creates Blackboard"), Blackboard);
+
+    ReadConfiguration = FSekiroLuaBehaviorTreeAssetConfiguration();
+    USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+        BehaviorTree,
+        ReadConfiguration);
+    TestEqual(
+        TEXT("Actual Blackboard path is written back"),
+        ReadConfiguration.BlackboardPackagePath,
+        FString(TEXT("/Game/__SekiroLuaBTTests/BB_Configured")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroLuaBehaviorTreeTaskBoundaryTest,
+    "Sekiro.LuaBehaviorTree.Runtime.GenericTaskBoundary",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证通用 Lua Task 强制节点实例化、暴露必要配置，且空闲状态拒绝显式 Finish。
+ * 测试不创建 BehaviorTreeComponent、不调用 Lua、不启动 PIE。
+ *
+ * @param Parameters Automation 框架保留参数，本测试不使用。
+ * @return 实例化和生命周期边界断言均成立时返回 true。
+ */
+bool FSekiroLuaBehaviorTreeTaskBoundaryTest::RunTest(const FString& Parameters)
+{
+    USekiroLuaBehaviorTreeTask* Task = NewObject<USekiroLuaBehaviorTreeTask>();
+    TestTrue(TEXT("Generic Lua task creates a node instance"), Task->HasInstance());
+    TestNotNull(
+        TEXT("LuaModuleName is available to generic reflection generation"),
+        FindFProperty<FProperty>(
+            USekiroLuaBehaviorTreeTask::StaticClass(),
+            GET_MEMBER_NAME_CHECKED(
+                USekiroLuaBehaviorTreeTask,
+                LuaModuleName)));
+    TestNotNull(
+        TEXT("Configuration is available to generic reflection generation"),
+        FindFProperty<FProperty>(
+            USekiroLuaBehaviorTreeTask::StaticClass(),
+            GET_MEMBER_NAME_CHECKED(
+                USekiroLuaBehaviorTreeTask,
+                Configuration)));
+    TestFalse(
+        TEXT("Idle task rejects latent Finish"),
+        Task->FinishLuaTask(ESekiroLuaBehaviorTreeTaskResult::Succeeded));
+    TestFalse(TEXT("Idle task is not active"), Task->IsTaskActive());
+    TestNull(TEXT("Idle task has no AIController"), Task->GetTaskAIController());
+    TestNull(TEXT("Idle task has no Pawn"), Task->GetTaskPawn());
+    TestNull(TEXT("Idle task has no Blackboard"), Task->GetTaskBlackboard());
     return true;
 }
 

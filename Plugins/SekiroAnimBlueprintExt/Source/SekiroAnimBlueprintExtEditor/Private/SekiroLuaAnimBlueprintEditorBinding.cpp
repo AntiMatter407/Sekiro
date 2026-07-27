@@ -14,6 +14,7 @@
 #include "UnLua.h"
 #include "UnLuaModule.h"
 #include "UnLuaSettings.h"
+#include "Widgets/Input/SEditableTextBox.h"
 
 #define LOCTEXT_NAMESPACE "SekiroLuaAnimBlueprintEditorBinding"
 
@@ -25,6 +26,7 @@ namespace
     const FName GenerateFromLuaToolbarBlockName(TEXT("Sekiro.GenerateFromLua"));
     const FName EditorLuaDebugToolbarBlockName(TEXT("Sekiro.EditorLuaDebug"));
     const FName SourceModeToolbarBlockName(TEXT("Sekiro.SourceMode"));
+    const FName LuaModuleToolbarBlockName(TEXT("Sekiro.LuaModule"));
     const TCHAR* EditorLuaDebugConfigSection = TEXT("SekiroAnimBlueprintExtEditor.LuaDebug");
     const TCHAR* EditorLuaDebugConfigKey = TEXT("EnableEditorDebug");
     const FString LuaDebuggerModuleName(TEXT("Debug.LuaDebugger"));
@@ -250,15 +252,12 @@ FSekiroLuaAnimBlueprintEditorBinding::~FSekiroLuaAnimBlueprintEditorBinding()
 /**
  * 返回当前动画蓝图编辑器唯一的工具栏扩展实例，供 UE 多次重建工具栏时重复使用。
  * 必须在游戏线程调用；首次调用创建并配置扩展，后续调用返回同一共享实例。
- * 每次请求同时开始新的工具栏构建周期；UE5.2 的第一个 MultiBox 是隐藏父级，第二个才是显示工具栏。
+ * 不假设 UE 会创建固定数量或固定顺序的 MultiBox，具体去重由 FillToolbar 针对目标 MultiBox 完成。
  *
  * @return 已绑定 FillToolbar 委托的稳定 Extender，共享所有权由绑定和编辑器共同持有。
  */
 TSharedRef<FExtender> FSekiroLuaAnimBlueprintEditorBinding::GetToolbarExtender()
 {
-    ActiveToolbarMultiBox.Reset();
-    ParentToolbarMultiBox.Reset();
-    bActiveToolbarFilled = false;
     if (!ToolbarExtender.IsValid())
     {
         ToolbarExtender = MakeShared<FExtender>();
@@ -275,42 +274,24 @@ TSharedRef<FExtender> FSekiroLuaAnimBlueprintEditorBinding::GetToolbarExtender()
 
 /**
  * 在原生 Compile 区段后添加 Check Lua、Generate From Lua 与持久化 Source Mode 下拉控件。
- * 只能在工具栏构建阶段于游戏线程调用；函数不读取 Lua 或修改资产。
+ * 只能在工具栏构建阶段于游戏线程调用；首次收到的有效 MultiBox 会立即填充，不依赖构建顺序。
+ * 绑定通过弱引用记录每个已填充 MultiBox；同一实例重复回调时跳过，失效实例会被及时清理。
  *
  * @param ToolbarBuilder 当前动画蓝图编辑器工具栏构建器，仅在调用期间有效。
  */
 void FSekiroLuaAnimBlueprintEditorBinding::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 {
     const TSharedRef<FMultiBox> MultiBox = ToolbarBuilder.GetMultiBox();
-    const TSharedPtr<FMultiBox> ParentMultiBox = ParentToolbarMultiBox.Pin();
-    if (!ParentMultiBox.IsValid())
+    FilledToolbarMultiBoxes.RemoveAll([](const TWeakPtr<FMultiBox>& Candidate)
     {
-        ParentToolbarMultiBox = MultiBox;
-        return;
-    }
-    if (ParentMultiBox.Get() == &MultiBox.Get()) return;
-
-    const TSharedPtr<FMultiBox> ActiveMultiBox = ActiveToolbarMultiBox.Pin();
-    if (!ActiveMultiBox.IsValid())
+        return !Candidate.IsValid();
+    });
+    for (const TWeakPtr<FMultiBox>& Candidate : FilledToolbarMultiBoxes)
     {
-        ActiveToolbarMultiBox = MultiBox;
-        bActiveToolbarFilled = false;
+        const TSharedPtr<FMultiBox> FilledMultiBox = Candidate.Pin();
+        if (FilledMultiBox.Get() == &MultiBox.Get()) return;
     }
-    else if (ActiveMultiBox.Get() != &MultiBox.Get())
-    {
-        return;
-    }
-    if (bActiveToolbarFilled)
-    {
-        return;
-    }
-    bActiveToolbarFilled = true;
-    if (MultiBox->FindBlockFromNameAndType(
-            CheckLuaToolbarBlockName,
-            EMultiBlockType::ToolBarButton).IsValid())
-    {
-        return;
-    }
+    FilledToolbarMultiBoxes.Add(MultiBox);
 
     ToolbarBuilder.AddToolBarButton(
         FUIAction(
@@ -328,6 +309,17 @@ void FSekiroLuaAnimBlueprintEditorBinding::FillToolbar(FToolBarBuilder& ToolbarB
         LOCTEXT("GenerateFromLuaLabel", "Generate From Lua"),
         LOCTEXT("GenerateFromLuaTooltip", "Transactionally rebuild this Animation Blueprint Graph from the latest valid Lua IR."),
         FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"));
+    ToolbarBuilder.AddWidget(
+        SNew(SEditableTextBox)
+        .MinDesiredWidth(240.0f)
+        .Text(this, &FSekiroLuaAnimBlueprintEditorBinding::GetLuaModuleNameText)
+        .HintText(LOCTEXT("LuaModuleHint", "Lua module"))
+        .ToolTipText(LOCTEXT(
+            "LuaModuleTooltip",
+            "Lua module owned by this AnimBlueprint. Inherited values are shown until this child saves an override."))
+        .IsEnabled(this, &FSekiroLuaAnimBlueprintEditorBinding::CanEditLuaModule)
+        .OnTextCommitted(this, &FSekiroLuaAnimBlueprintEditorBinding::CommitLuaModuleName),
+        LuaModuleToolbarBlockName);
     ToolbarBuilder.AddToolBarButton(
         FUIAction(
             FExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::ExecuteToggleEditorLuaDebug),
@@ -499,8 +491,7 @@ UAnimBlueprint* FSekiroLuaAnimBlueprintEditorBinding::GetAnimBlueprint() const
 void FSekiroLuaAnimBlueprintEditorBinding::ExecuteModeAwareCompile(FUIAction OriginalAction)
 {
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+    USekiroLuaAnimBlueprintExtension* Extension = EnsureLocalLuaExtension();
     if (Extension == nullptr
         || Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint)
     {
@@ -559,7 +550,7 @@ bool FSekiroLuaAnimBlueprintEditorBinding::CanExecuteModeAwareCompile(
     if (!OriginalAction.CanExecute()) return false;
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
     const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
     return Extension == nullptr
         || Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint
         || !Extension->LuaModuleName.IsEmpty();
@@ -571,6 +562,7 @@ bool FSekiroLuaAnimBlueprintEditorBinding::CanExecuteModeAwareCompile(
 void FSekiroLuaAnimBlueprintEditorBinding::ExecuteCheckLua()
 {
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
+    if (EnsureLocalLuaExtension() == nullptr) return;
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
     const bool bSucceeded = USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
         AnimBlueprint,
@@ -590,6 +582,7 @@ void FSekiroLuaAnimBlueprintEditorBinding::ExecuteCheckLua()
 void FSekiroLuaAnimBlueprintEditorBinding::ExecuteGenerateFromLua()
 {
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
+    if (EnsureLocalLuaExtension() == nullptr) return;
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
     const bool bSucceeded =
         USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
@@ -613,11 +606,104 @@ bool FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction() const
 {
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
     const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
     return AnimBlueprint != nullptr
         && Extension != nullptr
         && !Extension->LuaModuleName.IsEmpty()
         && (GEditor == nullptr || GEditor->PlayWorld == nullptr);
+}
+
+/**
+ * 判断当前编辑器是否允许配置 Lua 模块；任何标准 AnimBlueprint 都可显式接管，
+ * 已继承 Lua 父资产的子类无需预先拥有本地扩展。函数不读取或创建 Lua Env。
+ *
+ * @return 目标动画蓝图有效且当前不在 PIE/SIE 时返回 true。
+ */
+bool FSekiroLuaAnimBlueprintEditorBinding::CanEditLuaModule() const
+{
+    return GetAnimBlueprint() != nullptr
+        && (GEditor == nullptr || GEditor->PlayWorld == nullptr);
+}
+
+/**
+ * 确保继承 Lua 动画源的子 AnimBlueprint 拥有独立本地扩展。
+ * 本地扩展有效时直接返回；否则通过 UE 反射读取最近父 AnimBlueprint 的模块名，
+ * 再调用通用配置 API 创建本地副本。不会根据类名、资产目录或模块命名约定进行推导。
+ * 必须在非 PIE 的游戏线程调用；首次派生会标记当前子资产待保存，但不修改父资产。
+ *
+ * @return 当前资产的有效本地扩展；没有本地或继承 Lua 源、配置失败时返回 nullptr。
+ */
+USekiroLuaAnimBlueprintExtension*
+FSekiroLuaAnimBlueprintEditorBinding::EnsureLocalLuaExtension()
+{
+    UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
+    USekiroLuaAnimBlueprintExtension* LocalExtension =
+        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+    if (LocalExtension != nullptr && !LocalExtension->LuaModuleName.IsEmpty())
+    {
+        return LocalExtension;
+    }
+
+    const USekiroLuaAnimBlueprintExtension* EffectiveExtension =
+        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
+    if (EffectiveExtension == nullptr
+        || EffectiveExtension->LuaModuleName.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    const FString InheritedModuleName = EffectiveExtension->LuaModuleName;
+    const ESekiroLuaAnimBlueprintSourceMode InheritedSourceMode =
+        EffectiveExtension->SourceMode;
+    if (!USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
+            AnimBlueprint,
+            InheritedModuleName))
+    {
+        return nullptr;
+    }
+
+    LocalExtension = USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+    if (LocalExtension != nullptr)
+    {
+        LocalExtension->SourceMode = InheritedSourceMode;
+    }
+    return LocalExtension;
+}
+
+/**
+ * 返回工具栏显示的 Lua 模块名；本地未配置时显示最近父 AnimBlueprint 的有效模块，
+ * 让用户在创建本地覆写前仍能确认继承来源。函数只读反射元数据。
+ *
+ * @return 当前或继承的模块名；继承链没有 Lua 源时返回空文本。
+ */
+FText FSekiroLuaAnimBlueprintEditorBinding::GetLuaModuleNameText() const
+{
+    const USekiroLuaAnimBlueprintExtension* Extension =
+        USekiroLuaAnimBlueprintExtension::FindEffective(GetAnimBlueprint());
+    return Extension != nullptr
+        ? FText::FromString(Extension->LuaModuleName)
+        : FText::GetEmpty();
+}
+
+/**
+ * 将工具栏输入的模块名配置为当前 AnimBlueprint 自己的 Lua 源。
+ * 输入只做首尾空白清理，不根据项目路径或父类名称改写；空值保持现有配置。
+ * 必须在非 PIE 的游戏线程调用，成功后由通用配置 API 标记当前资产待生成和保存。
+ *
+ * @param ModuleNameText 用户提交的 UnLua require 模块名。
+ * @param CommitType Slate 提交原因；当前所有提交类型使用相同配置语义。
+ */
+void FSekiroLuaAnimBlueprintEditorBinding::CommitLuaModuleName(
+    const FText& ModuleNameText,
+    ETextCommit::Type CommitType)
+{
+    static_cast<void>(CommitType);
+    const FString ModuleName = ModuleNameText.ToString().TrimStartAndEnd();
+    if (ModuleName.IsEmpty()) return;
+
+    USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
+        GetAnimBlueprint(),
+        ModuleName);
 }
 
 /**
@@ -732,7 +818,7 @@ FText FSekiroLuaAnimBlueprintEditorBinding::GetSourceModeLabel() const
 {
     const UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
     const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
     return Extension != nullptr
         && Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::Lua
         ? LOCTEXT("SourceLuaLabel", "Source: Lua")
@@ -749,8 +835,7 @@ void FSekiroLuaAnimBlueprintEditorBinding::SetSourceMode(const uint8 SourceModeV
 {
     if (SourceModeValue > static_cast<uint8>(ESekiroLuaAnimBlueprintSourceMode::Lua)) return;
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+    USekiroLuaAnimBlueprintExtension* Extension = EnsureLocalLuaExtension();
     if (AnimBlueprint == nullptr || Extension == nullptr) return;
 
     AnimBlueprint->Modify();
@@ -774,7 +859,7 @@ bool FSekiroLuaAnimBlueprintEditorBinding::IsSourceMode(const uint8 SourceModeVa
 {
     const UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
     const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
     return Extension != nullptr
         && static_cast<uint8>(Extension->SourceMode) == SourceModeValue;
 }

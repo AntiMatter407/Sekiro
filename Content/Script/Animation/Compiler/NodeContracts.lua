@@ -18,6 +18,7 @@
 ---@field GraphTypes table<string, boolean> 允许放置该节点的 GraphType 集合。
 ---@field RootGraphType string|nil 非空时表示该节点只能作为对应 GraphType 的固定根节点。
 ---@field OwnedGraphType string|nil 非空时表示节点必须持有该类型的内部 Graph。
+---@field bDynamicPins boolean|nil 是否由函数签名提供完整动态 Pin，而不是使用固定 Pins 模板。
 ---@field Pins LuaAnimNodePinContract[] 与 C++ 注册表逐项一致的 Pin 断言模板。
 ---@field Properties LuaAnimNodePropertyContract[] 允许写入 IR 的属性契约。
 
@@ -379,6 +380,36 @@ local contracts = {
             { Name = "bMeshSpaceScaleBlend", ValueType = "Bool", bRequired = false },
             { Name = "CurveBlendOption", ValueType = "Name", bRequired = false },
             { Name = "bBlendRootMotionBasedOnRootBone", ValueType = "Bool", bRequired = false },
+        },
+    },
+    LinkedInputPose = {
+        NodeType = "LinkedInputPose",
+        GraphTypes = { Pose = true },
+        bDynamicPins = true,
+        Pins = {},
+        Properties = {
+            { Name = "PoseName", ValueType = "Name", bRequired = true },
+        },
+    },
+    LinkedAnimLayer = {
+        NodeType = "LinkedAnimLayer",
+        GraphTypes = { Pose = true, StatePose = true },
+        bDynamicPins = true,
+        Pins = {},
+        Properties = {
+            { Name = "LayerName", ValueType = "Name", bRequired = true },
+            { Name = "InstanceClass", ValueType = "SoftClassPath", bRequired = false },
+            { Name = "InterfaceClass", ValueType = "SoftClassPath", bRequired = false },
+        },
+    },
+    LinkedAnimGraph = {
+        NodeType = "LinkedAnimGraph",
+        GraphTypes = { Pose = true, StatePose = true },
+        bDynamicPins = true,
+        Pins = {},
+        Properties = {
+            { Name = "InstanceClass", ValueType = "SoftClassPath", bRequired = true },
+            { Name = "GraphName", ValueType = "Name", bRequired = false },
         },
     },
 }

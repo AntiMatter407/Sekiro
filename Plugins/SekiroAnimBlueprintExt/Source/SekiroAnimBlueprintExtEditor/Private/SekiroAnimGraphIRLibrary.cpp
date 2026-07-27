@@ -29,6 +29,9 @@ const FName SekiroAnimGraphIRNames::BlendListByBoolNode(TEXT("BlendListByBool"))
 const FName SekiroAnimGraphIRNames::BlendListByEnumNode(TEXT("BlendListByEnum"));
 const FName SekiroAnimGraphIRNames::SlotNode(TEXT("Slot"));
 const FName SekiroAnimGraphIRNames::LayeredBlendPerBoneNode(TEXT("LayeredBlendPerBone"));
+const FName SekiroAnimGraphIRNames::LinkedAnimLayerNode(TEXT("LinkedAnimLayer"));
+const FName SekiroAnimGraphIRNames::LinkedAnimGraphNode(TEXT("LinkedAnimGraph"));
+const FName SekiroAnimGraphIRNames::LinkedInputPoseNode(TEXT("LinkedInputPose"));
 const FName SekiroAnimGraphIRNames::PoseData(TEXT("Pose"));
 const FName SekiroAnimGraphIRNames::ComponentPoseData(TEXT("ComponentPose"));
 const FName SekiroAnimGraphIRNames::BoolData(TEXT("Bool"));
@@ -483,6 +486,10 @@ namespace SekiroAnimGraphIRValidation
  */
 void USekiroAnimGraphIRLibrary::Canonicalize(FSekiroAnimBlueprintIR& Blueprint)
 {
+    Blueprint.ImplementedInterfaces.Sort([](const FSoftClassPath& Left, const FSoftClassPath& Right)
+    {
+        return Left.ToString() < Right.ToString();
+    });
     Blueprint.Variables.Sort([](const FSekiroAnimIRVariable& Left, const FSekiroAnimIRVariable& Right)
     {
         if (Left.DeclarationOrder != Right.DeclarationOrder) return Left.DeclarationOrder < Right.DeclarationOrder;
@@ -497,6 +504,17 @@ void USekiroAnimGraphIRLibrary::Canonicalize(FSekiroAnimBlueprintIR& Blueprint)
 
     for (FSekiroAnimIRLayer& Layer : Blueprint.Layers)
     {
+        Layer.Parameters.Sort([](
+            const FSekiroAnimIRFunctionParameter& Left,
+            const FSekiroAnimIRFunctionParameter& Right)
+        {
+            if (Left.DeclarationOrder != Right.DeclarationOrder)
+            {
+                return Left.DeclarationOrder < Right.DeclarationOrder;
+            }
+            return Left.Name.LexicalLess(Right.Name);
+        });
+
         Layer.Graphs.Sort([](const FSekiroAnimIRGraph& Left, const FSekiroAnimIRGraph& Right)
         {
             const int32 IdComparison = Left.Id.Compare(Right.Id, ESearchCase::CaseSensitive);
@@ -615,12 +633,14 @@ bool USekiroAnimGraphIRLibrary::Validate(
     TSet<FName> TransitionRuleFunctionNames;
     TSet<FName> VariableNames;
 
-    if (CanonicalBlueprint.SchemaVersion != 2)
+    if (CanonicalBlueprint.SchemaVersion != 2 && CanonicalBlueprint.SchemaVersion != 3)
     {
         AddError(
             OutDiagnostics,
             UnsupportedSchemaVersion,
-            FString::Printf(TEXT("Unsupported AnimGraph IR schema version %d; expected 2."), CanonicalBlueprint.SchemaVersion),
+            FString::Printf(
+                TEXT("Unsupported AnimGraph IR schema version %d; expected 2 or 3."),
+                CanonicalBlueprint.SchemaVersion),
             CanonicalBlueprint.SourceModule,
             CanonicalBlueprint.SourceLocation);
     }
@@ -663,7 +683,8 @@ bool USekiroAnimGraphIRLibrary::Validate(
         VariableNames.Add(Variable.Name);
     }
 
-    if (CanonicalBlueprint.ParentAnimInstanceClass.IsNull())
+    if (CanonicalBlueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimBlueprint
+        && CanonicalBlueprint.ParentAnimInstanceClass.IsNull())
     {
         AddError(
             OutDiagnostics,
@@ -673,7 +694,19 @@ bool USekiroAnimGraphIRLibrary::Validate(
             CanonicalBlueprint.SourceLocation);
     }
 
-    if (CanonicalBlueprint.TargetSkeleton.IsNull())
+    if (CanonicalBlueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimationLayerInterface)
+    {
+        if (!CanonicalBlueprint.TargetSkeleton.IsNull())
+        {
+            AddError(
+                OutDiagnostics,
+                InvalidTargetSkeletonPath,
+                TEXT("Animation Layer Interface IR must not declare a TargetSkeleton."),
+                CanonicalBlueprint.SourceModule,
+                CanonicalBlueprint.SourceLocation);
+        }
+    }
+    else if (CanonicalBlueprint.TargetSkeleton.IsNull())
     {
         AddError(
             OutDiagnostics,
@@ -929,7 +962,7 @@ bool USekiroAnimGraphIRLibrary::Validate(
                             Node.SourceLocation);
                     }
 
-                    if (NodeContract && !Pin.Name.IsEmpty())
+                    if (NodeContract && !NodeContract->bDynamicPins && !Pin.Name.IsEmpty())
                     {
                         const FSekiroAnimIRPinContract* PinContract = FindPinContract(*NodeContract, Pin.Name);
                         if (!PinContract)
@@ -1346,7 +1379,16 @@ bool USekiroAnimGraphIRLibrary::Validate(
                 const FSekiroAnimIRPinContract* TargetPin = TargetContract
                     ? FindPinContract(*TargetContract, Link.Target.PinName)
                     : nullptr;
-                if ((!SourcePin && !bReflectiveSource) || (!TargetPin && !bReflectiveTarget))
+                const FSekiroAnimIRPin* DynamicSourcePin =
+                    SourceContract != nullptr && SourceContract->bDynamicPins
+                    ? FindDeclaredPin(**SourceNodeResult, Link.Source.PinName)
+                    : nullptr;
+                const FSekiroAnimIRPin* DynamicTargetPin =
+                    TargetContract != nullptr && TargetContract->bDynamicPins
+                    ? FindDeclaredPin(**TargetNodeResult, Link.Target.PinName)
+                    : nullptr;
+                if ((!SourcePin && !DynamicSourcePin && !bReflectiveSource)
+                    || (!TargetPin && !DynamicTargetPin && !bReflectiveTarget))
                 {
                     AddError(
                         OutDiagnostics,
@@ -1358,7 +1400,11 @@ bool USekiroAnimGraphIRLibrary::Validate(
                 }
 
                 if ((SourcePin && SourcePin->Direction != ESekiroAnimIRPinDirection::Output)
-                    || (TargetPin && TargetPin->Direction != ESekiroAnimIRPinDirection::Input))
+                    || (DynamicSourcePin
+                        && DynamicSourcePin->Direction != ESekiroAnimIRPinDirection::Output)
+                    || (TargetPin && TargetPin->Direction != ESekiroAnimIRPinDirection::Input)
+                    || (DynamicTargetPin
+                        && DynamicTargetPin->Direction != ESekiroAnimIRPinDirection::Input))
                 {
                     AddError(
                         OutDiagnostics,
@@ -1377,13 +1423,36 @@ bool USekiroAnimGraphIRLibrary::Validate(
                         Link.Id,
                         Link.SourceLocation);
                 }
+                else
+                {
+                    const FName SourceDataType = SourcePin != nullptr
+                        ? SourcePin->DataType
+                        : DynamicSourcePin != nullptr ? DynamicSourcePin->DataType : NAME_None;
+                    const FName TargetDataType = TargetPin != nullptr
+                        ? TargetPin->DataType
+                        : DynamicTargetPin != nullptr ? DynamicTargetPin->DataType : NAME_None;
+                    if (!SourceDataType.IsNone()
+                        && !TargetDataType.IsNone()
+                        && SourceDataType != TargetDataType)
+                    {
+                        AddError(
+                            OutDiagnostics,
+                            LinkTypeMismatch,
+                            FString::Printf(
+                                TEXT("Link '%s' connects incompatible dynamic Pin data types."),
+                                *Link.Id),
+                            Link.Id,
+                            Link.SourceLocation);
+                    }
+                }
 
                 const FString InputKey = Link.Target.NodeId + TEXT("\x1f") + Link.Target.PinName;
                 int32& InputCount = InputConnectionCounts.FindOrAdd(InputKey);
                 ++InputCount;
                 if (InputCount > 1
-                    && TargetPin != nullptr
-                    && !TargetPin->bAllowMultipleConnections)
+                    && ((TargetPin != nullptr && !TargetPin->bAllowMultipleConnections)
+                        || (DynamicTargetPin != nullptr
+                            && !DynamicTargetPin->bAllowMultipleConnections)))
                 {
                     AddError(
                         OutDiagnostics,

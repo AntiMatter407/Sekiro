@@ -14,6 +14,7 @@
 ---| '"SoftClassPath"'
 
 ---@alias SekiroAnimIRPinDirection '"Input"'|'"Output"'
+---@alias SekiroAnimIRBlueprintKind '"AnimBlueprint"'|'"AnimationLayerInterface"'
 
 ---@alias SekiroAnimIRGraphType '"Pose"'|'"StatePose"'|'"StateMachine"'
 ---@alias SekiroAnimIRLayoutStyle '"Auto"'|'"LeftToRight"'|'"RightToLeft"'|'"TopToBottom"'|'"BottomToTop"'|'"CompactGrid"'|'"Radial"'|'"HierarchicalBlocks"'
@@ -144,17 +145,32 @@
 ---@class SekiroAnimIRLayer
 ---@field Id string Layer 稳定 ID。
 ---@field Name string Layer 语义名称。
+---@field FunctionName string 对应 UE Animation Layer UFunction 名；Main Layer 固定为 AnimGraph。
+---@field InterfaceClass string 可选的 Animation Layer Interface GeneratedClass 软路径。
+---@field bOverride boolean 是否覆盖接口或父 AnimBlueprint 中的同名 Animation Layer。
+---@field Parameters SekiroAnimIRFunctionParameter[] Animation Layer 函数输入参数签名。
 ---@field RootGraphId string 最终输出 Pose 的根 Graph ID。
 ---@field Graphs SekiroAnimIRGraph[] Layer 拥有的 Graph 集合。
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Layer 源码位置。
 
+---@class SekiroAnimIRFunctionParameter
+---@field Name string UFunction 参数名。
+---@field DataType string Pose、ComponentPose、Bool、Float、Byte、Integer、Name、String、Object、Class 或 Enum。
+---@field TypeObjectPath string Object、Class、Enum 参数的类型对象路径；其他类型为空。
+---@field bIsPose boolean 是否为 Pose/ComponentPose 输入参数。
+---@field DeclarationOrder number 函数签名中的确定性参数顺序。
+---@field SourceLocation SekiroAnimIRSourceLocation 参数声明源码位置。
+
 ---@class SekiroAnimBlueprintIR
 ---@field SchemaVersion number IR Schema 版本整数。
+---@field BlueprintKind SekiroAnimIRBlueprintKind 生成普通 AnimBlueprint 或 Animation Layer Interface。
 ---@field SourceModule string 动画蓝图 Lua 源模块名。
 ---@field ParentAnimInstanceClass string 父 AnimInstance 类软路径。
 ---@field TargetSkeleton string 普通 AnimBlueprint 的目标 Skeleton 资产软路径。
----@field Layers SekiroAnimIRLayer[] Graph 所有权作用域；当前原生 Factory 仅支持一个 Main Layer，并非 UE Animation Layer 函数。
+---@field ImplementedInterfaces string[] 普通 AnimBlueprint 实现的 Animation Layer Interface GeneratedClass 软路径。
+---@field Variables SekiroAnimIRVariable[] 当前 AnimBlueprint 新声明的成员变量；父类变量通过 UE 反射继承。
+---@field Layers SekiroAnimIRLayer[] Main AnimGraph 与 UE Animation Layer Function Graph 声明。
 ---@field SourceLocation SekiroAnimIRSourceLocation 动画蓝图源码位置。
 
 local IRTypes = {}

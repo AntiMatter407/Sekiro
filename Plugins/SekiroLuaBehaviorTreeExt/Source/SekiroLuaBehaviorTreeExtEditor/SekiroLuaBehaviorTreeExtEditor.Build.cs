@@ -22,6 +22,10 @@ public class SekiroLuaBehaviorTreeExtEditor : ModuleRules
             "BehaviorTreeEditor",
             "Kismet",
             "Lua",
+            "MessageLog",
+            "Slate",
+            "SlateCore",
+            "ToolMenus",
             "UnLua",
             "UnrealEd",
         });

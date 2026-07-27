@@ -17,11 +17,16 @@
 #include "AnimGraphNode_TwoBoneIK.h"
 #include "AnimGraphNode_UseCachedPose.h"
 #include "AnimGraphNode_LegIK.h"
+#include "AnimGraphNode_LinkedAnimGraph.h"
+#include "AnimGraphNode_LinkedAnimGraphBase.h"
+#include "AnimGraphNode_LinkedAnimLayer.h"
+#include "AnimGraphNode_LinkedInputPose.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
 #include "AnimGraph/AnimGraphNode_OrientationWarping.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimLayerInterface.h"
 #include "Animation/AnimNodeBase.h"
 #include "Animation/AnimSequenceBase.h"
 #include "AnimNodes/AnimNode_BlendListBase.h"
@@ -43,6 +48,7 @@
 #include "Editor.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkeletalMeshSocket.h"
+#include "Engine/MemberReference.h"
 #include "Factories/AnimBlueprintFactory.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_AnimGetter.h"
@@ -72,9 +78,14 @@ namespace SekiroAnimBlueprintFactoryPrivate
 {
     const FName WrongThread = TEXT("Factory.WrongThread");
     const FName UnsupportedLayerCount = TEXT("Factory.UnsupportedLayerCount");
+    const FName InterfaceClassLoadFailed = TEXT("Factory.InterfaceClassLoadFailed");
+    const FName InterfaceClassTypeMismatch = TEXT("Factory.InterfaceClassTypeMismatch");
+    const FName LayerFunctionNotFound = TEXT("Factory.LayerFunctionNotFound");
+    const FName LayerSignatureMismatch = TEXT("Factory.LayerSignatureMismatch");
     const FName ParentClassLoadFailed = TEXT("Factory.ParentClassLoadFailed");
     const FName ParentClassTypeMismatch = TEXT("Factory.ParentClassTypeMismatch");
-    const FName UnsupportedParentBlueprintClass = TEXT("Factory.UnsupportedParentBlueprintClass");
+    const FName ParentSkeletonMismatch = TEXT("Factory.ParentSkeletonMismatch");
+    const FName InheritedVariableTypeMismatch = TEXT("Factory.InheritedVariableTypeMismatch");
     const FName TargetSkeletonLoadFailed = TEXT("Factory.TargetSkeletonLoadFailed");
     const FName TargetSkeletonTypeMismatch = TEXT("Factory.TargetSkeletonTypeMismatch");
     const FName NodeClassLoadFailed = TEXT("Factory.NodeClassLoadFailed");
@@ -112,6 +123,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
     const FName K2ConnectionFailed = TEXT("Factory.K2ConnectionFailed");
     const FName TransitionResultNotFound = TEXT("Factory.TransitionResultNotFound");
     const FName InvalidTransitionBoolProperty = TEXT("Factory.InvalidTransitionBoolProperty");
+    const FName InvalidGraphProperty = TEXT("Factory.InvalidGraphProperty");
     const FName BlueprintCompileFailed = TEXT("Factory.BlueprintCompileFailed");
     const FName SavePackageFailed = TEXT("Factory.SavePackageFailed");
     const FName EnumTypeLoadFailed = TEXT("Factory.EnumTypeLoadFailed");
@@ -136,8 +148,12 @@ namespace SekiroAnimBlueprintFactoryPrivate
         UClass* ParentClass = nullptr;
         USkeleton* TargetSkeleton = nullptr;
         TMap<FString, UClass*> NodeClasses;
+        TMap<FString, UClass*> NodeInstanceClasses;
+        TMap<FString, UClass*> NodeInterfaceClasses;
+        TArray<UClass*> ImplementedInterfaceClasses;
         TMap<FString, UAnimSequenceBase*> SequenceAssets;
         TMap<FName, UEnum*> VariableEnums;
+        TSet<FName> InheritedVariableNames; // 由 Blueprint 父类提供、子类不得重复创建的 IR 变量
         TMap<FString, UEnum*> NodeEnums;
         TMap<FString, TArray<FFootPlacemenLegDefinition>> FootPlacementLegDefinitions;
         TMap<FString, TArray<FAnimLegIKDefinition>> LegIKDefinitions;
@@ -875,79 +891,111 @@ namespace SekiroAnimBlueprintFactoryPrivate
         OutData.Blueprint = Blueprint;
         USekiroAnimGraphIRLibrary::Canonicalize(OutData.Blueprint);
 
-        if (OutData.Blueprint.Layers.Num() != 1)
+        if (OutData.Blueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimBlueprint)
         {
-            AddError(
-                OutDiagnostics,
-                UnsupportedLayerCount,
-                FString::Printf(
-                    TEXT("Native NodeFactory currently supports exactly one main AnimGraph layer; received %d."),
-                    OutData.Blueprint.Layers.Num()),
-                OutData.Blueprint.SourceModule,
-                OutData.Blueprint.SourceLocation);
-            return false;
-        }
-
-        OutData.ParentClass = OutData.Blueprint.ParentAnimInstanceClass.TryLoadClass<UAnimInstance>();
-        if (OutData.ParentClass == nullptr)
-        {
-            AddError(
-                OutDiagnostics,
-                ParentClassLoadFailed,
-                FString::Printf(
-                    TEXT("Failed to load ParentAnimInstanceClass '%s'."),
-                    *OutData.Blueprint.ParentAnimInstanceClass.ToString()),
-                TEXT("Blueprint.ParentAnimInstanceClass"),
-                OutData.Blueprint.SourceLocation);
-        }
-        else if (!OutData.ParentClass->IsChildOf(UAnimInstance::StaticClass()))
-        {
-            AddError(
-                OutDiagnostics,
-                ParentClassTypeMismatch,
-                FString::Printf(
-                    TEXT("Parent class '%s' is not derived from UAnimInstance."),
-                    *OutData.ParentClass->GetPathName()),
-                TEXT("Blueprint.ParentAnimInstanceClass"),
-                OutData.Blueprint.SourceLocation);
-        }
-        else if (Cast<UAnimBlueprintGeneratedClass>(OutData.ParentClass) != nullptr)
-        {
-            AddError(
-                OutDiagnostics,
-                UnsupportedParentBlueprintClass,
-                TEXT("This stage only supports native UAnimInstance parent classes with one owned main AnimGraph."),
-                TEXT("Blueprint.ParentAnimInstanceClass"),
-                OutData.Blueprint.SourceLocation);
-        }
-
-        UObject* SkeletonObject = OutData.Blueprint.TargetSkeleton.ResolveObject();
-        if (SkeletonObject == nullptr) SkeletonObject = OutData.Blueprint.TargetSkeleton.TryLoad();
-        if (SkeletonObject == nullptr)
-        {
-            AddError(
-                OutDiagnostics,
-                TargetSkeletonLoadFailed,
-                FString::Printf(
-                    TEXT("Failed to load TargetSkeleton '%s'."),
-                    *OutData.Blueprint.TargetSkeleton.ToString()),
-                TEXT("Blueprint.TargetSkeleton"),
-                OutData.Blueprint.SourceLocation);
-        }
-        else
-        {
-            OutData.TargetSkeleton = Cast<USkeleton>(SkeletonObject);
-            if (OutData.TargetSkeleton == nullptr)
+            OutData.ParentClass = OutData.Blueprint.ParentAnimInstanceClass.TryLoadClass<UAnimInstance>();
+            if (OutData.ParentClass == nullptr)
             {
                 AddError(
                     OutDiagnostics,
-                    TargetSkeletonTypeMismatch,
+                    ParentClassLoadFailed,
                     FString::Printf(
-                        TEXT("TargetSkeleton path resolved to '%s', not USkeleton."),
-                        *SkeletonObject->GetClass()->GetPathName()),
+                        TEXT("Failed to load ParentAnimInstanceClass '%s'."),
+                        *OutData.Blueprint.ParentAnimInstanceClass.ToString()),
+                    TEXT("Blueprint.ParentAnimInstanceClass"),
+                    OutData.Blueprint.SourceLocation);
+            }
+            else if (!OutData.ParentClass->IsChildOf(UAnimInstance::StaticClass()))
+            {
+                AddError(
+                    OutDiagnostics,
+                    ParentClassTypeMismatch,
+                    FString::Printf(
+                        TEXT("Parent class '%s' is not derived from UAnimInstance."),
+                        *OutData.ParentClass->GetPathName()),
+                    TEXT("Blueprint.ParentAnimInstanceClass"),
+                    OutData.Blueprint.SourceLocation);
+            }
+
+            UObject* SkeletonObject = OutData.Blueprint.TargetSkeleton.ResolveObject();
+            if (SkeletonObject == nullptr) SkeletonObject = OutData.Blueprint.TargetSkeleton.TryLoad();
+            if (SkeletonObject == nullptr)
+            {
+                AddError(
+                    OutDiagnostics,
+                    TargetSkeletonLoadFailed,
+                    FString::Printf(
+                        TEXT("Failed to load TargetSkeleton '%s'."),
+                        *OutData.Blueprint.TargetSkeleton.ToString()),
                     TEXT("Blueprint.TargetSkeleton"),
                     OutData.Blueprint.SourceLocation);
             }
+            else
+            {
+                OutData.TargetSkeleton = Cast<USkeleton>(SkeletonObject);
+                if (OutData.TargetSkeleton == nullptr)
+                {
+                    AddError(
+                        OutDiagnostics,
+                        TargetSkeletonTypeMismatch,
+                        FString::Printf(
+                            TEXT("TargetSkeleton path resolved to '%s', not USkeleton."),
+                            *SkeletonObject->GetClass()->GetPathName()),
+                        TEXT("Blueprint.TargetSkeleton"),
+                        OutData.Blueprint.SourceLocation);
+                }
+            }
+        }
+
+        for (const FSoftClassPath& InterfacePath : OutData.Blueprint.ImplementedInterfaces)
+        {
+            UClass* InterfaceClass = InterfacePath.TryLoadClass<UAnimLayerInterface>();
+            if (InterfaceClass == nullptr)
+            {
+                AddError(
+                    OutDiagnostics,
+                    InterfaceClassLoadFailed,
+                    FString::Printf(
+                        TEXT("Failed to load Animation Layer Interface '%s'."),
+                        *InterfacePath.ToString()),
+                    InterfacePath.ToString(),
+                    OutData.Blueprint.SourceLocation);
+            }
+            else if (!InterfaceClass->IsChildOf(UAnimLayerInterface::StaticClass()))
+            {
+                AddError(
+                    OutDiagnostics,
+                    InterfaceClassTypeMismatch,
+                    FString::Printf(
+                        TEXT("Class '%s' is not an Animation Layer Interface."),
+                        *InterfaceClass->GetPathName()),
+                    InterfacePath.ToString(),
+                    OutData.Blueprint.SourceLocation);
+            }
+            else
+            {
+                OutData.ImplementedInterfaceClasses.Add(InterfaceClass);
+            }
+        }
+
+        const UAnimBlueprintGeneratedClass* ParentAnimBlueprintClass =
+            Cast<UAnimBlueprintGeneratedClass>(OutData.ParentClass);
+        USkeleton* ParentSkeleton = ParentAnimBlueprintClass != nullptr
+            ? ParentAnimBlueprintClass->GetTargetSkeleton()
+            : nullptr;
+        if (ParentSkeleton != nullptr
+            && OutData.TargetSkeleton != nullptr
+            && ParentSkeleton != OutData.TargetSkeleton)
+        {
+            AddError(
+                OutDiagnostics,
+                ParentSkeletonMismatch,
+                FString::Printf(
+                    TEXT("TargetSkeleton '%s' must match Blueprint parent skeleton '%s'."),
+                    *OutData.TargetSkeleton->GetPathName(),
+                    *ParentSkeleton->GetPathName()),
+                TEXT("Blueprint.TargetSkeleton"),
+                OutData.Blueprint.SourceLocation);
         }
 
         for (const FSekiroAnimIRVariable& Variable : OutData.Blueprint.Variables)
@@ -962,6 +1010,65 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 continue;
             }
             OutData.VariableEnums.Add(Variable.Name, EnumType);
+        }
+
+        if (ParentAnimBlueprintClass != nullptr)
+        {
+            for (const FSekiroAnimIRVariable& Variable : OutData.Blueprint.Variables)
+            {
+                FProperty* ParentProperty =
+                    FindFProperty<FProperty>(OutData.ParentClass, Variable.Name);
+                if (ParentProperty == nullptr) continue;
+
+                bool bTypeMatches = false;
+                if (Variable.DataType == TEXT("Bool"))
+                {
+                    bTypeMatches = CastField<FBoolProperty>(ParentProperty) != nullptr;
+                }
+                else if (Variable.DataType == TEXT("Float"))
+                {
+                    bTypeMatches = CastField<FFloatProperty>(ParentProperty) != nullptr;
+                }
+                else if (Variable.DataType == TEXT("Byte"))
+                {
+                    const FByteProperty* ByteProperty =
+                        CastField<FByteProperty>(ParentProperty);
+                    bTypeMatches = ByteProperty != nullptr && ByteProperty->Enum == nullptr;
+                }
+                else if (Variable.DataType == TEXT("Enum"))
+                {
+                    UEnum* ExpectedEnum = OutData.VariableEnums.FindRef(Variable.Name);
+                    const FByteProperty* ByteProperty =
+                        CastField<FByteProperty>(ParentProperty);
+                    const FEnumProperty* EnumProperty =
+                        CastField<FEnumProperty>(ParentProperty);
+                    UEnum* ParentEnum = ByteProperty != nullptr
+                        ? ByteProperty->Enum
+                        : EnumProperty != nullptr
+                            ? EnumProperty->GetEnum()
+                            : nullptr;
+                    bTypeMatches = ExpectedEnum != nullptr && ParentEnum == ExpectedEnum;
+                }
+
+                if (!bTypeMatches
+                    || !ParentProperty->HasAnyPropertyFlags(CPF_BlueprintVisible))
+                {
+                    AddError(
+                        OutDiagnostics,
+                        InheritedVariableTypeMismatch,
+                        FString::Printf(
+                            TEXT("IR variable '%s' declares type '%s', but Blueprint parent property '%s' has reflected type '%s' or is not Blueprint-visible."),
+                            *Variable.Name.ToString(),
+                            *Variable.DataType.ToString(),
+                            *ParentProperty->GetName(),
+                            *ParentProperty->GetCPPType()),
+                        Variable.Name.ToString(),
+                        Variable.SourceLocation);
+                    continue;
+                }
+
+                OutData.InheritedVariableNames.Add(Variable.Name);
+            }
         }
 
         for (const FSekiroAnimIRLayer& BlueprintLayer : OutData.Blueprint.Layers)
@@ -1025,49 +1132,91 @@ namespace SekiroAnimBlueprintFactoryPrivate
             }
         }
 
-        const FSekiroAnimIRLayer& Layer = OutData.Blueprint.Layers[0];
-        for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+        for (const FSekiroAnimIRLayer& Layer : OutData.Blueprint.Layers)
         {
-            for (const FSekiroAnimIRNode& Node : Graph.Nodes)
+            for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
             {
-                if (!OutData.NodeClasses.Contains(Node.Id))
+                for (const FSekiroAnimIRNode& Node : Graph.Nodes)
                 {
-                    const FSekiroAnimIRNodeContract* Contract = FSekiroAnimGraphNodeRegistry::Find(Node.NodeType);
-                    UClass* NodeClass = !Node.EditorNodeClass.IsNull()
-                        ? Node.EditorNodeClass.TryLoadClass<UEdGraphNode>()
-                        : Contract != nullptr
-                            ? Contract->EditorNodeClassPath.TryLoadClass<UEdGraphNode>()
-                            : nullptr;
-                    if (NodeClass == nullptr)
+                    if (!OutData.NodeClasses.Contains(Node.Id))
                     {
-                        AddError(
-                            OutDiagnostics,
-                            NodeClassLoadFailed,
-                            FString::Printf(
-                                TEXT("Failed to load editor node class '%s' for NodeType '%s'."),
-                                *Node.EditorNodeClass.ToString(),
-                                *Node.NodeType.ToString()),
-                            Node.Id,
-                            Node.SourceLocation);
+                        const FSekiroAnimIRNodeContract* Contract =
+                            FSekiroAnimGraphNodeRegistry::Find(Node.NodeType);
+                        UClass* NodeClass = !Node.EditorNodeClass.IsNull()
+                            ? Node.EditorNodeClass.TryLoadClass<UEdGraphNode>()
+                            : Contract != nullptr
+                                ? Contract->EditorNodeClassPath.TryLoadClass<UEdGraphNode>()
+                                : nullptr;
+                        if (NodeClass == nullptr)
+                        {
+                            AddError(
+                                OutDiagnostics,
+                                NodeClassLoadFailed,
+                                FString::Printf(
+                                    TEXT("Failed to load editor node class '%s' for NodeType '%s'."),
+                                    *Node.EditorNodeClass.ToString(),
+                                    *Node.NodeType.ToString()),
+                                Node.Id,
+                                Node.SourceLocation);
+                        }
+                        else if (!IsSupportedNodeClass(NodeClass))
+                        {
+                            AddError(
+                                OutDiagnostics,
+                                UnsupportedRegisteredNodeClass,
+                                FString::Printf(
+                                    TEXT("Registered editor node class '%s' is not supported by this NodeFactory stage."),
+                                    *NodeClass->GetPathName()),
+                                Node.Id,
+                                Node.SourceLocation);
+                        }
+                        else if (NodeClass->IsChildOf(UK2Node_VariableGet::StaticClass()))
+                        {
+                            const FSekiroAnimIRProperty* PropertyName =
+                                FindProperty(Node, TEXT("PropertyName"));
+                            const FName ReferencedName = PropertyName != nullptr
+                                ? PropertyName->Value.NameValue
+                                : NAME_None;
+                            const FSekiroAnimIRVariable* DeclaredVariable =
+                                OutData.Blueprint.Variables.FindByPredicate(
+                                    [ReferencedName](const FSekiroAnimIRVariable& Variable)
+                                    {
+                                        return Variable.Name == ReferencedName;
+                                    });
+                            FProperty* ParentProperty = OutData.ParentClass != nullptr
+                                ? FindFProperty<FProperty>(OutData.ParentClass, ReferencedName)
+                                : nullptr;
+                            if (DeclaredVariable == nullptr && ParentProperty == nullptr)
+                            {
+                                AddError(
+                                    OutDiagnostics,
+                                    InvalidGraphProperty,
+                                    FString::Printf(
+                                        TEXT("Graph Property Getter '%s' was not found on the AnimInstance parent class or generated IR variables."),
+                                        *ReferencedName.ToString()),
+                                    Node.Id,
+                                    Node.SourceLocation);
+                            }
+                            else if (DeclaredVariable == nullptr
+                                && !ParentProperty->HasAnyPropertyFlags(CPF_BlueprintVisible))
+                            {
+                                AddError(
+                                    OutDiagnostics,
+                                    InvalidGraphProperty,
+                                    FString::Printf(
+                                        TEXT("Graph Property Getter '%s' must reference a Blueprint-visible parent property."),
+                                        *ReferencedName.ToString()),
+                                    Node.Id,
+                                    Node.SourceLocation);
+                            }
+                        }
+                        if (NodeClass != nullptr && IsSupportedNodeClass(NodeClass))
+                        {
+                            OutData.NodeClasses.Add(Node.Id, NodeClass);
+                        }
                     }
-                    else if (!IsSupportedNodeClass(NodeClass))
-                    {
-                        AddError(
-                            OutDiagnostics,
-                            UnsupportedRegisteredNodeClass,
-                            FString::Printf(
-                                TEXT("Registered editor node class '%s' is not supported by this NodeFactory stage."),
-                                *NodeClass->GetPathName()),
-                            Node.Id,
-                            Node.SourceLocation);
-                    }
-                    else
-                    {
-                        OutData.NodeClasses.Add(Node.Id, NodeClass);
-                    }
-                }
 
-                UClass* const* RegisteredClass = OutData.NodeClasses.Find(Node.Id);
+                    UClass* const* RegisteredClass = OutData.NodeClasses.Find(Node.Id);
                 if (RegisteredClass != nullptr && *RegisteredClass == UAnimGraphNode_BlendListByEnum::StaticClass())
                 {
                     const FSekiroAnimIRProperty* EnumTypeProperty = FindProperty(Node, TEXT("EnumType"));
@@ -1417,6 +1566,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 }
             }
         }
+        }
 
         return !HasErrors(OutDiagnostics);
     }
@@ -1532,12 +1682,17 @@ namespace SekiroAnimBlueprintFactoryPrivate
             : Preflight(InPreflight)
             , Blueprint(InBlueprint)
             , Diagnostics(InDiagnostics)
-            , Layer(InPreflight.Blueprint.Layers[0])
         {
-            for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+            for (const FSekiroAnimIRLayer& Layer : InPreflight.Blueprint.Layers)
             {
-                GraphsById.Add(Graph.Id, &Graph);
-                for (const FSekiroAnimIRNode& Node : Graph.Nodes) NodesById.Add(Node.Id, &Node);
+                for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+                {
+                    GraphsById.Add(Graph.Id, &Graph);
+                    for (const FSekiroAnimIRNode& Node : Graph.Nodes)
+                    {
+                        NodesById.Add(Node.Id, &Node);
+                    }
+                }
             }
         }
 
@@ -1549,11 +1704,48 @@ namespace SekiroAnimBlueprintFactoryPrivate
          */
         bool Build()
         {
+            if (Preflight.Blueprint.BlueprintKind
+                == ESekiroAnimIRBlueprintKind::AnimationLayerInterface)
+            {
+                return BuildAnimationLayerInterface();
+            }
+
+            if (Preflight.Blueprint.Layers.IsEmpty())
+            {
+                AddError(
+                    Diagnostics,
+                    MainAnimGraphNotFound,
+                    TEXT("AnimBlueprint IR must contain a main AnimGraph layer."),
+                    Preflight.Blueprint.SourceModule,
+                    Preflight.Blueprint.SourceLocation);
+                return false;
+            }
+
+            for (UClass* InterfaceClass : Preflight.ImplementedInterfaceClasses)
+            {
+                if (InterfaceClass == nullptr
+                    || !FBlueprintEditorUtils::ImplementNewInterface(
+                        &Blueprint,
+                        InterfaceClass->GetClassPathName()))
+                {
+                    AddError(
+                        Diagnostics,
+                        InterfaceClassTypeMismatch,
+                        TEXT("Failed to implement an Animation Layer Interface on the generated AnimBlueprint."),
+                        InterfaceClass != nullptr ? InterfaceClass->GetPathName() : FString(),
+                        Preflight.Blueprint.SourceLocation);
+                    return false;
+                }
+            }
+
+            const FSekiroAnimIRLayer& MainLayer = Preflight.Blueprint.Layers[0];
             UAnimationGraph* MainGraph = nullptr;
             for (UEdGraph* FunctionGraph : Blueprint.FunctionGraphs)
             {
                 UAnimationGraph* Candidate = Cast<UAnimationGraph>(FunctionGraph);
-                if (Candidate != nullptr && !Candidate->IsA<UAnimationStateGraph>())
+                if (Candidate != nullptr
+                    && !Candidate->IsA<UAnimationStateGraph>()
+                    && Candidate->GetFName() == UEdGraphSchema_K2::GN_AnimGraph)
                 {
                     MainGraph = Candidate;
                     break;
@@ -1566,29 +1758,237 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     Diagnostics,
                     MainAnimGraphNotFound,
                     TEXT("UAnimBlueprintFactory did not create an owned main AnimGraph."),
-                    Layer.RootGraphId,
-                    Layer.SourceLocation);
+                    MainLayer.RootGraphId,
+                    MainLayer.SourceLocation);
                 return false;
             }
 
-            const FSekiroAnimIRGraph* RootGraph = FindGraph(Layer.RootGraphId);
+            const FSekiroAnimIRGraph* RootGraph = FindGraph(MainLayer.RootGraphId);
             if (RootGraph == nullptr)
             {
                 AddError(
                     Diagnostics,
                     NativeGraphMissing,
                     TEXT("Layer root Graph could not be found after validation."),
-                    Layer.RootGraphId,
-                    Layer.SourceLocation);
+                    MainLayer.RootGraphId,
+                    MainLayer.SourceLocation);
                 return false;
             }
 
             if (!BuildMemberVariables()) return false;
+            CurrentLayer = &MainLayer;
             if (!BuildPoseGraph(*RootGraph, *MainGraph)) return false;
+            for (int32 LayerIndex = 1; LayerIndex < Preflight.Blueprint.Layers.Num(); ++LayerIndex)
+            {
+                if (!BuildAnimationLayer(Preflight.Blueprint.Layers[LayerIndex])) return false;
+            }
+            CurrentLayer = nullptr;
             return BuildEventGraph();
         }
 
     private:
+        /** 将接口 IR 的每个 Layer 声明物化为 UE 原生 Animation Layer Interface FunctionGraph。 */
+        bool BuildAnimationLayerInterface()
+        {
+            for (const FSekiroAnimIRLayer& Layer : Preflight.Blueprint.Layers)
+            {
+                const FName FunctionName = Layer.FunctionName.IsNone()
+                    ? FName(*Layer.Name)
+                    : Layer.FunctionName;
+                UAnimationGraph* FunctionGraph = Cast<UAnimationGraph>(
+                    FBlueprintEditorUtils::CreateNewGraph(
+                        &Blueprint,
+                        FunctionName,
+                        UAnimationGraph::StaticClass(),
+                        UAnimationGraphSchema::StaticClass()));
+                if (FunctionGraph == nullptr)
+                {
+                    AddError(
+                        Diagnostics,
+                        NativeGraphMissing,
+                        TEXT("Failed to create Animation Layer Interface graph."),
+                        Layer.Id,
+                        Layer.SourceLocation);
+                    return false;
+                }
+                FBlueprintEditorUtils::AddFunctionGraph<UFunction>(
+                    &Blueprint,
+                    FunctionGraph,
+                    true,
+                    nullptr);
+                if (!BuildLayerSignatureNodes(Layer, *FunctionGraph, nullptr)) return false;
+            }
+            return true;
+        }
+
+        /** 创建或定位一个动画层 FunctionGraph，并把对应 IR Pose 图物化为函数实现。 */
+        bool BuildAnimationLayer(const FSekiroAnimIRLayer& Layer)
+        {
+            const FName FunctionName = Layer.FunctionName.IsNone()
+                ? FName(*Layer.Name)
+                : Layer.FunctionName;
+            UFunction* SignatureFunction = nullptr;
+            UClass* SignatureClass = nullptr;
+            if (!Layer.InterfaceClass.IsNull())
+            {
+                SignatureClass = Layer.InterfaceClass.TryLoadClass<UAnimLayerInterface>();
+            }
+            else if (Layer.bOverride && Preflight.ParentClass != nullptr)
+            {
+                SignatureClass = Preflight.ParentClass;
+            }
+            if (SignatureClass != nullptr)
+            {
+                SignatureFunction = SignatureClass->FindFunctionByName(FunctionName);
+            }
+
+            UAnimationGraph* FunctionGraph = nullptr;
+            TArray<UEdGraph*> AllGraphs;
+            Blueprint.GetAllGraphs(AllGraphs);
+            for (UEdGraph* Graph : AllGraphs)
+            {
+                if (Graph != nullptr && Graph->GetFName() == FunctionName)
+                {
+                    FunctionGraph = Cast<UAnimationGraph>(Graph);
+                    break;
+                }
+            }
+            if (FunctionGraph == nullptr)
+            {
+                FunctionGraph = Cast<UAnimationGraph>(FBlueprintEditorUtils::CreateNewGraph(
+                    &Blueprint,
+                    FunctionName,
+                    UAnimationGraph::StaticClass(),
+                    UAnimationGraphSchema::StaticClass()));
+                if (FunctionGraph != nullptr)
+                {
+                    FBlueprintEditorUtils::AddFunctionGraph(
+                        &Blueprint,
+                        FunctionGraph,
+                        !Layer.bOverride,
+                        SignatureFunction);
+                }
+            }
+            if (FunctionGraph == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    NativeGraphMissing,
+                    TEXT("Failed to create or locate Animation Layer graph."),
+                    Layer.Id,
+                    Layer.SourceLocation);
+                return false;
+            }
+
+            const TArray<UEdGraphNode*> ExistingNodes = FunctionGraph->Nodes;
+            for (UEdGraphNode* ExistingNode : ExistingNodes)
+            {
+                if (ExistingNode == nullptr || ExistingNode->IsA<UAnimGraphNode_Root>()) continue;
+                FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+            }
+            if (!BuildLayerSignatureNodes(Layer, *FunctionGraph, SignatureFunction)) return false;
+            const FSekiroAnimIRGraph* RootGraph = FindGraph(Layer.RootGraphId);
+            if (RootGraph == nullptr) return false;
+            CurrentLayer = &Layer;
+            return BuildPoseGraph(*RootGraph, *FunctionGraph);
+        }
+
+        /** 按 IR 或已有 UFunction 签名创建动画层的原生 Linked Input Pose 节点。 */
+        bool BuildLayerSignatureNodes(
+            const FSekiroAnimIRLayer& Layer,
+            UAnimationGraph& FunctionGraph,
+            UFunction* SignatureFunction)
+        {
+            if (FunctionGraph.Nodes.IsEmpty())
+            {
+                FunctionGraph.GetSchema()->CreateDefaultNodesForGraph(FunctionGraph);
+            }
+            if (SignatureFunction != nullptr)
+            {
+                UAnimationGraphSchema::ConformAnimGraphToInterface(
+                    &Blueprint,
+                    FunctionGraph,
+                    SignatureFunction);
+                return true;
+            }
+
+            TArray<const FSekiroAnimIRFunctionParameter*> PoseParameters;
+            TArray<const FSekiroAnimIRFunctionParameter*> ValueParameters;
+            for (const FSekiroAnimIRFunctionParameter& Parameter : Layer.Parameters)
+            {
+                if (Parameter.bIsPose) PoseParameters.Add(&Parameter);
+                else ValueParameters.Add(&Parameter);
+            }
+            if (PoseParameters.IsEmpty() && !ValueParameters.IsEmpty())
+            {
+                AddError(
+                    Diagnostics,
+                    LayerSignatureMismatch,
+                    TEXT("An Animation Layer with scalar parameters must declare at least one Pose input."),
+                    Layer.Id,
+                    Layer.SourceLocation);
+                return false;
+            }
+
+            for (int32 PoseIndex = 0; PoseIndex < PoseParameters.Num(); ++PoseIndex)
+            {
+                FGraphNodeCreator<UAnimGraphNode_LinkedInputPose> NodeCreator(FunctionGraph);
+                UAnimGraphNode_LinkedInputPose* InputNode = NodeCreator.CreateNode(false);
+                if (InputNode == nullptr) return false;
+                InputNode->Node.Name = PoseParameters[PoseIndex]->Name;
+                InputNode->InputPoseIndex = PoseIndex;
+                if (PoseIndex == 0)
+                {
+                    for (const FSekiroAnimIRFunctionParameter* ValueParameter : ValueParameters)
+                    {
+                        FAnimBlueprintFunctionPinInfo& PinInfo =
+                            InputNode->Inputs.AddDefaulted_GetRef();
+                        PinInfo.Name = ValueParameter->Name;
+                        if (ValueParameter->DataType == TEXT("Bool"))
+                        {
+                            PinInfo.Type.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+                        }
+                        else if (ValueParameter->DataType == TEXT("Float"))
+                        {
+                            PinInfo.Type.PinCategory = UEdGraphSchema_K2::PC_Real;
+                            PinInfo.Type.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+                        }
+                        else if (ValueParameter->DataType == TEXT("Integer"))
+                        {
+                            PinInfo.Type.PinCategory = UEdGraphSchema_K2::PC_Int;
+                        }
+                        else if (ValueParameter->DataType == TEXT("Name"))
+                        {
+                            PinInfo.Type.PinCategory = UEdGraphSchema_K2::PC_Name;
+                        }
+                        else if (ValueParameter->DataType == TEXT("String"))
+                        {
+                            PinInfo.Type.PinCategory = UEdGraphSchema_K2::PC_String;
+                        }
+                        else
+                        {
+                            AddError(
+                                Diagnostics,
+                                LayerSignatureMismatch,
+                                FString::Printf(
+                                    TEXT("Unsupported Animation Layer scalar parameter type '%s'."),
+                                    *ValueParameter->DataType.ToString()),
+                                Layer.Id,
+                                ValueParameter->SourceLocation);
+                            return false;
+                        }
+                    }
+                }
+                NodeCreator.Finalize();
+                InputNode->NodeGuid = MakeStableGuid(
+                    TEXT("Node"),
+                    Layer.Id + TEXT(".Input.") + InputNode->Node.Name.ToString());
+                InputNode->NodePosX = -400;
+                InputNode->NodePosY = PoseIndex * 180;
+            }
+            return true;
+        }
+
         /**
          * 将 IR Variable 生成成 AnimBlueprint Member Variable，并写入类型化默认值与 Transient 标记。
          * 必须在游戏线程、任何 Graph 编译前调用；Enum 对象来自 Preflight，不在此函数加载资产。
@@ -1599,6 +1999,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
         {
             for (const FSekiroAnimIRVariable& Variable : Preflight.Blueprint.Variables)
             {
+                if (Preflight.InheritedVariableNames.Contains(Variable.Name)) continue;
+
                 FEdGraphPinType PinType;
                 FString DefaultValue;
                 if (Variable.DataType == TEXT("Bool"))
@@ -2276,6 +2678,187 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
                 AnimNode->ReconstructNode();
                 NativeNodes.Add(Node.Id, AnimNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_LinkedInputPose::StaticClass())
+            {
+                const FSekiroAnimIRProperty* PoseNameProperty =
+                    FindProperty(Node, TEXT("PoseName"));
+                if (PoseNameProperty == nullptr) return ReportNodeCreationFailure(Node);
+
+                UAnimGraphNode_LinkedInputPose* LinkedInputNode = nullptr;
+                TArray<UAnimGraphNode_LinkedInputPose*> ExistingInputs;
+                NativeGraph.GetNodesOfClass(ExistingInputs);
+                for (UAnimGraphNode_LinkedInputPose* ExistingInput : ExistingInputs)
+                {
+                    if (ExistingInput != nullptr
+                        && ExistingInput->Node.Name == PoseNameProperty->Value.NameValue)
+                    {
+                        LinkedInputNode = ExistingInput;
+                        break;
+                    }
+                }
+                if (LinkedInputNode == nullptr)
+                {
+                    FGraphNodeCreator<UAnimGraphNode_LinkedInputPose> NodeCreator(NativeGraph);
+                    LinkedInputNode = NodeCreator.CreateNode(false);
+                    if (LinkedInputNode == nullptr) return ReportNodeCreationFailure(Node);
+                    LinkedInputNode->Node.Name = PoseNameProperty->Value.NameValue;
+                    if (CurrentLayer != nullptr)
+                    {
+                        bool bFirstPose = true;
+                        for (const FSekiroAnimIRFunctionParameter& Parameter : CurrentLayer->Parameters)
+                        {
+                            if (Parameter.bIsPose)
+                            {
+                                if (Parameter.Name == LinkedInputNode->Node.Name) break;
+                                bFirstPose = false;
+                            }
+                        }
+                        if (bFirstPose)
+                        {
+                            for (const FSekiroAnimIRFunctionParameter& Parameter : CurrentLayer->Parameters)
+                            {
+                                if (Parameter.bIsPose) continue;
+                                FAnimBlueprintFunctionPinInfo& Input =
+                                    LinkedInputNode->Inputs.AddDefaulted_GetRef();
+                                Input.Name = Parameter.Name;
+                                if (Parameter.DataType == TEXT("Bool"))
+                                {
+                                    Input.Type.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+                                }
+                                else if (Parameter.DataType == TEXT("Float"))
+                                {
+                                    Input.Type.PinCategory = UEdGraphSchema_K2::PC_Real;
+                                    Input.Type.PinSubCategory = UEdGraphSchema_K2::PC_Float;
+                                }
+                                else if (Parameter.DataType == TEXT("Integer"))
+                                {
+                                    Input.Type.PinCategory = UEdGraphSchema_K2::PC_Int;
+                                }
+                                else if (Parameter.DataType == TEXT("Name"))
+                                {
+                                    Input.Type.PinCategory = UEdGraphSchema_K2::PC_Name;
+                                }
+                                else if (Parameter.DataType == TEXT("String"))
+                                {
+                                    Input.Type.PinCategory = UEdGraphSchema_K2::PC_String;
+                                }
+                            }
+                        }
+                    }
+                    NodeCreator.Finalize();
+                }
+                LinkedInputNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
+                LinkedInputNode->NodePosX = PositionX;
+                LinkedInputNode->NodePosY = PositionY;
+                NativeNodes.Add(Node.Id, LinkedInputNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_LinkedAnimGraph::StaticClass())
+            {
+                const FSekiroAnimIRProperty* InstanceClassProperty =
+                    FindProperty(Node, TEXT("InstanceClass"));
+                UClass* InstanceClass = InstanceClassProperty != nullptr
+                    ? InstanceClassProperty->Value.SoftClassPathValue.TryLoadClass<UAnimInstance>()
+                    : nullptr;
+                if (InstanceClass == nullptr) return ReportNodeCreationFailure(Node);
+
+                FGraphNodeCreator<UAnimGraphNode_LinkedAnimGraph> NodeCreator(NativeGraph);
+                UAnimGraphNode_LinkedAnimGraph* LinkedGraphNode = NodeCreator.CreateNode(false);
+                if (LinkedGraphNode == nullptr) return ReportNodeCreationFailure(Node);
+                LinkedGraphNode->Node.InstanceClass = InstanceClass;
+                const FSekiroAnimIRProperty* GraphNameProperty =
+                    FindProperty(Node, TEXT("GraphName"));
+                const FName GraphName = GraphNameProperty != nullptr
+                    && !GraphNameProperty->Value.NameValue.IsNone()
+                    ? GraphNameProperty->Value.NameValue
+                    : UEdGraphSchema_K2::GN_AnimGraph;
+                FStructProperty* FunctionReferenceProperty = FindFProperty<FStructProperty>(
+                    UAnimGraphNode_LinkedAnimGraphBase::StaticClass(),
+                    TEXT("FunctionReference"));
+                FMemberReference* FunctionReference = FunctionReferenceProperty != nullptr
+                    ? FunctionReferenceProperty->ContainerPtrToValuePtr<FMemberReference>(
+                        LinkedGraphNode)
+                    : nullptr;
+                if (FunctionReference == nullptr) return ReportNodeCreationFailure(Node);
+                FunctionReference->SetExternalMember(GraphName, InstanceClass);
+                NodeCreator.Finalize();
+                LinkedGraphNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
+                LinkedGraphNode->NodePosX = PositionX;
+                LinkedGraphNode->NodePosY = PositionY;
+                NativeNodes.Add(Node.Id, LinkedGraphNode);
+                return true;
+            }
+
+            if (*NodeClass == UAnimGraphNode_LinkedAnimLayer::StaticClass())
+            {
+                const FSekiroAnimIRProperty* LayerNameProperty =
+                    FindProperty(Node, TEXT("LayerName"));
+                if (LayerNameProperty == nullptr) return ReportNodeCreationFailure(Node);
+                UClass* InterfaceClass = nullptr;
+                const FSekiroAnimIRProperty* InterfaceClassProperty =
+                    FindProperty(Node, TEXT("InterfaceClass"));
+                if (InterfaceClassProperty != nullptr)
+                {
+                    InterfaceClass = InterfaceClassProperty->Value.SoftClassPathValue
+                        .TryLoadClass<UAnimLayerInterface>();
+                }
+                if (InterfaceClass == nullptr)
+                {
+                    for (UClass* CandidateInterface : Preflight.ImplementedInterfaceClasses)
+                    {
+                        if (CandidateInterface != nullptr
+                            && CandidateInterface->FindFunctionByName(
+                                LayerNameProperty->Value.NameValue) != nullptr)
+                        {
+                            InterfaceClass = CandidateInterface;
+                            break;
+                        }
+                    }
+                }
+
+                FGraphNodeCreator<UAnimGraphNode_LinkedAnimLayer> NodeCreator(NativeGraph);
+                UAnimGraphNode_LinkedAnimLayer* LinkedLayerNode = NodeCreator.CreateNode(false);
+                if (LinkedLayerNode == nullptr) return ReportNodeCreationFailure(Node);
+                LinkedLayerNode->Node.Interface = InterfaceClass;
+                const FSekiroAnimIRProperty* InstanceClassProperty =
+                    FindProperty(Node, TEXT("InstanceClass"));
+                if (InstanceClassProperty != nullptr)
+                {
+                    LinkedLayerNode->Node.InstanceClass =
+                        InstanceClassProperty->Value.SoftClassPathValue.TryLoadClass<UAnimInstance>();
+                }
+                LinkedLayerNode->Node.Layer = LayerNameProperty->Value.NameValue;
+                FStructProperty* FunctionReferenceProperty = FindFProperty<FStructProperty>(
+                    UAnimGraphNode_LinkedAnimGraphBase::StaticClass(),
+                    TEXT("FunctionReference"));
+                FMemberReference* FunctionReference = FunctionReferenceProperty != nullptr
+                    ? FunctionReferenceProperty->ContainerPtrToValuePtr<FMemberReference>(
+                        LinkedLayerNode)
+                    : nullptr;
+                if (FunctionReference == nullptr) return ReportNodeCreationFailure(Node);
+                if (InterfaceClass != nullptr)
+                {
+                    FunctionReference->SetExternalMember(
+                        LayerNameProperty->Value.NameValue,
+                        InterfaceClass);
+                    LinkedLayerNode->InterfaceGuid =
+                        FBlueprintEditorUtils::FindInterfaceGraphGuid(
+                            LayerNameProperty->Value.NameValue,
+                            InterfaceClass);
+                }
+                else
+                {
+                    FunctionReference->SetSelfMember(LayerNameProperty->Value.NameValue);
+                }
+                NodeCreator.Finalize();
+                LinkedLayerNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
+                LinkedLayerNode->NodePosX = PositionX;
+                LinkedLayerNode->NodePosY = PositionY;
+                NativeNodes.Add(Node.Id, LinkedLayerNode);
                 return true;
             }
 
@@ -4315,6 +4898,15 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 if (IRPinName == TEXT("BlendPose")) NativePinName = TEXT("BlendPoses_0");
                 else if (IRPinName == TEXT("BlendWeight")) NativePinName = TEXT("BlendWeights_0");
             }
+            else if ((*IRNode)->NodeType == SekiroAnimGraphIRNames::LinkedInputPoseNode)
+            {
+                const FSekiroAnimIRProperty* PoseName = FindProperty(**IRNode, TEXT("PoseName"));
+                if (PoseName != nullptr
+                    && IRPinName == PoseName->Value.NameValue.ToString())
+                {
+                    NativePinName = TEXT("Pose");
+                }
+            }
             UEdGraphPin* Pin = NativeNode.FindPin(NativePinName, Direction);
             if (Pin == nullptr && IRPinName == TEXT("ActiveValue"))
             {
@@ -4326,7 +4918,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
         const FPreflightData& Preflight;
         UAnimBlueprint& Blueprint;
         TArray<FSekiroAnimIRDiagnostic>& Diagnostics;
-        const FSekiroAnimIRLayer& Layer;
+        const FSekiroAnimIRLayer* CurrentLayer = nullptr;
         TMap<FString, const FSekiroAnimIRGraph*> GraphsById;
         TMap<FString, const FSekiroAnimIRNode*> NodesById;
         TMap<FString, UEdGraph*> NativeGraphs;
@@ -4424,6 +5016,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
      * 必须在游戏线程且编辑器事务已开启时调用；函数不编译 Blueprint。
      *
      * @param Blueprint 待原地重建的标准动画蓝图，调用方保证其全部业务 Graph 由 Lua 管理。
+     * @param Preflight 当前规范 IR 与已解析接口，用于删除上一轮同名 Layer Graph 和接口实现。
      * @param LuaVariableNames 上一次成功生成记录的 Lua 成员变量名；其他变量不会删除。
      * @param OutDiagnostics 接收缺失原生基础图的稳定错误。
      * @param SourceLocation Lua 模块根声明位置，用于定位诊断。
@@ -4431,6 +5024,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
      */
     bool ResetLuaOwnedBlueprint(
         UAnimBlueprint& Blueprint,
+        const FPreflightData& Preflight,
         const TArray<FName>& LuaVariableNames,
         TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics,
         const FSekiroAnimIRSourceLocation& SourceLocation)
@@ -4454,6 +5048,35 @@ namespace SekiroAnimBlueprintFactoryPrivate
         EventGraph->Modify();
 
         FBlueprintEditorUtils::BulkRemoveMemberVariables(&Blueprint, LuaVariableNames);
+
+        for (const FSoftClassPath& InterfacePath : Preflight.Blueprint.ImplementedInterfaces)
+        {
+            FBlueprintEditorUtils::RemoveInterface(
+                &Blueprint,
+                InterfacePath.GetAssetPath(),
+                false);
+        }
+
+        for (int32 LayerIndex = 1; LayerIndex < Preflight.Blueprint.Layers.Num(); ++LayerIndex)
+        {
+            const FSekiroAnimIRLayer& Layer = Preflight.Blueprint.Layers[LayerIndex];
+            const FName FunctionName = Layer.FunctionName.IsNone()
+                ? FName(*Layer.Name)
+                : Layer.FunctionName;
+            TArray<UEdGraph*> AllGraphs;
+            Blueprint.GetAllGraphs(AllGraphs);
+            for (UEdGraph* Graph : AllGraphs)
+            {
+                if (Graph != nullptr && Graph->GetFName() == FunctionName)
+                {
+                    FBlueprintEditorUtils::RemoveGraph(
+                        &Blueprint,
+                        Graph,
+                        EGraphRemoveFlags::MarkTransient);
+                    break;
+                }
+            }
+        }
 
         const TArray<UEdGraphNode*> MainNodes = MainGraph->Nodes;
         for (UEdGraphNode* Node : MainNodes)
@@ -4539,6 +5162,10 @@ namespace SekiroAnimBlueprintFactoryPrivate
         TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics)
     {
         UAnimBlueprintFactory* Factory = NewObject<UAnimBlueprintFactory>(GetTransientPackage());
+        Factory->BlueprintType =
+            Preflight.Blueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimationLayerInterface
+            ? BPTYPE_Interface
+            : BPTYPE_Normal;
         Factory->ParentClass = Preflight.ParentClass;
         Factory->TargetSkeleton = Preflight.TargetSkeleton;
         Factory->bTemplate = false;
@@ -4571,6 +5198,19 @@ namespace SekiroAnimBlueprintFactoryPrivate
         {
             AnimBlueprint->SetFlags(RF_Transient);
             AnimBlueprint->ClearFlags(RF_Standalone);
+        }
+
+        if (Preflight.Blueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimBlueprint
+            && !EnsureLuaBlueprintShell(*AnimBlueprint))
+        {
+            AddError(
+                OutDiagnostics,
+                MainAnimGraphNotFound,
+                TEXT("The generated AnimBlueprint could not create an owned Lua AnimGraph shell."),
+                Preflight.Blueprint.SourceModule,
+                Preflight.Blueprint.SourceLocation);
+            DiscardCreatedBlueprint(AnimBlueprint);
+            return nullptr;
         }
 
         FNativeAnimBlueprintBuilder Builder(Preflight, *AnimBlueprint, OutDiagnostics);
@@ -4674,6 +5314,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
         bool bPrepared = ResetLuaOwnedBlueprint(
             Blueprint,
+            Preflight,
             Extension->GeneratedVariableNames,
             OutDiagnostics,
             Preflight.Blueprint.SourceLocation);
@@ -4687,6 +5328,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
             Extension->GeneratedVariableNames.Reset(Preflight.Blueprint.Variables.Num());
             for (const FSekiroAnimIRVariable& Variable : Preflight.Blueprint.Variables)
             {
+                if (Preflight.InheritedVariableNames.Contains(Variable.Name)) continue;
                 Extension->GeneratedVariableNames.Add(Variable.Name);
             }
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(&Blueprint);
@@ -5081,7 +5723,16 @@ bool USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
     {
         for (const FSekiroAnimIRVariable& Variable : Extension->LastSuccessfulIR.Variables)
         {
-            Extension->GeneratedVariableNames.AddUnique(Variable.Name);
+            const bool bOwnedByBlueprint =
+                AnimBlueprint->NewVariables.ContainsByPredicate(
+                    [&Variable](const FBPVariableDescription& Description)
+                    {
+                        return Description.VarName == Variable.Name;
+                    });
+            if (bOwnedByBlueprint)
+            {
+                Extension->GeneratedVariableNames.AddUnique(Variable.Name);
+            }
         }
     }
 

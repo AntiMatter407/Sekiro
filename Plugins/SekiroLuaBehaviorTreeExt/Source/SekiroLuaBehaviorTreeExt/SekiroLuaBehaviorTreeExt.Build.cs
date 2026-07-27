@@ -8,7 +8,17 @@ public class SekiroLuaBehaviorTreeExt : ModuleRules
 
         PublicDependencyModuleNames.AddRange(new string[]
         {
+            "AIModule",
             "Core",
+            "CoreUObject",
+            "Engine",
+            "GameplayTasks",
+        });
+
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+            "Lua",
+            "UnLua",
         });
     }
 }

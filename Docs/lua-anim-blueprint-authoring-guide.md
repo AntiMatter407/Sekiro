@@ -92,6 +92,177 @@ return ABP_Sekiro:Export()
 
 `graph.Result` 是基类自动创建的 Output Pose 输入 Pin。业务代码只需要把最终 Pose 连接进去。
 
+### Animation Layer Interface、Anim Layer 与子类覆写
+
+插件生成的是 UE 原生 Animation Blueprint Interface、Animation Layer Function Graph、
+Linked Anim Layer 和 Linked Anim Graph，不会为接口或节点另外创建一套 Lua 运行时类型。
+Lua 只在编辑器生成期声明结构，参数与 Pin 最终按 `UFunction` 反射签名复核。
+
+Animation Layer Interface 使用同一个基类，将 `BlueprintKind` 设为
+`AnimationLayerInterface`。接口不需要 Skeleton，也不声明主 `AnimGraph`：
+
+```lua
+-- Lua 类型：动画蓝图编译声明；生成 UE 原生 Animation Layer Interface。
+local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
+
+---@class ALI_Locomotion: LuaAnimBlueprint
+local ALI_Locomotion = LuaAnimBlueprint:Extend("ALI_Locomotion", {
+    BlueprintKind = "AnimationLayerInterface",
+    SourceModule = "Animation.Examples.ALI_Locomotion",
+    ParentAnimInstanceClass = "",
+    TargetSkeleton = "",
+})
+
+---声明接口拥有的 Animation Layer 函数签名。
+---@return nil result 接口只导出函数签名，不构建姿势实现。
+function ALI_Locomotion:DeclareAnimationLayers()
+    self:AnimLayer("Locomotion", {
+        Parameters = {
+            { Name = "SourcePose", DataType = "Pose" },
+            { Name = "BlendAlpha", DataType = "Float" },
+        },
+    })
+end
+
+return ALI_Locomotion:Export()
+```
+
+普通 AnimBlueprint 通过 `ImplementedInterfaces` 实现接口，并在
+`DeclareAnimationLayers()` 中构建对应 Layer。`inputs` 的键与接口参数同名：
+
+```lua
+local locomotion_interface =
+    "/Game/Animation/ALI_Locomotion.ALI_Locomotion_C"
+
+---@class ABP_LocomotionBase: LuaAnimBlueprint
+local ABP_LocomotionBase = LuaAnimBlueprint:Extend(
+    "ABP_LocomotionBase",
+    {
+        SourceModule = "Animation.Examples.ABP_LocomotionBase",
+        ParentAnimInstanceClass = "/Script/Engine.AnimInstance",
+        TargetSkeleton =
+            "/Game/Characters/Sekiro/Sekiro_Skeleton.Sekiro_Skeleton",
+        ImplementedInterfaces = {
+            locomotion_interface,
+        },
+    })
+
+---实现接口声明的 Locomotion Layer。
+---@return nil result 最终姿势由 SourcePose 连接到 Layer Result。
+function ABP_LocomotionBase:DeclareAnimationLayers()
+    self:AnimLayer(
+        "Locomotion",
+        {
+            InterfaceClass = locomotion_interface,
+            bOverride = true,
+            Parameters = {
+                { Name = "SourcePose", DataType = "Pose" },
+                { Name = "BlendAlpha", DataType = "Float" },
+            },
+        },
+        function(graph, inputs)
+            ---把示例输入姿势直接作为 Layer 输出。
+            ---@return nil result 该回调只声明 Pin 连接。
+            graph.Result:Connect(inputs.SourcePose)
+        end)
+end
+```
+
+子 AnimBlueprint 可以复用父资产，只声明需要覆写的同名 Layer。未声明的父 Layer
+由 UE 正常继承；`ParentAnimInstanceClass` 必须指向父 AnimBlueprint 的
+GeneratedClass：
+
+```lua
+local ParentModule =
+    require("Animation.Examples.ABP_LocomotionBase")
+local locomotion_interface =
+    "/Game/Animation/ALI_Locomotion.ALI_Locomotion_C"
+
+---@class ABP_LocomotionChild: ABP_LocomotionBase
+local ABP_LocomotionChild = ParentModule:Extend(
+    "ABP_LocomotionChild",
+    {
+        SourceModule = "Animation.Examples.ABP_LocomotionChild",
+        ParentAnimInstanceClass =
+            "/Game/Animation/ABP_LocomotionBase.ABP_LocomotionBase_C",
+    })
+
+---只覆写父类的 Locomotion Layer。
+---@return nil result 其他父 Layer 继续由 UE 继承。
+function ABP_LocomotionChild:DeclareAnimationLayers()
+    self:AnimLayer(
+        "Locomotion",
+        {
+            InterfaceClass = locomotion_interface,
+            bOverride = true,
+            Parameters = {
+                { Name = "SourcePose", DataType = "Pose" },
+                { Name = "BlendAlpha", DataType = "Float" },
+            },
+        },
+        function(graph, inputs)
+            ---输出子类版本的姿势实现。
+            ---@return nil result 示例直接转发输入姿势。
+            graph.Result:Connect(inputs.SourcePose)
+        end)
+end
+
+return ABP_LocomotionChild:Export()
+```
+
+参数表支持 `Pose`、`ComponentPose`、`Bool`、`Float`、`Byte`、`Integer`、
+`Name`、`String`、`Object`、`Class` 和 `Enum`。后三种必须额外填写
+`TypeObjectPath`。实现接口或覆写父 Layer 时，声明必须与 UE 反射得到的
+参数名称、顺序和类型完全一致。当前 UE5.2 的 Animation Layer 函数若声明普通
+数值参数，必须同时至少声明一个 Pose 或 ComponentPose 输入；纯数值、无 Pose
+输入的 Layer 会在生成前给出明确诊断。
+
+### Linked Anim Layer 与 Linked Anim Graph
+
+`graph:LinkedAnimLayer()` 调用接口 Layer；`graph:LinkedAnimGraph()` 调用另一个
+AnimBlueprint 的动画图函数。它们仍返回普通 `LuaAnimNode`，可用具名 Pin 连接：
+
+```lua
+local linked_layer = graph:LinkedAnimLayer(
+    "LinkedLocomotion",
+    {
+        LayerName = "Locomotion",
+        InterfaceClass =
+            "/Game/Animation/ALI_Locomotion.ALI_Locomotion_C",
+        InstanceClass =
+            "/Game/Animation/ABP_LocomotionBase.ABP_LocomotionBase_C",
+        Parameters = {
+            { Name = "SourcePose", DataType = "Pose" },
+            { Name = "BlendAlpha", DataType = "Float" },
+        },
+    })
+linked_layer.SourcePose:Connect(source_pose.Pose)
+graph.Result:Connect(linked_layer.Pose)
+
+local linked_graph = graph:LinkedAnimGraph(
+    "LinkedUpperBody",
+    {
+        InstanceClass =
+            "/Game/Animation/ABP_UpperBody.ABP_UpperBody_C",
+        GraphName = "AnimGraph",
+    })
+graph.Result:Connect(linked_graph.Pose)
+```
+
+`LinkedAnimLayer` 的 `InstanceClass` 可省略，表示使用当前实例上的实现。
+`LinkedAnimGraph.InstanceClass` 必填。对于带输入参数的目标函数，需要在
+`Parameters` 中声明完整签名，以便 Lua 侧创建可连接的具名 Pin；生成器还会用
+UE 反射再次校验。若 Lua 只消费输出 Pose，可以省略 `Parameters`，由 C++ 根据
+目标 `UFunction` 重建真实动态 Pin；若 Lua 需要连接某个输入，则必须声明该输入
+端点。新增普通 C++ Task、AnimNode 或 AnimInstance 子类无需修改插件。
+
+主 `AnimGraph` 与 Animation Layer 是两种不同的 UE 覆写机制：
+
+- 子资产的主 `AnimGraph` 仍通过正常 AnimBlueprint 继承/生成规则处理，不标记为
+  Animation Layer Override。
+- 接口 Layer 或父类 Layer 使用 `bOverride = true`。
+- 子类 Lua 不声明的父 Layer 保持继承，不会被生成器复制一份。
+
 ## 四、独立状态机文件
 
 ```lua

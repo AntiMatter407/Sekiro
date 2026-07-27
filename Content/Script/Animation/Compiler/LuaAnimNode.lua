@@ -15,6 +15,7 @@ local NodeContracts = require("Animation.Compiler.NodeContracts")
 ---@field DisplayName string|nil 编辑器显示名称。
 ---@field OwnedGraphId string|nil 节点独占的内部 Graph ID。
 ---@field bIsGraphRoot boolean|nil 是否由 Graph 构造流程创建为固定根节点。
+---@field DynamicPins SekiroAnimIRPin[]|nil 结构型节点根据函数签名生成的完整动态 Pin；普通业务节点不得直接传入。
 ---@field SourceLocation SekiroAnimIRSourceLocation|nil 节点源码位置。
 
 ---@class LuaAnimNode: CompilerClass
@@ -90,11 +91,13 @@ function LuaAnimNode:Initialize(config)
         assert(config.bIsGraphRoot ~= true, "Reflection Node cannot replace a Graph root")
         assert(self.OwnedGraphId == "", "Reflection Node cannot own an internal Graph")
     end
-    self.Pins = self.Contract ~= nil
-        and NodeContracts.CopyPinAssertions(self.Contract)
-        or {}
+    self.Pins = config.DynamicPins ~= nil
+        and config.DynamicPins
+        or self.Contract ~= nil
+            and NodeContracts.CopyPinAssertions(self.Contract)
+            or {}
     self.PinObjects = {}
-    for _, pin_contract in ipairs(self.Contract ~= nil and self.Contract.Pins or {}) do
+    for _, pin_contract in ipairs(self.Pins) do
         ---@type LuaAnimPin
         local pin = LuaAnimPin:New({
             Node = self,

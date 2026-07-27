@@ -274,6 +274,24 @@ function Node:Task(class_path, name, properties)
     return self.Definition:AddMainNode(self.IR.Id, class_path, name, properties)
 end
 
+---在当前节点下创建由通用运行时宿主分派的 UnLua Task。
+---每个节点只声明模块名和配置字符串；不同模块共用同一个 C++ 类型，无需为 Lua Task 新增 UCLASS。
+---@param name string 稳定语义名与编辑器显示名。
+---@param lua_module_name string 相对 Content/Script 的 Lua require 模块名。
+---@param configuration string|nil 原样传给 Execute/Tick/Abort 的可选配置字符串。
+---@return LuaBehaviorTreeNode node 新 UnLua Task。
+function Node:LuaTask(name, lua_module_name, configuration)
+    assert(type(lua_module_name) == "string" and lua_module_name ~= "",
+        "LuaTask 的 lua_module_name 不能为空")
+    return self:Task(
+        "/Script/SekiroLuaBehaviorTreeExt.SekiroLuaBehaviorTreeTask",
+        name,
+        {
+            LuaModuleName = Value.String(lua_module_name),
+            Configuration = Value.String(configuration or ""),
+        })
+end
+
 ---给当前主节点挂载 Decorator。
 ---@param class_path string UBTDecorator 子类路径。
 ---@param name string 稳定语义名与显示名。

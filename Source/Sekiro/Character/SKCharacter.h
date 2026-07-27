@@ -20,6 +20,7 @@ class USKInputManager;
 class USKCameraManagerComponent;
 class USKLockOnIndicatorComponent;
 class USKCombatComponent;
+class USKMovementComponent;
 
 UCLASS(config=Game)
 class SEKIRO_API ASKCharacter : public ACharacter
@@ -51,6 +52,13 @@ public:
 	void SetDodgeDirection(float Fwd, float Lateral);     // 设置闪避方向
 
 protected:
+	struct FSKMovementComponentOverrideTag
+	{
+	};
+
+	/** 供派生角色保留其已配置移动组件类型的构造入口。 */
+	ASKCharacter(const FObjectInitializer& ObjectInitializer, FSKMovementComponentOverrideTag OverrideTag);
+
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 

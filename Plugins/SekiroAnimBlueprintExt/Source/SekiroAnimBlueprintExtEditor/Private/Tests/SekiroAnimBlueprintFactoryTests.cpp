@@ -13,6 +13,9 @@
 #include "AnimGraphNode_TwoBoneIK.h"
 #include "AnimGraphNode_UseCachedPose.h"
 #include "AnimGraphNode_LegIK.h"
+#include "AnimGraphNode_LinkedAnimGraph.h"
+#include "AnimGraphNode_LinkedAnimLayer.h"
+#include "AnimGraphNode_LinkedInputPose.h"
 #include "AnimGraph/AnimGraphNode_FootPlacement.h"
 #include "AnimGraph/AnimGraphNode_OrientationWarping.h"
 #include "Animation/AnimBlueprint.h"
@@ -2132,6 +2135,311 @@ bool FSekiroAnimBlueprintFactoryNativeBoolTransitionRuleTest::RunTest(const FStr
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimBlueprintFactoryBlueprintParentTest,
+    "Sekiro.AnimGraphIR.Factory.BlueprintParent",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证生成器能以已有 AnimBlueprint GeneratedClass 为父类创建子资产，并在子 IR 不重复声明变量时，
+ * 让 Transition Rule 与 Graph Property Getter 解析父类公开属性。子 AnimGraph 保留 Lua 生成拓扑供编辑，
+ * 运行时 AnimNodeData 遵循 UE Derived AnimBlueprint 语义继承根父图；子 EventGraph 仍可更新继承属性。
+ * 测试仅创建 transient UObject，必须由 Automation Framework 在游戏线程执行，不写入磁盘。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimBlueprintFactoryBlueprintParentTest::RunTest(const FString& Parameters)
+{
+    using namespace SekiroAnimBlueprintFactoryTests;
+
+    USkeleton* Skeleton = LoadTestSkeleton();
+    UAnimSequence* Sequence = CreateTestSequence(Skeleton);
+    TestNotNull(TEXT("Blueprint parent test Skeleton loads"), Skeleton);
+    TestNotNull(TEXT("Blueprint parent test Sequence is created"), Sequence);
+    if (Skeleton == nullptr || Sequence == nullptr) return true;
+
+    FSekiroAnimBlueprintIR ParentIR = MakeFactoryIR(Sequence);
+    FSekiroAnimIRVariable& ParentTransitionVariable = ParentIR.Variables.AddDefaulted_GetRef();
+    ParentTransitionVariable.Name = TEXT("bParentCanEnter");
+    ParentTransitionVariable.DataType = TEXT("Bool");
+    ParentTransitionVariable.DefaultValue.Type = ESekiroAnimIRValueType::Bool;
+    ParentTransitionVariable.DefaultValue.BoolValue = false;
+    ParentTransitionVariable.bTransient = true;
+    ParentTransitionVariable.SourceLocation = ParentIR.SourceLocation;
+
+    TArray<FSekiroAnimIRDiagnostic> ParentDiagnostics;
+    UAnimBlueprint* ParentBlueprint =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            ParentIR,
+            ParentDiagnostics);
+    TestNotNull(TEXT("Blueprint parent compiles"), ParentBlueprint);
+    TestEqual(TEXT("Blueprint parent build has no diagnostics"), ParentDiagnostics.Num(), 0);
+    if (ParentBlueprint == nullptr || ParentBlueprint->GeneratedClass == nullptr) return true;
+
+    FSekiroAnimBlueprintIR ChildIR = MakeFactoryIR(Sequence);
+    ChildIR.ParentAnimInstanceClass =
+        FSoftClassPath(ParentBlueprint->GeneratedClass->GetPathName());
+    ChildIR.Variables.Add(ParentTransitionVariable);
+
+    FSekiroAnimBlueprintIR MismatchedChildIR = ChildIR;
+    FSekiroAnimIRVariable* MismatchedVariable =
+        MismatchedChildIR.Variables.FindByPredicate(
+            [&ParentTransitionVariable](const FSekiroAnimIRVariable& Variable)
+            {
+                return Variable.Name == ParentTransitionVariable.Name;
+            });
+    if (MismatchedVariable != nullptr)
+    {
+        MismatchedVariable->DataType = TEXT("Float");
+        MismatchedVariable->DefaultValue.Type = ESekiroAnimIRValueType::Float;
+    }
+    TArray<FSekiroAnimIRDiagnostic> MismatchDiagnostics;
+    UAnimBlueprint* MismatchedChildBlueprint =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            MismatchedChildIR,
+            MismatchDiagnostics);
+    TestNull(
+        TEXT("Blueprint parent rejects an inherited variable type mismatch"),
+        MismatchedChildBlueprint);
+    TestTrue(
+        TEXT("Inherited variable mismatch emits a stable diagnostic"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(
+            MismatchDiagnostics,
+            TEXT("Factory.InheritedVariableTypeMismatch")));
+
+    const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
+    const FName GraphTestBone = ReferenceSkeleton.GetNum() > 0
+        ? ReferenceSkeleton.GetBoneName(0)
+        : NAME_None;
+    FSekiroAnimIRGraph* ChildMoveGraph = FindGraph(ChildIR, TEXT("Graph.Move"));
+    TestTrue(
+        TEXT("Child IR adds a Graph getter backed only by the parent class"),
+        ChildMoveGraph != nullptr
+            && AddOrientationWarpingChain(
+                *ChildMoveGraph,
+                GraphTestBone,
+                ChildIR.SourceLocation));
+
+    FSekiroAnimIRGraph* ChildStateMachineIR =
+        FindGraph(ChildIR, TEXT("Graph.StateMachine"));
+    TestNotNull(TEXT("Child StateMachine IR exists"), ChildStateMachineIR);
+    if (ChildStateMachineIR == nullptr
+        || ChildStateMachineIR->StateMachine.Transitions.IsEmpty())
+    {
+        return true;
+    }
+    FSekiroAnimIRTransition& ChildTransition =
+        ChildStateMachineIR->StateMachine.Transitions[0];
+    ChildTransition.Gate.Nodes.Reset();
+    FSekiroAnimIRTransitionGateNode& ParentBoolGate =
+        ChildTransition.Gate.Nodes.AddDefaulted_GetRef();
+    ParentBoolGate.Type = TEXT("BoolProperty");
+    ParentBoolGate.Name = ParentTransitionVariable.Name;
+    ParentBoolGate.bExpectedBool = true;
+    ChildTransition.Gate.RootIndex = 0;
+
+    TArray<FSekiroAnimIRDiagnostic> ChildDiagnostics;
+    UAnimBlueprint* ChildBlueprint =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            ChildIR,
+            ChildDiagnostics);
+    for (const FSekiroAnimIRDiagnostic& Diagnostic : ChildDiagnostics)
+    {
+        AddInfo(FString::Printf(
+            TEXT("Blueprint parent diagnostic %s: %s"),
+            *Diagnostic.Code.ToString(),
+            *Diagnostic.Message));
+    }
+    TestNotNull(TEXT("Factory creates a Blueprint-parent AnimBlueprint"), ChildBlueprint);
+    TestEqual(TEXT("Blueprint-parent build has no diagnostics"), ChildDiagnostics.Num(), 0);
+    if (ChildBlueprint == nullptr || ChildBlueprint->GeneratedClass == nullptr) return true;
+
+    TestEqual(
+        TEXT("Child AnimBlueprint preserves the requested GeneratedClass parent"),
+        ChildBlueprint->ParentClass.Get(),
+        ParentBlueprint->GeneratedClass.Get());
+    TestEqual(
+        TEXT("Child AnimBlueprint preserves the parent Skeleton"),
+        ChildBlueprint->TargetSkeleton.Get(),
+        Skeleton);
+    TestEqual(
+        TEXT("Child IR does not duplicate parent member variables"),
+        ChildBlueprint->NewVariables.Num(),
+        0);
+    TestTrue(
+        TEXT("Child AnimBlueprint compiles without error"),
+        ChildBlueprint->Status != BS_Error);
+
+    FBoolProperty* InheritedBool = FindFProperty<FBoolProperty>(
+        ChildBlueprint->GeneratedClass,
+        ParentTransitionVariable.Name);
+    FFloatProperty* InheritedFloat = FindFProperty<FFloatProperty>(
+        ChildBlueprint->GeneratedClass,
+        TEXT("GraphLocomotionAngle"));
+    TestNotNull(TEXT("Child GeneratedClass reflects inherited Transition Bool"), InheritedBool);
+    TestNotNull(TEXT("Child GeneratedClass reflects inherited Graph Float"), InheritedFloat);
+    TestEqual(
+        TEXT("Inherited Transition Bool remains owned by parent GeneratedClass"),
+        InheritedBool != nullptr ? InheritedBool->GetOwnerClass() : nullptr,
+        ParentBlueprint->GeneratedClass.Get());
+    TestEqual(
+        TEXT("Inherited Graph Float remains owned by parent GeneratedClass"),
+        InheritedFloat != nullptr ? InheritedFloat->GetOwnerClass() : nullptr,
+        ParentBlueprint->GeneratedClass.Get());
+
+    USkeletalMeshComponent* TestMeshComponent =
+        NewObject<USkeletalMeshComponent>(
+            GetTransientPackage(),
+            NAME_None,
+            RF_Transient);
+    UAnimInstance* ChildInstance = NewObject<UAnimInstance>(
+        TestMeshComponent,
+        ChildBlueprint->GeneratedClass,
+        NAME_None,
+        RF_Transient);
+    TestNotNull(TEXT("Child GeneratedClass creates an AnimInstance"), ChildInstance);
+    if (ChildInstance != nullptr && InheritedBool != nullptr && InheritedFloat != nullptr)
+    {
+        InheritedBool->SetPropertyValue_InContainer(ChildInstance, true);
+        InheritedFloat->SetPropertyValue_InContainer(ChildInstance, 37.5f);
+        TestTrue(
+            TEXT("Runtime child instance can update inherited Transition Bool"),
+            InheritedBool->GetPropertyValue_InContainer(ChildInstance));
+        TestEqual(
+            TEXT("Runtime child instance can update inherited Graph Float"),
+            InheritedFloat->GetPropertyValue_InContainer(ChildInstance),
+            37.5f);
+    }
+
+    UAnimationGraph* ChildMainGraph = FindMainGraph(ChildBlueprint);
+    TestNotNull(TEXT("Child keeps its Lua-generated AnimGraph topology"), ChildMainGraph);
+    UAnimGraphNode_StateMachine* ChildStateMachineNode =
+        FindFirstNode<UAnimGraphNode_StateMachine>(ChildMainGraph);
+    UAnimationStateMachineGraph* ChildStateMachineGraph =
+        ChildStateMachineNode != nullptr
+            ? ChildStateMachineNode->EditorStateMachineGraph
+            : nullptr;
+    UAnimStateNode* ChildMoveState = FindState(ChildStateMachineGraph, TEXT("Move"));
+    UEdGraph* ChildMoveNativeGraph =
+        ChildMoveState != nullptr ? ChildMoveState->BoundGraph : nullptr;
+    bool bFoundInheritedGraphGetter = false;
+    if (ChildMoveNativeGraph != nullptr)
+    {
+        for (UEdGraphNode* Node : ChildMoveNativeGraph->Nodes)
+        {
+            UK2Node_VariableGet* Getter = Cast<UK2Node_VariableGet>(Node);
+            if (Getter != nullptr
+                && Getter->VariableReference.GetMemberName() == TEXT("GraphLocomotionAngle"))
+            {
+                bFoundInheritedGraphGetter = true;
+                break;
+            }
+        }
+    }
+    TestTrue(
+        TEXT("Child Graph Property Getter targets the inherited Float"),
+        bFoundInheritedGraphGetter);
+
+    bool bFoundInheritedTransitionGetter = false;
+    if (ChildStateMachineGraph != nullptr)
+    {
+        for (UEdGraphNode* Node : ChildStateMachineGraph->Nodes)
+        {
+            UAnimStateTransitionNode* TransitionNode =
+                Cast<UAnimStateTransitionNode>(Node);
+            UEdGraph* RuleGraph = TransitionNode != nullptr
+                ? TransitionNode->BoundGraph
+                : nullptr;
+            if (RuleGraph == nullptr || RuleGraph->GetName() != ChildTransition.Key) continue;
+            for (UEdGraphNode* RuleNode : RuleGraph->Nodes)
+            {
+                UK2Node_VariableGet* Getter = Cast<UK2Node_VariableGet>(RuleNode);
+                if (Getter != nullptr
+                    && Getter->VariableReference.GetMemberName()
+                        == ParentTransitionVariable.Name)
+                {
+                    bFoundInheritedTransitionGetter = true;
+                    break;
+                }
+            }
+            break;
+        }
+    }
+    TestTrue(
+        TEXT("Child Transition Rule Getter targets the inherited Bool"),
+        bFoundInheritedTransitionGetter);
+
+    UEdGraph* ChildEventGraph = FBlueprintEditorUtils::FindEventGraph(ChildBlueprint);
+    TestEqual(
+        TEXT("Child EventGraph keeps one Lua animation update bridge"),
+        CountFunctionCalls(
+            ChildEventGraph,
+            GET_FUNCTION_NAME_CHECKED(
+                USekiroLuaTransitionRuntimeLibrary,
+                EvaluateBlueprintUpdateAnimation)),
+        1);
+
+    const FString ParentLuaModule(TEXT("SekiroAnimGraphIRTests.InheritedParent"));
+    TestTrue(
+        TEXT("Parent AnimBlueprint accepts generic Lua source metadata"),
+        USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
+            ParentBlueprint,
+            ParentLuaModule));
+    TestNull(
+        TEXT("Standard child initially owns no Lua extension"),
+        USekiroLuaAnimBlueprintExtension::Find(ChildBlueprint));
+
+    bool bInheritedLuaSource = false;
+    const USekiroLuaAnimBlueprintExtension* EffectiveChildExtension =
+        USekiroLuaAnimBlueprintExtension::FindEffective(
+            ChildBlueprint,
+            &bInheritedLuaSource);
+    TestTrue(TEXT("Child resolves Lua source through UE class ancestry"), bInheritedLuaSource);
+    TestNotNull(TEXT("Child resolves the nearest parent Lua extension"), EffectiveChildExtension);
+    if (EffectiveChildExtension != nullptr)
+    {
+        TestEqual(
+            TEXT("Child inherits the parent Lua module without path inference"),
+            EffectiveChildExtension->LuaModuleName,
+            ParentLuaModule);
+    }
+
+    TSharedRef<FUICommandList> ChildCommandList = MakeShared<FUICommandList>();
+    const TSharedPtr<const FUICommandInfo> ChildCompileCommand =
+        FGenericCommands::Get().Delete;
+    ChildCommandList->MapAction(
+        ChildCompileCommand,
+        FUIAction(FExecuteAction::CreateLambda([]() {})));
+    TSharedRef<FSekiroLuaAnimBlueprintEditorBinding> ChildBinding =
+        FSekiroLuaAnimBlueprintEditorBinding::CreateForTest(
+            ChildCommandList,
+            ChildBlueprint,
+            ChildCompileCommand);
+    ChildBinding->GetToolbarExtender();
+
+    FToolBarBuilder ChildToolbarBuilder(
+        ChildCommandList,
+        FMultiBoxCustomization::None);
+    ChildBinding->FillToolbar(ChildToolbarBuilder);
+
+    const TSharedRef<FMultiBox> ChildToolbar = ChildToolbarBuilder.GetMultiBox();
+    const TArray<TSharedRef<const FMultiBlock>>& ChildToolbarBlocks =
+        ChildToolbar->GetBlocks();
+    TestEqual(
+        TEXT("Inherited child toolbar contains all Lua controls"),
+        ChildToolbarBlocks.Num(),
+        5);
+    TestNotNull(
+        TEXT("Inherited source remains resolvable after toolbar construction"),
+        USekiroLuaAnimBlueprintExtension::FindEffective(ChildBlueprint));
+    TestTrue(
+        TEXT("Inherited child enables Check Lua, Generate From Lua and Source Mode"),
+        ChildBinding->CanExecuteLuaActionForTest());
+    ChildBinding->RestoreOriginalCompileActions();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FSekiroAnimBlueprintFactoryTransitionRuleDebugSamplingTest,
     "Sekiro.AnimGraphIR.Factory.TransitionRuleDebugSampling",
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -2579,18 +2887,25 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 /**
- * 验证 Validator 可接受但 NodeFactory 尚未支持的第二 Layer 会被显式拒绝，不被静默忽略。
- * 测试只操作内存 IR，不创建 UObject；由 Automation Framework 在游戏线程执行。
+ * 验证第二个具名 Animation Layer 会被物化为原生 FunctionGraph，而不是被拒绝或静默忽略。
+ * 测试只创建 transient UObject；由 Automation Framework 在游戏线程执行。
  *
  * @param Parameters Automation Framework 参数，本测试不使用。
  * @return 始终返回 true 以完成断言收集。
  */
 bool FSekiroAnimBlueprintFactoryMultipleLayersTest::RunTest(const FString& Parameters)
 {
-    FSekiroAnimBlueprintIR BlueprintIR = SekiroAnimGraphIRTests::MakeMinimalIR();
+    using namespace SekiroAnimBlueprintFactoryTests;
+
+    USkeleton* Skeleton = LoadTestSkeleton();
+    UAnimSequence* Sequence = CreateTestSequence(Skeleton);
+    if (Skeleton == nullptr || Sequence == nullptr) return true;
+    FSekiroAnimBlueprintIR BlueprintIR = MakeFactoryIR(Sequence);
+    BlueprintIR.SchemaVersion = 3;
     FSekiroAnimIRLayer& SecondLayer = BlueprintIR.Layers.AddDefaulted_GetRef();
     SecondLayer.Id = TEXT("Layer.Second");
     SecondLayer.Name = TEXT("Second");
+    SecondLayer.FunctionName = TEXT("Second");
     SecondLayer.RootGraphId = TEXT("Graph.Second");
     SecondLayer.SourceLocation = BlueprintIR.SourceLocation;
 
@@ -2614,10 +2929,23 @@ bool FSekiroAnimBlueprintFactoryMultipleLayersTest::RunTest(const FString& Param
     UAnimBlueprint* AnimBlueprint = USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
         BlueprintIR,
         Diagnostics);
-    TestNull(TEXT("Multiple Layers create no blueprint"), AnimBlueprint);
-    TestTrue(
-        TEXT("Multiple Layers emit stable code"),
-        SekiroAnimGraphIRTests::HasDiagnosticCode(Diagnostics, TEXT("Factory.UnsupportedLayerCount")));
+    TestNotNull(TEXT("Multiple Layers create an AnimBlueprint"), AnimBlueprint);
+    TestEqual(TEXT("Multiple Layers have no diagnostics"), Diagnostics.Num(), 0);
+    bool bFoundSecondGraph = false;
+    if (AnimBlueprint != nullptr)
+    {
+        TArray<UEdGraph*> Graphs;
+        AnimBlueprint->GetAllGraphs(Graphs);
+        for (UEdGraph* Graph : Graphs)
+        {
+            if (Graph != nullptr && Graph->GetFName() == TEXT("Second"))
+            {
+                bFoundSecondGraph = true;
+                break;
+            }
+        }
+    }
+    TestTrue(TEXT("Second Layer FunctionGraph exists"), bFoundSecondGraph);
     return true;
 }
 
@@ -3282,18 +3610,6 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     TestTrue(
         TEXT("Toolbar rebuild reuses one Lua extender"),
         &FirstToolbarExtender.Get() == &RebuiltToolbarExtender.Get());
-    FToolBarBuilder TestToolbarBuilder(
-        TestCommandList,
-        FMultiBoxCustomization::None);
-    TestToolbarBuilder.AddToolBarButton(
-        FUIAction(),
-        NAME_None,
-        FText::FromString(TEXT("Existing native control")));
-    CommandBinding->FillToolbar(TestToolbarBuilder);
-    TestEqual(
-        TEXT("Parent toolbar does not receive Lua controls"),
-        TestToolbarBuilder.GetMultiBox()->GetBlocks().Num(),
-        1);
     FToolBarBuilder DisplayedToolbarBuilder(
         TestCommandList,
         FMultiBoxCustomization::AllowCustomization(
@@ -3302,8 +3618,8 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     const int32 DisplayedToolbarBlockCount =
         DisplayedToolbarBuilder.GetMultiBox()->GetBlocks().Num();
     TestTrue(
-        TEXT("Displayed toolbar receives Lua controls"),
-        DisplayedToolbarBlockCount > 0);
+        TEXT("First toolbar build immediately receives Lua controls"),
+        DisplayedToolbarBlockCount == 5);
     CommandBinding->FillToolbar(DisplayedToolbarBuilder);
     TestEqual(
         TEXT("Repeated displayed toolbar fill does not duplicate Lua controls"),
@@ -3402,6 +3718,7 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
         Extension->LuaModuleName = InvalidModuleName;
         Extension->MarkSourceDirty(TEXT("Test invalid Lua source revision."));
     }
+    const int32 VariablesBeforeFailedGenerate = AnimBlueprint->NewVariables.Num();
     const TArray<UEdGraphNode*> NodesBeforeFailedGenerate = MainGraph->Nodes;
     Diagnostics.Reset();
     TestFalse(
@@ -3421,7 +3738,7 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     TestEqual(
         TEXT("Preflight failure preserves variables"),
         AnimBlueprint->NewVariables.Num(),
-        FirstVariableCount);
+        VariablesBeforeFailedGenerate);
     TestEqual(
         TEXT("Preflight failure preserves root state machine"),
         CountNodes<UAnimGraphNode_StateMachine>(MainGraph),
@@ -3462,6 +3779,259 @@ bool FSekiroLuaAnimBlueprintInPlaceCompileTest::RunTest(const FString& Parameter
     AnimBlueprint->ClearFlags(RF_Public | RF_Standalone);
     AnimBlueprint->SetFlags(RF_Transient);
     AnimBlueprint->MarkAsGarbage();
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimBlueprintFactoryAnimationLayerInterfaceTest,
+    "Sekiro.AnimGraphIR.Factory.AnimationLayerInterface",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 IR v3 可生成真实 Animation Layer Interface，并由普通 AnimBlueprint 实现同签名 Layer Graph。
+ * 测试只创建 transient UObject，必须在 Automation Framework 游戏线程执行，不保存资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimBlueprintFactoryAnimationLayerInterfaceTest::RunTest(const FString& Parameters)
+{
+    using namespace SekiroAnimBlueprintFactoryTests;
+
+    USkeleton* Skeleton = LoadTestSkeleton();
+    UAnimSequence* Sequence = CreateTestSequence(Skeleton);
+    if (Skeleton == nullptr || Sequence == nullptr) return true;
+
+    FSekiroAnimBlueprintIR InterfaceIR = MakeFactoryIR(Sequence);
+    InterfaceIR.SchemaVersion = 3;
+    InterfaceIR.BlueprintKind = ESekiroAnimIRBlueprintKind::AnimationLayerInterface;
+    InterfaceIR.ParentAnimInstanceClass.Reset();
+    InterfaceIR.TargetSkeleton.Reset();
+    InterfaceIR.Variables.Reset();
+    InterfaceIR.Layers.SetNum(1);
+    FSekiroAnimIRLayer& InterfaceLayer = InterfaceIR.Layers[0];
+    InterfaceLayer.Name = TEXT("Locomotion");
+    InterfaceLayer.FunctionName = TEXT("Locomotion");
+    InterfaceLayer.bOverride = false;
+    InterfaceLayer.InterfaceClass.Reset();
+    FSekiroAnimIRFunctionParameter& PoseParameter =
+        InterfaceLayer.Parameters.AddDefaulted_GetRef();
+    PoseParameter.Name = TEXT("SourcePose");
+    PoseParameter.DataType = SekiroAnimGraphIRNames::PoseData;
+    PoseParameter.bIsPose = true;
+    PoseParameter.SourceLocation = InterfaceIR.SourceLocation;
+
+    TArray<FSekiroAnimIRDiagnostic> InterfaceDiagnostics;
+    UAnimBlueprint* InterfaceBlueprint =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            InterfaceIR,
+            InterfaceDiagnostics);
+    TestNotNull(TEXT("Animation Layer Interface is generated"), InterfaceBlueprint);
+    TestEqual(TEXT("Interface generation has no diagnostics"), InterfaceDiagnostics.Num(), 0);
+    if (InterfaceBlueprint == nullptr || InterfaceBlueprint->GeneratedClass == nullptr) return true;
+    TestEqual(
+        TEXT("Generated asset uses the native interface Blueprint type"),
+        InterfaceBlueprint->BlueprintType,
+        BPTYPE_Interface);
+    TestNotNull(
+        TEXT("Generated interface exposes the declared Layer UFunction"),
+        InterfaceBlueprint->GeneratedClass->FindFunctionByName(TEXT("Locomotion")));
+
+    FSekiroAnimBlueprintIR ImplementationIR = MakeFactoryIR(Sequence);
+    ImplementationIR.SchemaVersion = 3;
+    const FSoftClassPath InterfaceClassPath(
+        InterfaceBlueprint->GeneratedClass->GetPathName());
+    ImplementationIR.ImplementedInterfaces.Add(InterfaceClassPath);
+    FSekiroAnimIRLayer OverrideLayer = InterfaceLayer;
+    OverrideLayer.Id = TEXT("Layer.Locomotion");
+    OverrideLayer.RootGraphId = TEXT("Graph.Locomotion");
+    OverrideLayer.InterfaceClass = InterfaceClassPath;
+    OverrideLayer.bOverride = true;
+    OverrideLayer.Graphs.SetNum(1);
+    OverrideLayer.Graphs[0].Id = OverrideLayer.RootGraphId;
+    OverrideLayer.Graphs[0].Name = TEXT("Locomotion");
+    OverrideLayer.Graphs[0].GraphType = SekiroAnimGraphIRNames::PoseGraph;
+    OverrideLayer.Graphs[0].Nodes.SetNum(1);
+    OverrideLayer.Graphs[0].Nodes[0].Id = TEXT("Node.Locomotion.Output");
+    OverrideLayer.Graphs[0].Nodes[0].NodeType = SekiroAnimGraphIRNames::OutputPoseNode;
+    OverrideLayer.Graphs[0].Nodes[0].Pins =
+        InterfaceLayer.Graphs[0].Nodes[0].Pins;
+    OverrideLayer.Graphs[0].RootNodeId = OverrideLayer.Graphs[0].Nodes[0].Id;
+    OverrideLayer.Graphs[0].Links.Reset();
+    OverrideLayer.Graphs[0].StateMachine = FSekiroAnimIRStateMachine();
+    ImplementationIR.Layers.Add(OverrideLayer);
+    FSekiroAnimIRLayer PreservedLayer = OverrideLayer;
+    PreservedLayer.Id = TEXT("Layer.Preserved");
+    PreservedLayer.Name = TEXT("PreservedLayer");
+    PreservedLayer.FunctionName = TEXT("PreservedLayer");
+    PreservedLayer.InterfaceClass.Reset();
+    PreservedLayer.bOverride = false;
+    PreservedLayer.RootGraphId = TEXT("Graph.Preserved");
+    PreservedLayer.Graphs[0].Id = PreservedLayer.RootGraphId;
+    PreservedLayer.Graphs[0].Name = TEXT("PreservedLayer");
+    PreservedLayer.Graphs[0].RootNodeId = TEXT("Node.Preserved.Output");
+    PreservedLayer.Graphs[0].Nodes[0].Id = PreservedLayer.Graphs[0].RootNodeId;
+    ImplementationIR.Layers.Add(PreservedLayer);
+
+    TArray<FSekiroAnimIRDiagnostic> ImplementationDiagnostics;
+    UAnimBlueprint* ImplementationBlueprint =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            ImplementationIR,
+            ImplementationDiagnostics);
+    TestNotNull(TEXT("AnimBlueprint implements generated interface"), ImplementationBlueprint);
+    TestEqual(
+        TEXT("Interface implementation has no diagnostics"),
+        ImplementationDiagnostics.Num(),
+        0);
+    if (ImplementationBlueprint != nullptr)
+    {
+        bool bFoundOverrideGraph = false;
+        TArray<UEdGraph*> Graphs;
+        ImplementationBlueprint->GetAllGraphs(Graphs);
+        for (UEdGraph* Graph : Graphs)
+        {
+            if (Graph != nullptr && Graph->GetFName() == TEXT("Locomotion"))
+            {
+                bFoundOverrideGraph = true;
+                TArray<UAnimGraphNode_LinkedInputPose*> Inputs;
+                Graph->GetNodesOfClass(Inputs);
+                TestEqual(TEXT("Override keeps one reflected Pose input"), Inputs.Num(), 1);
+                break;
+            }
+        }
+        TestTrue(TEXT("Interface Layer override graph exists"), bFoundOverrideGraph);
+    }
+
+    if (ImplementationBlueprint == nullptr
+        || ImplementationBlueprint->GeneratedClass == nullptr)
+    {
+        return true;
+    }
+
+    FSekiroAnimBlueprintIR ChildIR = MakeFactoryIR(Sequence);
+    ChildIR.SchemaVersion = 3;
+    ChildIR.ParentAnimInstanceClass =
+        FSoftClassPath(ImplementationBlueprint->GeneratedClass->GetPathName());
+    FSekiroAnimIRLayer ChildOverride = OverrideLayer;
+    ChildOverride.Id = TEXT("Layer.Child.Locomotion");
+    ChildOverride.RootGraphId = TEXT("Graph.Child.Locomotion");
+    ChildOverride.Graphs[0].Id = ChildOverride.RootGraphId;
+    ChildOverride.Graphs[0].RootNodeId = TEXT("Node.Child.Locomotion.Output");
+    ChildOverride.Graphs[0].Nodes[0].Id = ChildOverride.Graphs[0].RootNodeId;
+    ChildIR.Layers.Add(ChildOverride);
+
+    TArray<FSekiroAnimIRDiagnostic> ChildDiagnostics;
+    UAnimBlueprint* ChildBlueprint =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            ChildIR,
+            ChildDiagnostics);
+    TestNotNull(TEXT("Child AnimBlueprint overrides parent Layer"), ChildBlueprint);
+    TestEqual(TEXT("Child Layer override has no diagnostics"), ChildDiagnostics.Num(), 0);
+    if (ChildBlueprint != nullptr && ChildBlueprint->GeneratedClass != nullptr)
+    {
+        bool bOwnsLocomotionOverride = false;
+        bool bCopiedPreservedLayer = false;
+        TArray<UEdGraph*> ChildGraphs;
+        ChildBlueprint->GetAllGraphs(ChildGraphs);
+        for (UEdGraph* Graph : ChildGraphs)
+        {
+            if (Graph == nullptr) continue;
+            bOwnsLocomotionOverride |= Graph->GetFName() == TEXT("Locomotion");
+            bCopiedPreservedLayer |= Graph->GetFName() == TEXT("PreservedLayer");
+        }
+        TestTrue(TEXT("Child owns the declared Locomotion override graph"), bOwnsLocomotionOverride);
+        TestFalse(TEXT("Child does not copy an undeclared parent Layer graph"), bCopiedPreservedLayer);
+        TestNotNull(
+            TEXT("Child GeneratedClass inherits the undeclared parent Layer function"),
+            ChildBlueprint->GeneratedClass->FindFunctionByName(TEXT("PreservedLayer")));
+    }
+
+    FSekiroAnimBlueprintIR LinkedHostIR = MakeFactoryIR(Sequence);
+    LinkedHostIR.SchemaVersion = 3;
+    LinkedHostIR.ImplementedInterfaces.Add(InterfaceClassPath);
+    FSekiroAnimIRGraph* HostRootGraph =
+        FindGraph(LinkedHostIR, LinkedHostIR.Layers[0].RootGraphId);
+    TestNotNull(TEXT("Linked node host root graph exists"), HostRootGraph);
+    if (HostRootGraph == nullptr) return true;
+
+    FSekiroAnimIRNode& LinkedGraphIR = HostRootGraph->Nodes.AddDefaulted_GetRef();
+    LinkedGraphIR.Id = TEXT("Node.LinkedGraph");
+    LinkedGraphIR.NodeType = SekiroAnimGraphIRNames::LinkedAnimGraphNode;
+    LinkedGraphIR.SourceLocation = LinkedHostIR.SourceLocation;
+    FSekiroAnimIRPin& LinkedGraphPose = LinkedGraphIR.Pins.AddDefaulted_GetRef();
+    LinkedGraphPose.Name = TEXT("Pose");
+    LinkedGraphPose.Direction = ESekiroAnimIRPinDirection::Output;
+    LinkedGraphPose.DataType = SekiroAnimGraphIRNames::PoseData;
+    LinkedGraphPose.bAllowMultipleConnections = true;
+    FSekiroAnimIRProperty& LinkedGraphClass =
+        LinkedGraphIR.Properties.AddDefaulted_GetRef();
+    LinkedGraphClass.Name = TEXT("InstanceClass");
+    LinkedGraphClass.Value.Type = ESekiroAnimIRValueType::SoftClassPath;
+    LinkedGraphClass.Value.SoftClassPathValue =
+        FSoftClassPath(ImplementationBlueprint->GeneratedClass->GetPathName());
+
+    FSekiroAnimIRNode& LinkedLayerIR = HostRootGraph->Nodes.AddDefaulted_GetRef();
+    LinkedLayerIR.Id = TEXT("Node.LinkedLayer");
+    LinkedLayerIR.NodeType = SekiroAnimGraphIRNames::LinkedAnimLayerNode;
+    LinkedLayerIR.SourceLocation = LinkedHostIR.SourceLocation;
+    FSekiroAnimIRPin& LinkedLayerInput = LinkedLayerIR.Pins.AddDefaulted_GetRef();
+    LinkedLayerInput.Name = TEXT("SourcePose");
+    LinkedLayerInput.Direction = ESekiroAnimIRPinDirection::Input;
+    LinkedLayerInput.DataType = SekiroAnimGraphIRNames::PoseData;
+    FSekiroAnimIRPin& LinkedLayerPose = LinkedLayerIR.Pins.AddDefaulted_GetRef();
+    LinkedLayerPose.Name = TEXT("Pose");
+    LinkedLayerPose.Direction = ESekiroAnimIRPinDirection::Output;
+    LinkedLayerPose.DataType = SekiroAnimGraphIRNames::PoseData;
+    LinkedLayerPose.bAllowMultipleConnections = true;
+    FSekiroAnimIRProperty& LinkedLayerName =
+        LinkedLayerIR.Properties.AddDefaulted_GetRef();
+    LinkedLayerName.Name = TEXT("LayerName");
+    LinkedLayerName.Value.Type = ESekiroAnimIRValueType::Name;
+    LinkedLayerName.Value.NameValue = TEXT("Locomotion");
+    FSekiroAnimIRProperty& LinkedLayerInterface =
+        LinkedLayerIR.Properties.AddDefaulted_GetRef();
+    LinkedLayerInterface.Name = TEXT("InterfaceClass");
+    LinkedLayerInterface.Value.Type = ESekiroAnimIRValueType::SoftClassPath;
+    LinkedLayerInterface.Value.SoftClassPathValue = InterfaceClassPath;
+    FSekiroAnimIRProperty& LinkedLayerClass =
+        LinkedLayerIR.Properties.AddDefaulted_GetRef();
+    LinkedLayerClass.Name = TEXT("InstanceClass");
+    LinkedLayerClass.Value.Type = ESekiroAnimIRValueType::SoftClassPath;
+    LinkedLayerClass.Value.SoftClassPathValue =
+        FSoftClassPath(ImplementationBlueprint->GeneratedClass->GetPathName());
+
+    TArray<FSekiroAnimIRDiagnostic> LinkedHostDiagnostics;
+    UAnimBlueprint* LinkedHost =
+        USekiroAnimBlueprintFactoryLibrary::CreateTransientAnimBlueprint(
+            LinkedHostIR,
+            LinkedHostDiagnostics);
+    TestNotNull(TEXT("Linked node host AnimBlueprint compiles"), LinkedHost);
+    TestEqual(TEXT("Linked node host has no diagnostics"), LinkedHostDiagnostics.Num(), 0);
+    if (LinkedHost != nullptr)
+    {
+        UAnimationGraph* NativeHostGraph = FindMainGraph(LinkedHost);
+        UAnimGraphNode_LinkedAnimGraph* LinkedGraphNode =
+            FindFirstNode<UAnimGraphNode_LinkedAnimGraph>(NativeHostGraph);
+        UAnimGraphNode_LinkedAnimLayer* LinkedLayerNode =
+            FindFirstNode<UAnimGraphNode_LinkedAnimLayer>(NativeHostGraph);
+        TestNotNull(TEXT("Native Linked Anim Graph node exists"), LinkedGraphNode);
+        TestNotNull(TEXT("Native Linked Anim Layer node exists"), LinkedLayerNode);
+        TestNotNull(
+            TEXT("Linked Anim Graph exposes reflected Pose output"),
+            LinkedGraphNode != nullptr
+                ? LinkedGraphNode->FindPin(TEXT("Pose"), EGPD_Output)
+                : nullptr);
+        TestNotNull(
+            TEXT("Linked Anim Layer exposes reflected SourcePose input"),
+            LinkedLayerNode != nullptr
+                ? LinkedLayerNode->FindPin(TEXT("SourcePose"), EGPD_Input)
+                : nullptr);
+        TestNotNull(
+            TEXT("Linked Anim Layer exposes reflected Pose output"),
+            LinkedLayerNode != nullptr
+                ? LinkedLayerNode->FindPin(TEXT("Pose"), EGPD_Output)
+                : nullptr);
+    }
     return true;
 }
 

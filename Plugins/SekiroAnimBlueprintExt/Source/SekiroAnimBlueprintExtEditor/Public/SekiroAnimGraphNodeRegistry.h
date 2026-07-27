@@ -45,6 +45,7 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRNodeContract
     FName OwnedGraphType = NAME_None;      // Required 策略要求的内部 GraphType
     TArray<FSekiroAnimIRPinContract> Pins; // 权威 Pin 集合
     TArray<FSekiroAnimIRPropertyContract> Properties; // 权威属性集合
+    bool bDynamicPins = false;             // Pin 是否由目标函数反射动态生成
 };
 
 /** 提供内置动画节点类型的权威只读注册表。 */

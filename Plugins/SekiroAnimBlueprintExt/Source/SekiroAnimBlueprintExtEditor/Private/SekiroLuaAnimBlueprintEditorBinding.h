@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Framework/Commands/UIAction.h"
+#include "Types/SlateEnums.h"
 
 class FMenuBuilder;
 class FExtender;
@@ -11,6 +12,7 @@ class FUICommandInfo;
 class FUICommandList;
 class IAnimationBlueprintEditor;
 class UAnimBlueprint;
+class USekiroLuaAnimBlueprintExtension;
 
 /** 将单个动画蓝图编辑器的 Lua 工具栏和模式化 Compile 行为绑定到其有效命令列表。 */
 class FSekiroLuaAnimBlueprintEditorBinding final
@@ -43,6 +45,11 @@ public:
     bool UsesCommandList(const TSharedRef<FUICommandList>& CommandList) const;
     void RestoreOriginalCompileActions();
 
+#if WITH_DEV_AUTOMATION_TESTS
+    /** 供自动化测试验证工具栏共用的 Lua 动作启用条件。 */
+    bool CanExecuteLuaActionForTest() const { return CanExecuteLuaAction(); }
+#endif
+
 private:
     FSekiroLuaAnimBlueprintEditorBinding(
         const TSharedRef<FUICommandList>& CommandList,
@@ -57,6 +64,12 @@ private:
     void ExecuteCheckLua();
     void ExecuteGenerateFromLua();
     bool CanExecuteLuaAction() const;
+    bool CanEditLuaModule() const;
+    USekiroLuaAnimBlueprintExtension* EnsureLocalLuaExtension();
+    FText GetLuaModuleNameText() const;
+    void CommitLuaModuleName(
+        const FText& ModuleNameText,
+        ETextCommit::Type CommitType);
     void ExecuteToggleEditorLuaDebug();
     bool CanToggleEditorLuaDebug() const;
     bool IsEditorLuaDebugChecked() const;
@@ -70,9 +83,7 @@ private:
     TWeakPtr<IAnimationBlueprintEditor> Editor; // 生产环境动画蓝图编辑器
     TWeakObjectPtr<UAnimBlueprint> TestAnimBlueprint; // 自动化测试直接提供的资产
     TSharedPtr<FExtender> ToolbarExtender; // 工具栏重建时复用的唯一扩展实例
-    TWeakPtr<FMultiBox> ActiveToolbarMultiBox; // 当前重建周期唯一接收 Lua 控件的工具栏实例
-    TWeakPtr<FMultiBox> ParentToolbarMultiBox; // 当前重建周期需要跳过的父级工具栏实例
-    bool bActiveToolbarFilled = false; // 防止 UE 对同一可见 MultiBox 重复执行扩展委托
+    TArray<TWeakPtr<FMultiBox>> FilledToolbarMultiBoxes; // 已注入 Lua 控件的工具栏实例
     FUIAction OriginalToolbarCompileAction; // UE 工具栏 Compile 原动作
     TSharedPtr<const FUICommandInfo> ToolbarCompileCommand; // 生产环境 Compile 或测试替代命令
     FUIAction OriginalKeyboardCompileAction; // UE F7 Compile 原动作

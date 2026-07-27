@@ -35,6 +35,14 @@ enum class ESekiroAnimIRDiagnosticSeverity : uint8
     Error,
 };
 
+/** IR 最终生成的动画蓝图资产种类。 */
+UENUM(BlueprintType)
+enum class ESekiroAnimIRBlueprintKind : uint8
+{
+    AnimBlueprint,
+    AnimationLayerInterface,
+};
+
 /** Lua 源码中的稳定定位信息。 */
 USTRUCT(BlueprintType)
 struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRSourceLocation
@@ -460,6 +468,31 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRGraph
     FSekiroAnimIRSourceLocation SourceLocation; // 声明位置
 };
 
+/** Animation Layer 函数的单个输入参数；输出始终是本地空间 Pose。 */
+USTRUCT(BlueprintType)
+struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRFunctionParameter
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FName Name = NAME_None;               // 函数参数名
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FName DataType = NAME_None;           // 注册数据类型名
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FSoftObjectPath TypeObjectPath;        // Object/Class/Enum 参数的类型对象路径
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    bool bIsPose = false;                 // 是否为 Pose 输入参数
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 DeclarationOrder = 0;           // 源码声明顺序
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FSekiroAnimIRSourceLocation SourceLocation; // 声明位置
+};
+
 /** AnimBlueprint 动画层。 */
 USTRUCT(BlueprintType)
 struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRLayer
@@ -471,6 +504,18 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRLayer
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     FString Name;                         // 动画层名称
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FName FunctionName = NAME_None;       // 原生 Animation Layer 函数名；为空时使用 Name
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FSoftClassPath InterfaceClass;        // Override 所属 Animation Layer Interface
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    bool bOverride = false;               // 是否覆盖接口或父类已有 Layer
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    TArray<FSekiroAnimIRFunctionParameter> Parameters; // Layer 输入签名
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     FString RootGraphId;                  // 动画层入口 Graph ID
@@ -492,10 +537,13 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimBlueprintIR
     GENERATED_BODY()
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
-    int32 SchemaVersion = 2;              // IR Schema 版本
+    int32 SchemaVersion = 3;              // IR Schema 版本
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     FString SourceModule;                 // 生成 IR 的 Lua 模块
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    ESekiroAnimIRBlueprintKind BlueprintKind = ESekiroAnimIRBlueprintKind::AnimBlueprint; // 目标资产种类
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     FSoftClassPath ParentAnimInstanceClass; // 父 AnimInstance 类软路径
@@ -505,6 +553,9 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimBlueprintIR
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     TArray<FSekiroAnimIRVariable> Variables; // GeneratedClass 成员变量
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    TArray<FSoftClassPath> ImplementedInterfaces; // 实现的 Animation Layer Interface 类
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     TArray<FSekiroAnimIRLayer> Layers;     // 动画层定义
@@ -562,6 +613,9 @@ namespace SekiroAnimGraphIRNames
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BlendListByEnumNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName SlotNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LayeredBlendPerBoneNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LinkedAnimLayerNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LinkedAnimGraphNode;
+    SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName LinkedInputPoseNode;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName PoseData;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName ComponentPoseData;
     SEKIROANIMBLUEPRINTEXTEDITOR_API extern const FName BoolData;

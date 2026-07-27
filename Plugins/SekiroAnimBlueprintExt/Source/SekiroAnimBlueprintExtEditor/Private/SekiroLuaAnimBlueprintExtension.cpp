@@ -27,6 +27,46 @@ USekiroLuaAnimBlueprintExtension* USekiroLuaAnimBlueprintExtension::Find(
 }
 
 /**
+ * 沿 AnimBlueprint ParentClass 的 UE 反射继承链查找最近的有效 Lua 源，不依赖项目类名或资产路径。
+ * 当前资产的扩展优先；本地扩展不存在或模块名为空时，继续检查每一级 GeneratedClass 的 ClassGeneratedBy。
+ * 只能在游戏线程调用；函数只读 Blueprint 扩展和 UClass 元数据，不创建对象、不标脏 package。
+ *
+ * @param AnimBlueprint 待解析 Lua 源的当前动画蓝图，可为空。
+ * @param bOutInherited 可选输出；返回父 AnimBlueprint 扩展时为 true，返回本地扩展或未找到时为 false。
+ * @return 当前资产或最近父 AnimBlueprint 上模块名非空的扩展；继承链没有 Lua 源时返回 nullptr。
+ */
+const USekiroLuaAnimBlueprintExtension* USekiroLuaAnimBlueprintExtension::FindEffective(
+    const UAnimBlueprint* AnimBlueprint,
+    bool* bOutInherited)
+{
+    if (bOutInherited != nullptr) *bOutInherited = false;
+    if (AnimBlueprint == nullptr) return nullptr;
+
+    const USekiroLuaAnimBlueprintExtension* LocalExtension = Find(AnimBlueprint);
+    if (LocalExtension != nullptr && !LocalExtension->LuaModuleName.IsEmpty())
+    {
+        return LocalExtension;
+    }
+
+    const UClass* ParentClass = AnimBlueprint->ParentClass.Get();
+    while (ParentClass != nullptr)
+    {
+        const UAnimBlueprint* ParentAnimBlueprint =
+            Cast<UAnimBlueprint>(ParentClass->ClassGeneratedBy);
+        const USekiroLuaAnimBlueprintExtension* ParentExtension =
+            Find(ParentAnimBlueprint);
+        if (ParentExtension != nullptr && !ParentExtension->LuaModuleName.IsEmpty())
+        {
+            if (bOutInherited != nullptr) *bOutInherited = true;
+            return ParentExtension;
+        }
+        ParentClass = ParentClass->GetSuperClass();
+    }
+
+    return nullptr;
+}
+
+/**
  * 返回 AnimBlueprint 已有的唯一 Lua 元数据扩展，缺失时以资产为 Outer 创建并注册一个。
  * 本类型刻意继承 UBlueprintExtension 而非 UAnimBlueprintExtension：UE5.2 动画编译器会删除未由节点请求的
  * UAnimBlueprintExtension，而通用 Blueprint 扩展能够稳定保存编译源身份。只能在游戏线程调用。

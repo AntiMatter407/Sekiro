@@ -86,6 +86,16 @@ function IRSchema.RequireAssetObjectPath(path, kind)
     return path
 end
 
+---校验 UE 类软路径，支持原生类和 Blueprint GeneratedClass 的规范对象路径。
+---该格式必须为“/Package/Object.ObjectName”，例如 /Script/Engine.AnimInstance
+---或 /Game/Animation/ABP_Layers.ABP_Layers_C；类是否存在及是否派生自预期基类由 C++ 生成器校验。
+---@param path string 待校验的原生类或 Blueprint GeneratedClass 软路径。
+---@param kind string 错误消息中显示的类用途。
+---@return string valid_path 已规范化验证、可写入 FSoftClassPath 的对象路径。
+function IRSchema.RequireClassObjectPath(path, kind)
+    return IRSchema.RequireAssetObjectPath(path, kind or "Class")
+end
+
 ---在父级稳定 ID 下追加实体类别和语义名。
 ---@param parent_id string 已验证的父实体稳定 ID，可为空字符串。
 ---@param category string 当前实体在 IR 中的类别名称。
