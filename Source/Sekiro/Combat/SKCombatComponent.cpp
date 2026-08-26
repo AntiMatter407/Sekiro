@@ -1,6 +1,9 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Combat/SKCombatComponent.h"
+#include "AbilitySystem/SKAbilitySystemComponent.h"
+#include "AbilitySystem/Attributes/SKCharacterAttributeSet.h"
+#include "AI/SKAIBattleProjectile.h"
 #include "AIController.h"
 #include "Animation/AnimCompositeBase.h"
 #include "Animation/AnimInstance.h"
@@ -8,12 +11,21 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "Character/SKCharacter.h"
+#include "Character/SKSurvivalComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
 #include "Input/SKInputManager.h"
 #include "Movement/SKMovementComponent.h"
 #include "Weapon/SKWeaponManagerComponent.h"
+
+namespace
+{
+    constexpr int32 AICombatEventQueueCapacity = 32; // 通用 AI 战斗事件队列固定容量
+}
 
 /**
  * 创建可由 Lua 编排的战斗动作宿主并启用 PrePhysics Tick。
@@ -120,6 +132,175 @@ void USKCombatComponent::StopOwnerAIMovement()
         ? Cast<AAIController>(OwnerPawn->GetController())
         : nullptr;
     if (AIController) AIController->StopMovement();
+}
+
+/**
+ * 发布一条通用 AI 战斗事实，并以组件本地顺序号和当前世界时间覆盖调用方提供的排序字段。
+ * 本函数只传输事件，不写 Blackboard、不选择动作；队列满时淘汰最旧事件并且每个组件只警告一次。
+ * 只能在游戏线程调用，Event 会被复制，函数不保留调用方引用。
+ *
+ * @param Event 待发布的通用事件；EventType 不能为 None，EventSerial 和 EventTimeSeconds 会被忽略。
+ * @return 事件有效且获得新的正序列号并入队时返回 true；类型无效或序列号耗尽时返回 false。
+ */
+bool USKCombatComponent::PublishAICombatEvent(const FSKAICombatEvent& Event)
+{
+    if (Event.EventType == ESKAICombatEventType::None) return false;
+
+    if (LastAICombatEventSerial == TNumericLimits<int32>::Max())
+    {
+        if (!bAICombatEventSerialExhaustedLogged)
+        {
+            UE_LOG(
+                LogTemp,
+                Error,
+                TEXT("SKCombatComponent AI combat event serial exhausted. Owner=%s"),
+                *GetNameSafe(GetOwner()));
+            bAICombatEventSerialExhaustedLogged = true;
+        }
+        return false;
+    }
+
+    ++LastAICombatEventSerial;
+    FSKAICombatEvent StoredEvent = Event;
+    StoredEvent.EventSerial = LastAICombatEventSerial;
+    StoredEvent.EventTimeSeconds = GetWorldTimeSeconds();
+
+    if (PendingAICombatEvents.Num() >= AICombatEventQueueCapacity)
+    {
+        PendingAICombatEvents.RemoveAt(0);
+        if (!bAICombatEventOverflowLogged)
+        {
+            UE_LOG(
+                LogTemp,
+                Warning,
+                TEXT("SKCombatComponent AI combat event queue overflowed; oldest event discarded. Owner=%s Capacity=%d"),
+                *GetNameSafe(GetOwner()),
+                AICombatEventQueueCapacity);
+            bAICombatEventOverflowLogged = true;
+        }
+    }
+
+    PendingAICombatEvents.Add(MoveTemp(StoredEvent));
+    return true;
+}
+
+/**
+ * 弹出等待时间最久的通用 AI 战斗事件，供 Owner 的 ReactionRouter 顺序收集当前批次。
+ * 只能在游戏线程调用；成功时从队列永久移除该事件，不执行反应优先级判断。
+ *
+ * @param OutEvent 输出事件副本；队列为空时重置为安全默认值。
+ * @return 成功弹出事件时返回 true，队列为空时返回 false。
+ */
+bool USKCombatComponent::ConsumeAICombatEvent(FSKAICombatEvent& OutEvent)
+{
+    OutEvent = FSKAICombatEvent();
+    if (PendingAICombatEvents.IsEmpty()) return false;
+
+    OutEvent = PendingAICombatEvents[0];
+    PendingAICombatEvents.RemoveAt(0);
+    return true;
+}
+
+/** 清空所有尚未消费的通用 AI 战斗事件；仅允许游戏线程调用，不重置事件序列号。 */
+void USKCombatComponent::ClearAICombatEvents()
+{
+    PendingAICombatEvents.Reset();
+}
+
+/**
+ * 查询当前等待 ReactionRouter 消费的通用 AI 战斗事件数量。
+ * 仅允许游戏线程读取，不消费事件且不修改队列。
+ *
+ * @return 当前队列元素数量，范围为零到固定容量 32。
+ */
+int32 USKCombatComponent::GetPendingAICombatEventCount() const
+{
+    return PendingAICombatEvents.Num();
+}
+
+/**
+ * 以组件 Owner 为射手生成并初始化一枚通用 AI 战斗弹射物，供 Lua 在语义动作窗口中调用。
+ * 本函数只负责验证输入、生成 Actor 和传递当前 ActionSerial；不选择弹种、资产、目标或发射时机。
+ * 只能在游戏线程调用；成功实例由 World 管理，OutProjectile 是非持有输出引用。
+ *
+ * @param ProjectileClass 要生成的通用弹射物类，必须有效；允许由蓝图子类配置外观和碰撞体。
+ * @param SpawnLocation 弹射物出生世界位置，单位厘米；必须包含有限分量。
+ * @param TargetActor 可选瞄准目标；有效时使用其当前世界位置，且优先于 TargetLocation。
+ * @param TargetLocation TargetActor 无效时使用的世界瞄准位置，单位厘米；必须包含有限分量。
+ * @param Speed 初始飞行速度，单位厘米每秒；必须为有限正数。
+ * @param GravityScale ProjectileMovement 重力倍率；必须为有限数，可为零或负数。
+ * @param Damage 命中时提交给标准伤害系统的基础伤害；必须为有限非负数。
+ * @param LifeSeconds 弹射物自动销毁时间，单位秒；必须为有限正数。
+ * @param EventTag 透传给 ProjectileImpact 的可选中性语义标签，不由 C++ 解释。
+ * @param OutProjectile 成功时输出生成实例，失败时重置为空；调用方不获得生命周期所有权。
+ * @return 输入、Owner、World 和生成流程全部有效时返回 true，否则返回 false。
+ */
+bool USKCombatComponent::SpawnAIBattleProjectile(
+    TSubclassOf<ASKAIBattleProjectile> ProjectileClass,
+    const FVector& SpawnLocation,
+    AActor* TargetActor,
+    const FVector& TargetLocation,
+    float Speed,
+    float GravityScale,
+    float Damage,
+    float LifeSeconds,
+    FName EventTag,
+    ASKAIBattleProjectile*& OutProjectile)
+{
+    OutProjectile = nullptr;
+
+    AActor* ShooterActor = GetOwner();
+    UWorld* World = GetWorld();
+    const FVector ResolvedTargetLocation = IsValid(TargetActor)
+        ? TargetActor->GetActorLocation()
+        : TargetLocation;
+    if (!ProjectileClass
+        || !ShooterActor
+        || !World
+        || SpawnLocation.ContainsNaN()
+        || ResolvedTargetLocation.ContainsNaN()
+        || !FMath::IsFinite(Speed)
+        || Speed <= UE_SMALL_NUMBER
+        || !FMath::IsFinite(GravityScale)
+        || !FMath::IsFinite(Damage)
+        || Damage < 0.f
+        || !FMath::IsFinite(LifeSeconds)
+        || LifeSeconds <= 0.f
+        || ResolvedTargetLocation.Equals(SpawnLocation, UE_SMALL_NUMBER))
+    {
+        return false;
+    }
+
+    FActorSpawnParameters SpawnParameters;
+    SpawnParameters.Owner = ShooterActor;
+    SpawnParameters.Instigator = Cast<APawn>(ShooterActor);
+    SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    const FRotator SpawnRotation = (ResolvedTargetLocation - SpawnLocation).Rotation();
+    ASKAIBattleProjectile* Projectile = World->SpawnActor<ASKAIBattleProjectile>(
+        ProjectileClass,
+        SpawnLocation,
+        SpawnRotation,
+        SpawnParameters);
+    if (!Projectile) return false;
+
+    if (!Projectile->InitializeProjectile(
+        ShooterActor,
+        TargetActor,
+        ResolvedTargetLocation,
+        ActionSerial,
+        EventTag,
+        Damage,
+        Speed,
+        GravityScale,
+        LifeSeconds))
+    {
+        Projectile->Destroy();
+        return false;
+    }
+
+    OutProjectile = Projectile;
+    return true;
 }
 
 /**
@@ -255,14 +436,36 @@ int32 USKCombatComponent::GetActionSerial() const
  * 本函数不选择或播放资产；仅允许游戏线程由 Lua 状态机调用。
  *
  * @param NewState 新动作对 AnimBlueprint 可见的状态。
- * @return 新动作的正整数序列号，后续输入和结束回调必须用它校验。
+ * @return 新动作的正整数序列号；数值未就绪返回零，后续输入和结束回调必须用序列号校验。
  */
 int32 USKCombatComponent::BeginCombatAction(ESKCombatActionState NewState)
 {
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!IsInGameThread() || !IsCombatAttributesReady() || !Survival || !Survival->CanAct() || ActionSerial == MAX_int32) return 0;
+    PresentationToken = FSKSurvivalTransitionToken();
     ++ActionSerial;
-    if (ActionSerial <= 0) ActionSerial = 1;
     CombatActionState = NewState;
     return ActionSerial;
+}
+
+/**
+ * 游戏线程持有效生存过程令牌开启特殊演出，不能用于生命伤害或攻击碰撞。
+ * @param Token 当前死亡/回生/崩溃身份，必须属于本 Owner 的 Survival。
+ * @param NewState 崩溃只允许 PostureBroken；死亡/回生使用 AIReaction 通用受控演出状态。
+ * @return 正动作序号表示授权成功；过期、跨角色或错误动作类型返回零。
+ */
+int32 USKCombatComponent::BeginSurvivalPresentation(
+    const FSKSurvivalTransitionToken& Token, ESKCombatActionState NewState)
+{
+    if (!IsInGameThread()) return 0;
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!Survival || !Survival->IsTransitionTokenValid(Token) || ActionSerial == MAX_int32) return 0;
+    const bool bBreak = Token.Kind == ESKSurvivalTransitionKind::PostureBreak;
+    if ((bBreak && NewState != ESKCombatActionState::PostureBroken)
+        || (!bBreak && NewState != ESKCombatActionState::AIReaction)) return 0;
+    PresentationToken = Token;
+    CombatActionState = NewState;
+    return ++ActionSerial;
 }
 
 /**
@@ -276,8 +479,8 @@ void USKCombatComponent::InvalidateCombatAction(int32 ExpectedActionSerial)
 {
     if (ExpectedActionSerial != 0 && ExpectedActionSerial != ActionSerial) return;
 
-    ++ActionSerial;
-    if (ActionSerial <= 0) ActionSerial = 1;
+    if (ActionSerial < MAX_int32) ++ActionSerial;
+    PresentationToken = FSKSurvivalTransitionToken();
     PendingInputEvents.Reset();
     DeflectGuardInputSerial = 0;
     DeflectContextSerial = 0;
@@ -295,16 +498,26 @@ bool USKCombatComponent::IsActionSerialValid(int32 ExpectedActionSerial) const
     return ExpectedActionSerial > 0 && ExpectedActionSerial == ActionSerial;
 }
 
-/** 查询当前架势值；仅允许游戏线程读取，不推进恢复或打崩流程。 */
+/** 游戏线程查询 Owner 数值是否就绪；缺少 ASC 时返回 false，不触发初始化。 */
+bool USKCombatComponent::IsCombatAttributesReady() const
+{
+    const USKAbilitySystemComponent* ASC = ResolveAttributeSystem();
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    return ASC && ASC->IsAttributesReady() && Survival && Survival->IsSurvivalReady();
+}
+
+/** 查询 GAS 当前架势值；仅允许游戏线程读取，缺少 ASC 时返回零，不推进恢复或打崩流程。 */
 float USKCombatComponent::GetCurrentPosture() const
 {
-    return CurrentPosture;
+    const USKAbilitySystemComponent* ASC = ResolveAttributeSystem();
+    return ASC ? ASC->GetAttributeSnapshot().Posture : 0.f;
 }
 
 /** 查询当前架势上限；仅允许游戏线程读取。 */
 float USKCombatComponent::GetMaxPosture() const
 {
-    return MaxPosture;
+    const USKAbilitySystemComponent* ASC = ResolveAttributeSystem();
+    return ASC ? ASC->GetAttributeSnapshot().MaxPosture : 0.f;
 }
 
 /**
@@ -315,77 +528,24 @@ float USKCombatComponent::GetMaxPosture() const
  */
 float USKCombatComponent::GetPostureNormalized() const
 {
-    return MaxPosture > UE_SMALL_NUMBER
-        ? FMath::Clamp(CurrentPosture / MaxPosture, 0.f, 1.f)
+    const float Maximum = GetMaxPosture();
+    return Maximum > 0.f
+        ? FMath::Clamp(GetCurrentPosture() / Maximum, 0.f, 1.f)
         : 0.f;
 }
 
 /** 查询当前是否处于架势打崩流程；仅允许游戏线程读取。 */
 bool USKCombatComponent::IsPostureBroken() const
 {
-    return bPostureBroken;
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    return Survival && Survival->IsPostureBroken();
 }
 
-/**
- * 写入 Lua 配置提供的架势上限，并把当前值同步限制到新范围。
- * 上限负值按零处理；只有上限或当前值实际变化时才广播一次完整架势快照。
- * 本函数不执行打崩判定且只能在游戏线程调用。
- *
- * @param NewMaxPosture 新架势上限，非有限业务值应由脚本层预先过滤，负值会限制为零。
- */
-void USKCombatComponent::SetMaxPosture(float NewMaxPosture)
+/** 游戏线程返回 GAS 配置的每秒架势恢复点数；缺少 ASC 时返回零，不自行执行恢复。 */
+float USKCombatComponent::GetPostureRecoveryRate() const
 {
-    const float SafeMaxPosture = FMath::Max(0.f, NewMaxPosture);
-    const float SafeCurrentPosture = FMath::Clamp(CurrentPosture, 0.f, SafeMaxPosture);
-    if (FMath::IsNearlyEqual(MaxPosture, SafeMaxPosture)
-        && FMath::IsNearlyEqual(CurrentPosture, SafeCurrentPosture))
-    {
-        return;
-    }
-
-    MaxPosture = SafeMaxPosture;
-    CurrentPosture = SafeCurrentPosture;
-    BroadcastPostureChanged();
-}
-
-/**
- * 写入 Lua 已完成数值策略计算后的当前架势，并限制到 [0, MaxPosture]。
- * 只有限制后的数值实际变化时才广播；本函数不判断结果类型，也不自动进入打崩状态。
- * 只能在游戏线程调用。
- *
- * @param NewCurrentPosture Lua 计算后的目标架势值，超出范围时会被安全限制。
- */
-void USKCombatComponent::SetCurrentPosture(float NewCurrentPosture)
-{
-    const float SafeCurrentPosture = FMath::Clamp(NewCurrentPosture, 0.f, MaxPosture);
-    if (FMath::IsNearlyEqual(CurrentPosture, SafeCurrentPosture)) return;
-
-    CurrentPosture = SafeCurrentPosture;
-    BroadcastPostureChanged();
-}
-
-/**
- * 将当前架势归零并复用统一变化广播。
- * 本函数不改变 bPostureBroken 或动作状态，便于 Lua 明确编排打崩进入与退出顺序；
- * 只能在游戏线程调用。
- */
-void USKCombatComponent::ResetPosture()
-{
-    SetCurrentPosture(0.f);
-}
-
-/**
- * 写入 Lua 编排的架势打崩状态，并在状态真正变化时广播。
- * 本函数不播放动画、不重置架势、不修改动作状态或输入锁；只能在游戏线程调用。
- *
- * @param bNewPostureBroken true 表示进入打崩流程，false 表示流程恢复完成。
- */
-void USKCombatComponent::SetPostureBroken(bool bNewPostureBroken)
-{
-    if (bPostureBroken == bNewPostureBroken) return;
-
-    bPostureBroken = bNewPostureBroken;
-    OnPostureBrokenChanged.Broadcast(bPostureBroken);
+    const USKAbilitySystemComponent* ASC = ResolveAttributeSystem();
+    return ASC ? ASC->GetAttributeSnapshot().PostureRecoveryRate : 0.f;
 }
 
 /**
@@ -427,6 +587,9 @@ void USKCombatComponent::ClearOwnerGameplayInputForScript()
  */
 bool USKCombatComponent::ActivateOwnerWeaponHitbox(bool bResetHitActors)
 {
+    if (!IsInGameThread() || !IsCombatAttributesReady()) return false;
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!Survival || !Survival->CanAct()) return false;
     AActor* Owner = GetOwner();
     USKWeaponManagerComponent* WeaponManager =
         Owner ? Owner->FindComponentByClass<USKWeaponManagerComponent>() : nullptr;
@@ -458,6 +621,9 @@ bool USKCombatComponent::DeactivateOwnerWeaponHitbox()
  */
 void USKCombatComponent::SubmitCombatInputEvent(const FSKCombatInputEvent& InputEvent)
 {
+    if (!IsInGameThread()) return;
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!Survival || !Survival->CanAct()) return;
     if (InputEvent.Action == ESKCombatInputAction::Guard)
     {
         bGuardHeld = InputEvent.Phase == ESKCombatInputPhase::Started;
@@ -510,6 +676,9 @@ bool USKCombatComponent::PlayCombatAnimation(
     float PlayRate,
     int32 LoopCount)
 {
+    if (!IsInGameThread()) return false;
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!Survival || (!Survival->CanAct() && !Survival->IsTransitionTokenValid(PresentationToken))) return false;
     UAnimInstance* AnimInstance = ResolveAnimInstance();
     if (!Animation || !AnimInstance || CombatSlotName.IsNone()) return false;
 
@@ -732,19 +901,28 @@ bool USKCombatComponent::TryConsumeIncomingAttackAnimation(
 }
 
 /**
- * 建立组件 Tick 先后关系并为纯原生 UnLua 组件补发 ReceiveBeginPlay。
+ * 监听 Owner 的通用伤害通知，建立组件 Tick 先后关系并为纯原生 UnLua 组件补发 ReceiveBeginPlay。
  * InputManager 作为前置 Tick，角色 Mesh 以本组件为前置，确保输入发布、战斗状态和动画采集有确定顺序。
  * 仅由 UE 在游戏线程生命周期调用。
  */
 void USKCombatComponent::BeginPlay()
 {
+    if (USKAbilitySystemComponent* ASC = ResolveAttributeSystem())
+    {
+        ASC->OnAttributeChanged.AddUniqueDynamic(this, &USKCombatComponent::HandleGASAttributeChanged);
+        ASC->OnAttributesReady.AddUniqueDynamic(this, &USKCombatComponent::HandleGASAttributesReady);
+        if (ASC->IsAttributesReady()) BroadcastPostureChanged();
+    }
     const bool bEngineDispatchesReceiveBeginPlay =
         GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint)
         || !GetClass()->HasAnyClassFlags(CLASS_Native);
 
     Super::BeginPlay();
 
-    ACharacter* Character = Cast<ACharacter>(GetOwner());
+    AActor* Owner = GetOwner();
+    if (Owner) Owner->OnTakeAnyDamage.AddUniqueDynamic(this, &USKCombatComponent::HandleOwnerTakeAnyDamage);
+
+    ACharacter* Character = Cast<ACharacter>(Owner);
     if (Character)
     {
         if (UActorComponent* InputComponent = Character->FindComponentByClass<USKInputManager>())
@@ -761,7 +939,7 @@ void USKCombatComponent::BeginPlay()
 }
 
 /**
- * 在 Owner 离场前使 Serial 失效、停止自有 Montage 并清空输入和模拟来袭状态。
+ * 在 Owner 离场前解除伤害监听、使 Serial 失效、停止自有 Montage 并清空输入、AI 事件和模拟来袭状态。
  * 清理可重复调用，旧 Montage 回调因身份和 Serial 校验不会广播新动作结束事件。
  * 仅由 UE 在游戏线程生命周期调用。
  *
@@ -769,8 +947,18 @@ void USKCombatComponent::BeginPlay()
  */
 void USKCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    if (USKAbilitySystemComponent* ASC = ResolveAttributeSystem())
+    {
+        ASC->OnAttributeChanged.RemoveDynamic(this, &USKCombatComponent::HandleGASAttributeChanged);
+        ASC->OnAttributesReady.RemoveDynamic(this, &USKCombatComponent::HandleGASAttributesReady);
+    }
+    bHasBroadcastPosture = false;
+    AActor* Owner = GetOwner();
+    if (Owner) Owner->OnTakeAnyDamage.RemoveDynamic(this, &USKCombatComponent::HandleOwnerTakeAnyDamage);
+
     InvalidateCombatAction(0);
     StopCombatAnimation(0.f);
+    ClearAICombatEvents();
     PendingInputEvents.Reset();
     IncomingAttackContext = FSKIncomingAttackAnimationContext();
     bGuardHeld = false;
@@ -801,6 +989,67 @@ void USKCombatComponent::TickComponent(
     {
         IncomingAttackContext = FSKIncomingAttackAnimationContext();
     }
+}
+
+/** 游戏线程查询同 Owner 的数值 ASC；不存在时返回空，不缓存所有权或创建组件。 */
+USKAbilitySystemComponent* USKCombatComponent::ResolveAttributeSystem() const
+{
+    AActor* Owner = GetOwner();
+    return Owner ? Owner->FindComponentByClass<USKAbilitySystemComponent>() : nullptr;
+}
+
+/**
+ * 游戏线程将架势相关 GAS 属性变化桥接到旧通知，统一快照去重。
+ * @param Attribute 已更新的 GAS 属性，非架势属性忽略。
+ * @param OldValue 修改前值，仅供 GAS 通知签名使用，不反推资源。
+ * @param NewValue 修改后值，仅供 GAS 通知签名使用，快照从 ASC 统一查询。
+ */
+void USKCombatComponent::HandleGASAttributeChanged(FGameplayAttribute Attribute, float OldValue, float NewValue)
+{
+    if (Attribute == USKCharacterAttributeSet::GetPostureAttribute()
+        || Attribute == USKCharacterAttributeSet::GetMaxPostureAttribute()) BroadcastPostureChanged();
+}
+
+/** 游戏线程在初始属性完整提交后发布首个架势快照，不修改任何属性。 */
+void USKCombatComponent::HandleGASAttributesReady()
+{
+    BroadcastPostureChanged();
+}
+
+/**
+ * 把 Owner 实际收到的正有限伤害发布为通用 DamageReceived 事件。
+ * 本函数只记录事实，不解释 DamageType、不写 Blackboard 且不选择受击反应；由 Owner 的伤害委托在游戏线程同步调用。
+ *
+ * @param DamagedActor 实际接收伤害的 Actor，通常等于 Owner；为空时使用组件 Owner 作为事件目标。
+ * @param Damage 引擎确认的实际伤害值；只有有限且大于零的数值会被发布。
+ * @param DamageType 本次伤害类型描述，可为空；当前仅保留通用回调兼容性，不映射事件标签。
+ * @param InstigatedBy 发起伤害的控制器，可为空；没有 DamageCauser 时优先使用其 Pawn，否则使用控制器自身。
+ * @param DamageCauser 直接造成伤害的 Actor，可为空；存在时作为事件来源最高优先级。
+ */
+void USKCombatComponent::HandleOwnerTakeAnyDamage(
+    AActor* DamagedActor,
+    float Damage,
+    const UDamageType* DamageType,
+    AController* InstigatedBy,
+    AActor* DamageCauser)
+{
+    (void)DamageType;
+    if (!FMath::IsFinite(Damage) || Damage <= 0.f) return;
+
+    AActor* SourceActor = DamageCauser;
+    if (!SourceActor && InstigatedBy)
+    {
+        SourceActor = InstigatedBy->GetPawn();
+        if (!SourceActor) SourceActor = InstigatedBy;
+    }
+
+    FSKAICombatEvent Event;
+    Event.EventType = ESKAICombatEventType::DamageReceived;
+    Event.SourceActor = SourceActor;
+    Event.TargetActor = DamagedActor ? DamagedActor : GetOwner();
+    Event.RelatedActionSerial = ActionSerial;
+    Event.Magnitude = Damage;
+    PublishAICombatEvent(Event);
 }
 
 /**
@@ -906,5 +1155,11 @@ double USKCombatComponent::GetWorldTimeSeconds() const
  */
 void USKCombatComponent::BroadcastPostureChanged()
 {
-    OnPostureChanged.Broadcast(CurrentPosture, MaxPosture, GetPostureNormalized());
+    const float Current = GetCurrentPosture();
+    const float Maximum = GetMaxPosture();
+    if (bHasBroadcastPosture && Current == LastBroadcastPosture && Maximum == LastBroadcastMaxPosture) return;
+    bHasBroadcastPosture = true;
+    LastBroadcastPosture = Current;
+    LastBroadcastMaxPosture = Maximum;
+    OnPostureChanged.Broadcast(Current, Maximum, GetPostureNormalized());
 }

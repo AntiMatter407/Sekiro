@@ -43,7 +43,7 @@ const USekiroLuaAnimBlueprintExtension* USekiroLuaAnimBlueprintExtension::FindEf
     if (AnimBlueprint == nullptr) return nullptr;
 
     const USekiroLuaAnimBlueprintExtension* LocalExtension = Find(AnimBlueprint);
-    if (LocalExtension != nullptr && !LocalExtension->LuaModuleName.IsEmpty())
+    if (LocalExtension != nullptr && !LocalExtension->GetExchangeLuaModuleName().IsEmpty())
     {
         return LocalExtension;
     }
@@ -55,7 +55,7 @@ const USekiroLuaAnimBlueprintExtension* USekiroLuaAnimBlueprintExtension::FindEf
             Cast<UAnimBlueprint>(ParentClass->ClassGeneratedBy);
         const USekiroLuaAnimBlueprintExtension* ParentExtension =
             Find(ParentAnimBlueprint);
-        if (ParentExtension != nullptr && !ParentExtension->LuaModuleName.IsEmpty())
+        if (ParentExtension != nullptr && !ParentExtension->GetExchangeLuaModuleName().IsEmpty())
         {
             if (bOutInherited != nullptr) *bOutInherited = true;
             return ParentExtension;
@@ -87,6 +87,17 @@ USekiroLuaAnimBlueprintExtension* USekiroLuaAnimBlueprintExtension::Request(
 }
 
 /**
+ * 返回编辑器 Lua → AnimBlueprint 应读取的交换模块；GeneratedLuaModuleName 非空时优先，否则兼容旧资产。
+ * 函数只读取值字段，可在任意线程调用，不加载模块或访问文件系统。
+ *
+ * @return 可为空的 UnLua 模块名；返回值不改变运行时 SourceModule 语义。
+ */
+FString USekiroLuaAnimBlueprintExtension::GetExchangeLuaModuleName() const
+{
+    return GeneratedLuaModuleName.IsEmpty() ? LuaModuleName : GeneratedLuaModuleName;
+}
+
+/**
  * 将最近编译状态更新为成功并递增资产级修订号，不保存 package，也不触发 Blueprint 编译。
  * 只能在游戏线程调用；调用方应先对扩展执行 Modify 以纳入编辑器事务。
  */
@@ -110,6 +121,7 @@ void USekiroLuaAnimBlueprintExtension::MarkCompileFailed(const FString& Message)
 {
     bSourceDirty = true;
     CompileStatus = ESekiroLuaAnimBlueprintCompileStatus::Error;
+    SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
     LastCompileMessage = Message;
 }
 
@@ -126,8 +138,53 @@ void USekiroLuaAnimBlueprintExtension::MarkSourceDirty(const FString& Message)
     CompileStatus = ESekiroLuaAnimBlueprintCompileStatus::OutOfDate;
     LastCompileMessage = Message;
 }
+
 /**
- * 缓存当前源码成功构建且通过验证的 IR，供 Generate From Lua 在同一源码修订上复用。
+ * 将文件监听事件折叠为 LuaChanged/BothChanged；首次同步前保持 NeverSynchronized。
+ * 只能在游戏线程调用；函数不读取 Lua、不修改 Graph/文件，也不标脏 package。
+ *
+ * @param Message 面向工具栏与日志的变化原因；允许为空。
+ */
+void USekiroLuaAnimBlueprintExtension::MarkLuaChanged(const FString& Message)
+{
+    check(IsInGameThread());
+    MarkSourceDirty(Message);
+    if (SyncStatus == ESekiroLuaAnimBlueprintSyncStatus::BlueprintChanged
+        || SyncStatus == ESekiroLuaAnimBlueprintSyncStatus::BothChanged)
+    {
+        SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::BothChanged;
+    }
+    else if (!LastSynchronizedBlueprintHash.IsEmpty()
+        && !LastSynchronizedLuaHash.IsEmpty())
+    {
+        SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::LuaChanged;
+    }
+    else
+    {
+        SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::NeverSynchronized;
+    }
+}
+
+/**
+ * 提交一次已成功完成且重新读取验证的双向同步点。
+ * 只能在游戏线程调用；函数仅更新扩展内存字段，不保存资产、不修改 Graph 或 Lua 文件。
+ *
+ * @param BlueprintHash Blueprint Reader 产生的 Canonical IR 哈希，不能为空。
+ * @param LuaHash Exchange Lua CompileIR 产生的 Canonical IR 哈希，不能为空。
+ */
+void USekiroLuaAnimBlueprintExtension::MarkSynchronized(
+    const FString& BlueprintHash,
+    const FString& LuaHash)
+{
+    check(IsInGameThread());
+    check(!BlueprintHash.IsEmpty() && !LuaHash.IsEmpty());
+    LastSynchronizedBlueprintHash = BlueprintHash;
+    LastSynchronizedLuaHash = LuaHash;
+    SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::InSync;
+}
+
+/**
+ * 缓存当前源码成功构建且通过验证的 IR，供 Lua → AnimBlueprint 在同一源码修订上复用。
  * 只能在游戏线程调用；函数不修改 Graph、不调用原生编译、不保存或主动标脏 package。
  *
  * @param CheckedIR 已完成 Lua 导入、IR 验证和资源预检的不可变结果；函数复制其内容。
@@ -152,5 +209,6 @@ void USekiroLuaAnimBlueprintExtension::MarkCheckFailed(const FString& Message)
 {
     check(IsInGameThread());
     CompileStatus = ESekiroLuaAnimBlueprintCompileStatus::Error;
+    SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
     LastCompileMessage = Message;
 }

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "AbilitySystemInterface.h"
 #include "SKCharacter.generated.h"
 
 // ============================================================================
@@ -21,9 +22,12 @@ class USKCameraManagerComponent;
 class USKLockOnIndicatorComponent;
 class USKCombatComponent;
 class USKMovementComponent;
+class USKAbilitySystemComponent;
+class USKCharacterAttributeSet;
+class USKSurvivalComponent;
 
 UCLASS(config=Game)
-class SEKIRO_API ASKCharacter : public ACharacter
+class SEKIRO_API ASKCharacter : public ACharacter, public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 
@@ -31,6 +35,18 @@ class SEKIRO_API ASKCharacter : public ACharacter
 
 public:
 	ASKCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+
+    UFUNCTION(BlueprintPure, Category = "Survival")
+    USKSurvivalComponent* GetSurvivalComponent() const;
+
+    // ── GAS 数值基础 ──────────────────────────────────────
+    virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+
+    UFUNCTION(BlueprintPure, Category = "GAS")
+    USKAbilitySystemComponent* GetSKAbilitySystemComponent() const;
+
+    UFUNCTION(BlueprintPure, Category = "GAS")
+    FString GetAttributeConfigModule() const;
 
 	// ── 组件访问 ──────────────────────────────────────────
 
@@ -65,10 +81,23 @@ protected:
 	/** 供派生角色保留其已配置移动组件类型的构造入口。 */
 	ASKCharacter(const FObjectInitializer& ObjectInitializer, FSKMovementComponentOverrideTag OverrideTag);
 
+    virtual void PostInitializeComponents() override;
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
 	// ── 组件 ──────────────────────────────────────────────
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Survival")
+    TObjectPtr<USKSurvivalComponent> SurvivalComponent; // 唯一生命与躯干流程组件
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS")
+    TObjectPtr<USKAbilitySystemComponent> AbilitySystemComponent; // 角色自身作为 Owner 与 Avatar 的 ASC
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GAS")
+    TObjectPtr<USKCharacterAttributeSet> CharacterAttributes; // 生命、战斗和躯干的唯一属性存储
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GAS", meta = (ExposeOnSpawn = "true"))
+    FString AttributeConfigModule; // 统一角色属性的 Lua 模块；空值由 Lua 按主角/AI 类型选择，显式配置错误不回退
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;           // 相机摇臂

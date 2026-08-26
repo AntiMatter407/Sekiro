@@ -5,17 +5,22 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Combat/SKCombatTypes.h"
+#include "AttributeSet.h"
+#include "Character/SKSurvivalTypes.h"
 #include "UnLuaInterface.h"
 #include "SKCombatComponent.generated.h"
 
 class UAnimInstance;
 class UAnimMontage;
 class UAnimSequence;
+class AController;
+class ASKAIBattleProjectile;
+class UDamageType;
+class USKAbilitySystemComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSKCombatInputEventSignature, const FSKCombatInputEvent&, InputEvent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSKCombatAnimationEndedSignature, int32, ActionSerial, bool, bInterrupted);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FSKPostureChangedSignature, float, Current, float, Maximum, float, Normalized);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSKPostureBrokenChangedSignature, bool, bBroken);
 
 UCLASS(ClassGroup = (Combat), meta = (BlueprintSpawnableComponent))
 class SEKIRO_API USKCombatComponent : public UActorComponent, public IUnLuaInterface
@@ -54,6 +59,40 @@ public:
     /** 停止 Owner 当前由 AIController 发起的导航移动。 */
     UFUNCTION(BlueprintCallable, Category = "Combat|AI")
     void StopOwnerAIMovement();
+
+    // ── AI 战斗事件 ──────────────────────────────────────────
+
+    /** 发布一条由组件赋予顺序和时间的通用 AI 战斗事件。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|AI")
+    bool PublishAICombatEvent(const FSKAICombatEvent& Event);
+
+    /** 按到达顺序消费等待时间最久的 AI 战斗事件。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|AI")
+    bool ConsumeAICombatEvent(FSKAICombatEvent& OutEvent);
+
+    /** 清空尚未消费的 AI 战斗事件。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|AI")
+    void ClearAICombatEvents();
+
+    /** 查询尚未消费的 AI 战斗事件数量。 */
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|AI")
+    int32 GetPendingAICombatEventCount() const;
+
+    // ── AI 弹射物 ────────────────────────────────────────────
+
+    /** 生成并初始化一枚通用 AI 战斗弹射物。 */
+    UFUNCTION(BlueprintCallable, Category = "Combat|AI|Projectile")
+    bool SpawnAIBattleProjectile(
+        TSubclassOf<ASKAIBattleProjectile> ProjectileClass,
+        const FVector& SpawnLocation,
+        AActor* TargetActor,
+        const FVector& TargetLocation,
+        float Speed,
+        float GravityScale,
+        float Damage,
+        float LifeSeconds,
+        FName EventTag,
+        ASKAIBattleProjectile*& OutProjectile);
 
     // ── 状态与序列号 ──────────────────────────────────────────
 
@@ -101,12 +140,18 @@ public:
     int32 BeginCombatAction(ESKCombatActionState NewState);
 
     UFUNCTION(BlueprintCallable, Category = "Combat|State")
+    int32 BeginSurvivalPresentation(const FSKSurvivalTransitionToken& Token, ESKCombatActionState NewState);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|State")
     void InvalidateCombatAction(int32 ExpectedActionSerial);
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|State")
     bool IsActionSerialValid(int32 ExpectedActionSerial) const;
 
     // ── 架势 ──────────────────────────────────────────────────
+
+    UFUNCTION(BlueprintPure, Category = "Combat|Posture")
+    bool IsCombatAttributesReady() const;
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Combat|Posture")
     float GetCurrentPosture() const;
@@ -121,22 +166,10 @@ public:
     bool IsPostureBroken() const;
 
     UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
-    void SetMaxPosture(float NewMaxPosture);
-
-    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
-    void SetCurrentPosture(float NewCurrentPosture);
-
-    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
-    void ResetPosture();
-
-    UFUNCTION(BlueprintCallable, Category = "Combat|Posture")
-    void SetPostureBroken(bool bNewPostureBroken);
+    float GetPostureRecoveryRate() const;
 
     UPROPERTY(BlueprintAssignable, Category = "Combat|Posture")
     FSKPostureChangedSignature OnPostureChanged; // 架势数值快照变化通知
-
-    UPROPERTY(BlueprintAssignable, Category = "Combat|Posture")
-    FSKPostureBrokenChangedSignature OnPostureBrokenChanged; // 架势崩溃状态变化通知
 
     // ── Owner 输入桥接 ────────────────────────────────────────
 
@@ -224,6 +257,25 @@ protected:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+    // ── GAS 属性桥接 ──────────────────────────────────────
+    USKAbilitySystemComponent* ResolveAttributeSystem() const;
+
+    UFUNCTION()
+    void HandleGASAttributeChanged(FGameplayAttribute Attribute, float OldValue, float NewValue);
+
+    UFUNCTION()
+    void HandleGASAttributesReady();
+
+    // ── AI 事件内部 ──────────────────────────────────────────
+
+    UFUNCTION()
+    void HandleOwnerTakeAnyDamage(
+        AActor* DamagedActor,
+        float Damage,
+        const UDamageType* DamageType,
+        AController* InstigatedBy,
+        AActor* DamageCauser);
+
     // ── 动画内部 ──────────────────────────────────────────────
 
     UAnimInstance* ResolveAnimInstance() const;
@@ -259,14 +311,8 @@ private:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|State", meta = (AllowPrivateAccess = "true"))
     bool bGuardHeld = false; // 防御键实时按住状态
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Posture", meta = (AllowPrivateAccess = "true"))
-    float CurrentPosture = 0.f; // 当前角色架势值
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Posture", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-    float MaxPosture = 100.f; // 当前角色架势上限
-
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat|Posture", meta = (AllowPrivateAccess = "true"))
-    bool bPostureBroken = false; // 是否处于架势打崩流程
+    UPROPERTY(Transient)
+    FSKSurvivalTransitionToken PresentationToken; // 仅授权当前特殊演出，不是生存状态副本
 
     UPROPERTY(Transient)
     TObjectPtr<UAnimSequence> ActiveSequence; // 当前战斗动作源 Sequence
@@ -274,12 +320,21 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<UAnimMontage> ActiveMontage; // 当前战斗组件拥有的动态 Montage
 
+    UPROPERTY(Transient)
+    TArray<FSKAICombatEvent> PendingAICombatEvents; // 等待 ReactionRouter 消费的通用事件
+
     TArray<FSKCombatInputEvent> PendingInputEvents; // 等待 Lua 消费的有序输入事件
     FSKIncomingAttackAnimationContext IncomingAttackContext; // 当前模拟来袭上下文
     int32 ActionSerial = 0; // 当前动作序列号
+    int32 LastAICombatEventSerial = 0; // 最近分配的 AI 战斗事件序列号
     int32 ContextSerial = 0; // 最近分配的来袭上下文序列号
     int32 DeflectGuardInputSerial = 0; // 最近消费来袭的 Guard 输入序列号
     int32 DeflectContextSerial = 0; // 当前弹反关联的来袭序列号
+    bool bAICombatEventOverflowLogged = false; // 是否已记录事件队列溢出诊断
+    bool bAICombatEventSerialExhaustedLogged = false; // 是否已记录事件序列耗尽诊断
+    bool bHasBroadcastPosture = false; // 仅用于通知去重，不作为资源数值来源
+    float LastBroadcastPosture = 0.f; // 最近通知的架势值缓存
+    float LastBroadcastMaxPosture = 0.f; // 最近通知的架势上限缓存
     double AnimationStartTimeSeconds = 0.0; // 动态 Montage 开始的世界时间
     float ActivePlayRate = 1.f; // 当前动态 Montage 播放倍率
 };

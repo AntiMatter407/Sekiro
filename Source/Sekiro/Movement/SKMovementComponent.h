@@ -7,6 +7,7 @@
 
 class ACharacter;
 class USKCameraManagerComponent;
+class USKCombatComponent;
 class USKInputManager;
 
 UENUM(BlueprintType)
@@ -109,6 +110,9 @@ public:
     void ApplyActorYawForScript(float TargetYaw, float InterpSpeed, float DeltaTime); // 插值角色 Yaw
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
+    void ApplyActorYawRateForScript(float TargetYaw, float MaxDegreesPerSecond, float DeltaTime); // 按固定角速度更新角色 Yaw
+
+    UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
     void SetMoveFacingSnapshotForScript(bool bHasDesiredMoveYaw, float NewDesiredMoveYaw, float NewMoveDirectionAngleBeforeRotation); // 发布转向前移动快照
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
@@ -122,6 +126,12 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
     bool IsOwnerCombatFullBodyActionActiveForScript() const;      // 查询全身战斗动作是否正在占用 Root Motion
+
+    UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
+    bool IsOwnerAttackActionActiveForScript() const;              // 查询角色是否正在执行轻攻击或重攻击
+
+    UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
+    float SampleOwnerCombatSequenceCurveForScript(FName CurveName) const; // 采样当前战斗动作源动画曲线
 
     UFUNCTION(BlueprintCallable, Category = "Movement|Lua")
     float GetHorizontalSpeedForScript() const;                    // 获取所属角色当前水平速度
@@ -153,6 +163,9 @@ private:
 
     UPROPERTY()
     TObjectPtr<USKCameraManagerComponent> CameraManager;         // 相机组件缓存
+
+    UPROPERTY()
+    TObjectPtr<USKCombatComponent> CombatComponent;              // 战斗组件缓存
 
     float DesiredMoveYawSnapshot = 0.f;                          // Lua 发布的输入目标世界 Yaw
     float MoveDirectionAngleBeforeRotationSnapshot = 0.f;        // Lua 发布的转身前角色局部方向角

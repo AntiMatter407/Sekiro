@@ -1,6 +1,7 @@
 -- Lua 类型：动画蓝图编译描述模块。编译期对象是纯 Lua；Transition 规则生成 UE 原生属性与 Gate 节点。
 -- Sekiro 地面运动阶段状态机。
--- 状态机通过 EntryRouter 恢复当前地面意图，再管理 Idle/Turn/Start/Cycle/Stop/Step 时序；Standing/Crouching 姿态与 Walk/Run/Sprint 步态在 StateGraph 内选择。
+-- 状态机通过 EntryRouter 恢复当前地面意图，再管理 Idle/TurnInPlace/Start/Cycle/Pivot/Stop/Step 时序。
+-- Standing/Crouching 姿态与 Walk/Run/Sprint 步态在 StateGraph 内选择；Pivot 缺少专用资产时复用新方向 Start 姿势稳定降级。
 
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
 local LayoutStyle = require("Animation.Compiler.LayoutStyle")
@@ -45,11 +46,11 @@ function GroundedMode.StateMachine(Machine)
     Machine:Entry("EntryRouter")
     Machine:State("EntryRouter")
     Machine:State("Idle")
-    Machine:State("Turn")
+    Machine:State("TurnInPlace")
     Machine:State("Start")
     Machine:State("Cycle")
+    Machine:State("Pivot")
     Machine:State("Stop")
-    Machine:State("StopTurn")
     Machine:State("Step")
 
     -- Dodge 优先恢复 Step，避免已有移动输入抢占一次性动作。
@@ -89,7 +90,7 @@ function GroundedMode.StateMachine(Machine)
             Rule.BoolProperty("bIsDodging", false)),
     })
     -- 锁定待机偏航超过阈值时进入原地 Turn；全身战斗动作期间底层状态机继续更新，但不能抢跑一次性转身。
-    Machine:Transition("Idle_Turn", "Idle", "Turn", {
+    Machine:Transition("Idle_TurnInPlace", "Idle", "TurnInPlace", {
         BlendDuration = Tuning.TurnBlendDuration,
         PriorityOrder = 2,
         Rule = Rule.All(
@@ -98,22 +99,22 @@ function GroundedMode.StateMachine(Machine)
             Rule.BoolProperty("bIsDodging", false),
             Rule.BoolProperty("bIsCombatFullBodyActionActive", false)),
     })
-    -- Turn 中 Dodge 可以立即打断到 Step。
-    Machine:Transition("Turn_Step", "Turn", "Step", {
+    -- TurnInPlace 中 Dodge 可以立即打断到 Step。
+    Machine:Transition("TurnInPlace_Step", "TurnInPlace", "Step", {
         BlendDuration = Tuning.StepBlendDuration,
         PriorityOrder = 0,
         Rule = Rule.BoolProperty("bIsDodging", true),
     })
-    -- Turn 中出现移动输入时立即打断到 Start。
-    Machine:Transition("Turn_Start", "Turn", "Start", {
+    -- TurnInPlace 中出现移动输入时立即打断到 Start。
+    Machine:Transition("TurnInPlace_Start", "TurnInPlace", "Start", {
         BlendDuration = Tuning.StartBlendDuration,
         PriorityOrder = 1,
         Rule = Rule.All(
             Rule.BoolProperty("bHasMovementInput", true),
             Rule.BoolProperty("bIsDodging", false)),
     })
-    -- Turn 在退出曲线窗口内且没有新输入时返回 Idle。
-    Machine:Transition("Turn_Idle", "Turn", "Idle", {
+    -- TurnInPlace 在退出曲线窗口内且没有新输入时返回 Idle。
+    Machine:Transition("TurnInPlace_Idle", "TurnInPlace", "Idle", {
         BlendDuration = Tuning.TurnBlendDuration,
         PriorityOrder = 2,
         Rule = Rule.All(
@@ -151,14 +152,48 @@ function GroundedMode.StateMachine(Machine)
         PriorityOrder = 0,
         Rule = Rule.BoolProperty("bIsDodging", true),
     })
+    -- 移动方向相对当前速度发生大角度反转时进入 Pivot；Lua 双阈值请求避免边界抖动。
+    Machine:Transition("Cycle_Pivot", "Cycle", "Pivot", {
+        BlendDuration = Tuning.TurnBlendDuration,
+        PriorityOrder = 1,
+        Rule = Rule.All(
+            Rule.BoolProperty("bPivotRequested", true),
+            Rule.BoolProperty("bHasMovementInput", true),
+            Rule.BoolProperty("bIsDodging", false)),
+    })
     -- Cycle 仅在移动输入释放后，于停止曲线窗口进入 Stop。
     Machine:Transition("Cycle_Stop", "Cycle", "Stop", {
+        BlendDuration = Tuning.StopBlendDuration,
+        PriorityOrder = 2,
+        Rule = Rule.All(
+            Rule.BoolProperty("bHasMovementInput", false),
+            Rule.BoolProperty("bIsDodging", false),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterStop, Tuning.CurveThreshold)),
+    })
+    -- Pivot 中 Dodge 继续保持最高响应优先级。
+    Machine:Transition("Pivot_Step", "Pivot", "Step", {
+        BlendDuration = Tuning.StepBlendDuration,
+        PriorityOrder = 0,
+        Rule = Rule.BoolProperty("bIsDodging", true),
+    })
+    -- Pivot 期间释放输入后等待当前降级 Start 姿势的安全停止窗口。
+    Machine:Transition("Pivot_Stop", "Pivot", "Stop", {
         BlendDuration = Tuning.StopBlendDuration,
         PriorityOrder = 1,
         Rule = Rule.All(
             Rule.BoolProperty("bHasMovementInput", false),
             Rule.BoolProperty("bIsDodging", false),
             Rule.CurveGreaterEqual(CurveNames.CanEnterStop, Tuning.CurveThreshold)),
+    })
+    -- 方向差回落到退出阈值且仍有输入时，在降级 Start 资产循环衔接窗口返回 Cycle。
+    Machine:Transition("Pivot_Cycle", "Pivot", "Cycle", {
+        BlendDuration = Tuning.CycleBlendDuration,
+        PriorityOrder = 2,
+        Rule = Rule.All(
+            Rule.BoolProperty("bPivotRequested", false),
+            Rule.BoolProperty("bHasMovementInput", true),
+            Rule.BoolProperty("bIsDodging", false),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold)),
     })
     -- Stop 中 Dodge 取得最高优先级。
     Machine:Transition("Stop_Step", "Stop", "Step", {
@@ -174,48 +209,14 @@ function GroundedMode.StateMachine(Machine)
             Rule.BoolProperty("bHasMovementInput", true),
             Rule.BoolProperty("bIsDodging", false)),
     })
-    -- 锁定斜向 Stop 完成制动后进入专用换脚动作；方向补偿在该动作内随脚步撤销。
-    Machine:Transition("Stop_StopTurn", "Stop", "StopTurn", {
-        BlendDuration = Tuning.TurnBlendDuration,
-        PriorityOrder = 2,
-        Rule = Rule.All(
-            Rule.BoolProperty("bStopTurnRequested", true),
-            Rule.BoolProperty("bHasMovementInput", false),
-            Rule.BoolProperty("bIsDodging", false),
-            Rule.CurveGreaterEqual(CurveNames.CanEnterIdle, Tuning.CurveThreshold)),
-    })
-    -- 不需要明显回正动作的 Stop 在待机曲线窗口直接返回 Idle。
+    -- Stop 在待机曲线窗口直接返回 Idle；方向残差由 Graph Orientation Warping 在制动姿势内保持稳定。
     Machine:Transition("Stop_Idle", "Stop", "Idle", {
         BlendDuration = Tuning.IdleBlendDuration,
-        PriorityOrder = 3,
-        Rule = Rule.All(
-            Rule.BoolProperty("bStopTurnRequested", false),
-            Rule.BoolProperty("bHasMovementInput", false),
-            Rule.BoolProperty("bIsDodging", false),
-            Rule.CurveGreaterEqual(CurveNames.CanEnterIdle, Tuning.CurveThreshold)),
-    })
-    -- StopTurn 中 Dodge 仍保持最高响应优先级。
-    Machine:Transition("StopTurn_Step", "StopTurn", "Step", {
-        BlendDuration = Tuning.StepBlendDuration,
-        PriorityOrder = 0,
-        Rule = Rule.BoolProperty("bIsDodging", true),
-    })
-    -- StopTurn 期间重新输入时立即进入新 Start，不强制等换脚动作播完。
-    Machine:Transition("StopTurn_Start", "StopTurn", "Start", {
-        BlendDuration = Tuning.StartBlendDuration,
-        PriorityOrder = 1,
-        Rule = Rule.All(
-            Rule.BoolProperty("bHasMovementInput", true),
-            Rule.BoolProperty("bIsDodging", false)),
-    })
-    -- 换脚动作进入退出曲线窗口后回到当前 Standing/Crouching Idle。
-    Machine:Transition("StopTurn_Idle", "StopTurn", "Idle", {
-        BlendDuration = Tuning.TurnBlendDuration,
         PriorityOrder = 2,
         Rule = Rule.All(
             Rule.BoolProperty("bHasMovementInput", false),
             Rule.BoolProperty("bIsDodging", false),
-            Rule.CurveGreaterEqual(CurveNames.CanExitTurn, Tuning.CurveThreshold)),
+            Rule.CurveGreaterEqual(CurveNames.CanEnterIdle, Tuning.CurveThreshold)),
     })
     -- Step 结束且仍有移动输入时直接进入 Cycle，不再次播放 Start。
     Machine:Transition("Step_Cycle", "Step", "Cycle", {
@@ -257,11 +258,15 @@ function GroundedMode.StateGraph_Idle(Graph)
     Graph.Result:Connect(idle.Pose)
 end
 
----构建共享 Turn，并按进入动作时锁存的方向与当前 Standing/Crouching 姿态选择一次性资产。
----@param Graph LuaAnimStateGraph Turn 状态的原生 Pose Graph。
+---构建共享 TurnInPlace，并按进入动作时锁存的方向与当前 Standing/Crouching 姿态选择一次性资产。
+---@param Graph LuaAnimStateGraph TurnInPlace 状态的原生 Pose Graph。
 ---@return nil result 姿态选择结果连接 State Result。
-function GroundedMode.StateGraph_Turn(Graph)
-    local turn = select_stance(Graph, "Turn", Standing.BuildTurn(Graph), Crouching.BuildTurn(Graph))
+function GroundedMode.StateGraph_TurnInPlace(Graph)
+    local turn = select_stance(
+        Graph,
+        "TurnInPlace",
+        Standing.BuildTurnInPlace(Graph),
+        Crouching.BuildTurnInPlace(Graph))
     Graph.Result:Connect(turn.Pose)
 end
 
@@ -304,6 +309,24 @@ function GroundedMode.StateGraph_Cycle(Graph)
     Graph.Result:Connect(inertialization.Pose)
 end
 
+---构建 Pivot 的首期降级姿势；当前复用锁存新方向的 Start 资产，后续接入专用急转动画时只替换本状态图。
+---@param Graph LuaAnimStateGraph Pivot 状态的原生 Pose Graph。
+---@return nil result 方向对齐后的 Standing/Crouching 降级姿势连接 State Result。
+function GroundedMode.StateGraph_Pivot(Graph)
+    local pivot = select_stance(
+        Graph,
+        "Pivot",
+        Standing.BuildStart(Graph),
+        Crouching.BuildStart(Graph))
+    local aligned = DirectionalPose.GraphAlign(
+        Graph,
+        "GroundedPivotGraphWarping",
+        pivot,
+        "LockOnLocomotionAngle",
+        "LockOnOrientationWarpingAlpha")
+    Graph.Result:Connect(aligned.Pose)
+end
+
 ---构建共享 Stop；输入释放后使用锁存移动角继续重定向制动 Root Motion，避免低速速度方向反推抖动。
 ---@param Graph LuaAnimStateGraph Stop 状态的原生 Pose Graph。
 ---@return nil result 姿态选择结果连接 State Result。
@@ -316,18 +339,6 @@ function GroundedMode.StateGraph_Stop(Graph)
         "LatchedLockOnLocomotionAngle",
         "StopOrientationWarpingAlpha")
     Graph.Result:Connect(aligned.Pose)
-end
-
----保留旧 StopTurn 状态的原始换脚姿势；Graph 方案不会再请求该状态。
----@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
----@return nil result 方向对齐后的换脚姿势连接 State Result。
-function GroundedMode.StateGraph_StopTurn(Graph)
-    local stop_turn = select_stance(
-        Graph,
-        "StopTurn",
-        Standing.BuildStopTurn(Graph),
-        Crouching.BuildStopTurn(Graph))
-    Graph.Result:Connect(stop_turn.Pose)
 end
 
 ---构建一次性 Step；锁定分支使用动作触发边沿锁存的局部移动角重定向 Root Motion。

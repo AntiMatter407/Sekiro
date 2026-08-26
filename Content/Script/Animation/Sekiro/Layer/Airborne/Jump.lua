@@ -1,6 +1,6 @@
 -- Lua 类型：动画蓝图编译描述模块。编译期对象是纯 Lua；Transition 规则生成 UE 原生属性与 Gate 节点。
 -- Sekiro Jump 子状态机。
--- 非锁定有向跳固定使用前向资产；锁定有向跳经过八方向 Start/InAir 过渡段，长时间滞空才进入通用 Loop。
+-- 非锁定有向跳固定使用前向资产；锁定有向跳经过八方向 Start/InAir 过渡段，长时间滞空才进入通用 FallLoop。
 
 local LuaAnimStateMachine = require("Animation.Compiler.LuaAnimStateMachine")
 local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
@@ -71,15 +71,15 @@ local function select_jump_type(Graph, name, stationary_pose, directional_pose)
     return selector
 end
 
----声明 Jump Start、锁定方向 InAir 过渡段、通用 Loop 和 Land。
----锁定 InAir 不是循环动画：仍在空中时于曲线尾部进入 Loop，任何阶段物理接地都优先打断到 Land。
+---声明 Jump Start、锁定方向 InAir 过渡段、通用 FallLoop 和 Light/Heavy Land。
+---锁定 InAir 不是循环动画：仍在空中时于曲线尾部进入 FallLoop，任何阶段物理接地都优先打断到 Land。
 ---@param Machine LuaStateMachineNode JumpLocomotion 原生状态机节点。
 ---@return nil result 只声明状态机拓扑。
 function JumpLocomotion.StateMachine(Machine)
     Machine:Entry("Start")
     Machine:State("Start")
     Machine:State("DirectionalInAir")
-    Machine:State("Loop")
+    Machine:State("FallLoop")
     Machine:State("Land")
     -- Start 期间已经接地时直接进入 Land，处理极短腾空或碰撞提前接地。
     Machine:Transition("Start_Land", "Start", "Land", {
@@ -97,8 +97,8 @@ function JumpLocomotion.StateMachine(Machine)
             Rule.BoolProperty("bJumpStartedLockedOn", true),
             Rule.CurveGreaterEqual(CurveNames.CanEnterInAir, Tuning.CurveThreshold)),
     })
-    -- 原地或非锁定有向跳在 Start 曲线尾部直接进入通用 Loop。
-    Machine:Transition("Start_Loop", "Start", "Loop", {
+    -- 原地或非锁定有向跳在 Start 曲线尾部直接进入通用 FallLoop。
+    Machine:Transition("Start_FallLoop", "Start", "FallLoop", {
         BlendDuration = Tuning.JumpBlendDuration,
         PriorityOrder = 2,
         Rule = Rule.All(
@@ -115,15 +115,15 @@ function JumpLocomotion.StateMachine(Machine)
         Rule = Rule.BoolProperty("bIsInAir", false),
     })
     -- 锁定方向 InAir 过渡段播放完成且仍在空中时进入通用循环姿势。
-    Machine:Transition("DirectionalInAir_Loop", "DirectionalInAir", "Loop", {
+    Machine:Transition("DirectionalInAir_FallLoop", "DirectionalInAir", "FallLoop", {
         BlendDuration = Tuning.JumpBlendDuration,
         PriorityOrder = 1,
         Rule = Rule.All(
             Rule.BoolProperty("bIsInAir", true),
             Rule.CurveGreaterEqual(CurveNames.CanEnterLoop, Tuning.CurveThreshold)),
     })
-    -- 通用 Loop 期间由 CharacterMovement 报告接地时进入 Land。
-    Machine:Transition("Loop_Land", "Loop", "Land", {
+    -- 通用 FallLoop 期间由 CharacterMovement 报告接地时进入 Land。
+    Machine:Transition("FallLoop_Land", "FallLoop", "Land", {
         BlendDuration = Tuning.JumpBlendDuration,
         PriorityOrder = 0,
         Rule = Rule.BoolProperty("bIsInAir", false),
@@ -170,7 +170,7 @@ function JumpLocomotion.StateGraph_Start(Graph)
     Graph.Result:Connect(aligned.Pose)
 end
 
----构建锁定有向跳的八方向 InAir 过渡姿势；该动画只播放一次，曲线尾部进入通用 Loop。
+---构建锁定有向跳的八方向 InAir 过渡姿势；该动画只播放一次，曲线尾部进入通用 FallLoop。
 ---@param Graph LuaAnimStateGraph DirectionalInAir 状态 Pose Graph。
 ---@return nil result 八方向 InAir 过渡姿势连接 State Result。
 function JumpLocomotion.StateGraph_DirectionalInAir(Graph)
@@ -185,14 +185,15 @@ function JumpLocomotion.StateGraph_DirectionalInAir(Graph)
 end
 
 ---构建原地、非锁定有向跳和锁定长时间滞空共同使用的循环姿势。
----@param Graph LuaAnimStateGraph Loop 状态 Pose Graph。
+---@param Graph LuaAnimStateGraph FallLoop 状态 Pose Graph。
 ---@return nil result 通用 Jump Loop 姿势连接 State Result。
-function JumpLocomotion.StateGraph_Loop(Graph)
+function JumpLocomotion.StateGraph_FallLoop(Graph)
     local loop = PoseSelectors.Sequence(Graph, "JumpLoop", Anim.Jump_Loop, true, nil)
     Graph.Result:Connect(loop.Pose)
 end
 
----构建带 RootMotion 的八方向 Land。
+---构建 Light/Heavy Land；轻落地保留锁定八方向资产，重落地按起跳姿态选择站立或蹲姿资产。
+---LandPredictionAmount 在接地前锁存 bHeavyLand，使落地首帧即可稳定选择强度，不随接地后 FallSpeed 清零而翻转。
 ---@param Graph LuaAnimStateGraph Land 状态 Pose Graph。
 ---@return nil result Land 姿势连接 State Result。
 function JumpLocomotion.StateGraph_Land(Graph)
@@ -205,14 +206,48 @@ function JumpLocomotion.StateGraph_Land(Graph)
         nil)
     local locked = PoseSelectors.Octant(Graph, "LockedDirectionalJumpLand", LandAssets, "JumpDirection", false)
     local directional = select_jump_lock_mode(Graph, "JumpLand", unlocked, locked)
-    local land = select_jump_type(Graph, "JumpLand", stationary, directional)
-    local aligned = DirectionalPose.Align(
+    local light_land = select_jump_type(Graph, "JumpLand", stationary, directional)
+    local aligned_light_land = DirectionalPose.Align(
         Graph,
         "JumpLandAlignment",
-        land,
+        light_land,
         "JumpDirectionResidualAngle",
         "JumpWarpingAlpha")
-    Graph.Result:Connect(aligned.Pose)
+
+    local heavy_standing = PoseSelectors.Sequence(
+        Graph,
+        "HeavyStandingJumpLand",
+        Anim.Jump_Heavy_Stand,
+        false,
+        nil)
+    local heavy_crouching = PoseSelectors.Sequence(
+        Graph,
+        "HeavyCrouchingJumpLand",
+        Anim.Jump_Heavy_Crouch,
+        false,
+        nil)
+    local started_crouched = Graph:Property(
+        "HeavyJumpLandStartedCrouched",
+        "bJumpStartedCrouchedPose")
+    local heavy_land = Graph:Node(
+        "HeavyJumpLandStance",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.JumpBlendDuration },
+        "BlendListByBool")
+    heavy_land.FalsePose:Connect(heavy_standing.Pose)
+    heavy_land.TruePose:Connect(heavy_crouching.Pose)
+    heavy_land.ActiveValue:Connect(started_crouched.Value)
+
+    local heavy_land_requested = Graph:Property("HeavyJumpLandRequested", "bHeavyLand")
+    local land = Graph:Node(
+        "JumpLandIntensity",
+        EditorNodeClass.BlendListByBool,
+        { BlendTime = Tuning.JumpBlendDuration },
+        "BlendListByBool")
+    land.FalsePose:Connect(aligned_light_land.Pose)
+    land.TruePose:Connect(heavy_land.Pose)
+    land.ActiveValue:Connect(heavy_land_requested.Value)
+    Graph.Result:Connect(land.Pose)
 end
 
 return JumpLocomotion

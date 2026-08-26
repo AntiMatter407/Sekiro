@@ -6,7 +6,6 @@
 ---@field CanEnterLoop string Start 或锁定 Jump InAir 过渡段已进入可衔接循环姿势的窗口。
 ---@field CanEnterStop string Start/Cycle 已进入可自然衔接 Stop 的脚步窗口。
 ---@field CanEnterIdle string Stop 已进入可回 Idle 或退出外层 Sprint 的窗口。
----@field StopTurnDirectionAlignment string StopTurn 换脚期间撤销锁定方向补偿的连续权重。
 ---@field CanExitStep string Step 已进入可返回普通地面移动的尾部窗口。
 ---@field CanExitTurn string 原地 Turn 已进入可返回 Idle 或接受后续转向的尾部窗口。
 ---@field CanEnterInAir string Jump Start 已进入可衔接 InAir 姿势的窗口。
@@ -19,12 +18,13 @@
 ---@field CanCancelToJump string 当前地面攻击允许被跳跃输入取消。
 ---@field CanCancelToDodge string 当前动作允许被闪避输入取消。
 ---@field AttackHitbox string 原版 TAE 攻击框类型；非零区间开启当前武器攻击碰撞。
+---@field DisableTurning string 原版 TAE 禁止转向窗口；大于等于 0.5 时攻击不得改变 ActorYaw。
+---@field AttackTurnSpeed string 原版 TAE 攻击转向最大角速度，单位为度/秒。
 ---@field WeaponHandIK string 收拔刀换挂点附近约束右手到刀柄目标的连续权重。
 local CurveNames = {
     CanEnterLoop = "CanEnterLoop",
     CanEnterStop = "CanEnterStop",
     CanEnterIdle = "CanEnterIdle",
-    StopTurnDirectionAlignment = "StopTurnDirectionAlignment",
     CanExitStep = "CanExitStep",
     CanExitTurn = "CanExitTurn",
     CanEnterInAir = "CanEnterInAir",
@@ -37,6 +37,8 @@ local CurveNames = {
     CanCancelToJump = "CanCancelToJump",
     CanCancelToDodge = "CanCancelToDodge",
     AttackHitbox = "AttackHitbox",
+    DisableTurning = "DisableTurning",
+    AttackTurnSpeed = "AttackTurnSpeed",
     WeaponHandIK = "WeaponHandIK",
 }
 

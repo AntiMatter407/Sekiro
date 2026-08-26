@@ -201,6 +201,7 @@ end
 | 2026-07-07 | 修订：优先保留 Lua 运行时，封装成接近项目 Lua class / UnLua 的类继承写法 |
 | 2026-07-07 | 修订：Transition 命名统一为 `CanEnter_<From>_<To>`，状态遍历封装进基类，子类不再编写 `UpdateState_<State>` |
 | 2026-07-13 | 实现：Lua/C++ 增加独立 StateResult，拓扑改为 `StatePoseLink -> StateResult.Result -> SequencePlayer`；标准过渡改为活动过渡链并补充 UE 原生架构对照文档 |
+| 2026-08-21 | 第五阶段：加入包含布局坐标的 Canonical IR 双哈希、六态同步状态、只读刷新、显式双向工具栏与覆盖确认；Compile/F7、文件监听和 PIE 保持无自动生成 |
 | 2026-07-07 | 修订：动画更新命名统一为 `UpdateAnimation_<State>` |
 | 2026-07-07 | 修订：状态更新遍历下沉到基类，子状态机只需声明状态列表、Entry、Transition 和动画更新函数 |
 | 2026-07-07 | 修订：`UpdateAnimation_<State>` 不再直接调用 `MakeDecision`，只返回动画 key 或动画参数表 |

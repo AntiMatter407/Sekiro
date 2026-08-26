@@ -1,0 +1,13 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "FriendlyName": "Sekiro Gameplay Tools",
+    "Description": "Extensible editor tools for gameplay data authoring.",
+    "Category": "Gameplay",
+    "EnabledByDefault": true,
+    "CanContainContent": false,
+    "Modules": [
+        { "Name": "SekiroGameplayEditor", "Type": "Editor", "LoadingPhase": "PostEngineInit" }
+    ]
+}

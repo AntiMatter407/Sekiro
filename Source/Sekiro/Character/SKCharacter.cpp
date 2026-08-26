@@ -1,6 +1,9 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SKCharacter.h"
+#include "Character/SKSurvivalComponent.h"
+#include "AbilitySystem/SKAbilitySystemComponent.h"
+#include "AbilitySystem/Attributes/SKCharacterAttributeSet.h"
 #include "Weapon/SKWeaponComponent.h"
 #include "Input/SKInputManager.h"
 #include "Camera/SKCameraManagerComponent.h"
@@ -15,6 +18,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "EnhancedInputComponent.h"
+#include "Engine/World.h"
 
 // ============================================================================
 // ASKCharacter
@@ -29,8 +33,48 @@
 ASKCharacter::ASKCharacter(const FObjectInitializer& ObjectInitializer)
 	: ASKCharacter(
 		ObjectInitializer.SetDefaultSubobjectClass<USKMovementComponent>(ACharacter::CharacterMovementComponentName),
-		FSKMovementComponentOverrideTag())
+	FSKMovementComponentOverrideTag())
 {
+}
+
+/** 游戏线程返回同角色生存组件，不转移所有权；默认子对象构造后非空。 */
+USKSurvivalComponent* ASKCharacter::GetSurvivalComponent() const
+{
+    return SurvivalComponent;
+}
+
+/** 游戏线程返回角色持有的 ASC，供引擎 GAS 接口查询；不转移所有权。 */
+UAbilitySystemComponent* ASKCharacter::GetAbilitySystemComponent() const
+{
+    return AbilitySystemComponent;
+}
+
+/** 游戏线程返回数值系统具体 ASC，供蓝图和 Lua 调用；不转移所有权。 */
+USKAbilitySystemComponent* ASKCharacter::GetSKAbilitySystemComponent() const
+{
+    return AbilitySystemComponent;
+}
+
+/**
+ * 游戏线程返回角色配置的 Lua 模块名，不加载文件或读取任何属性数值。
+ * @return 从 Content/Script 起算的点分模块名；空字符串由 Lua 按角色类型选择默认模块。
+ */
+FString ASKCharacter::GetAttributeConfigModule() const
+{
+    return AttributeConfigModule;
+}
+
+/** 游戏线程设置闪避状态；bActive 为新激活状态，不自行启动动作。 */
+void ASKCharacter::SetDodging(bool bActive)
+{
+    bIsDodging = bActive;
+}
+
+/** 游戏线程保存闪避方向；Fwd/Lateral 为前后及左右方向分量，不归一化或启动动作。 */
+void ASKCharacter::SetDodgeDirection(float Fwd, float Lateral)
+{
+    DodgeDirection = Fwd;
+    DodgeDirectionLateral = Lateral;
 }
 
 /**
@@ -99,15 +143,35 @@ ASKCharacter::ASKCharacter(
 
 	// 沿用旧蓝图序列化的默认子对象名称；类型与业务实现均已迁移到 WeaponManager。
 	WeaponManager = CreateDefaultSubobject<USKWeaponComponent>(TEXT("WeaponComponent"));
+    AbilitySystemComponent = CreateDefaultSubobject<USKAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
+    AbilitySystemComponent->RequireResourcePolicy();
+    SurvivalComponent = CreateDefaultSubobject<USKSurvivalComponent>(TEXT("SurvivalComponent"));
+    CharacterAttributes = CreateDefaultSubobject<USKCharacterAttributeSet>(TEXT("CharacterAttributes"));
 	InputManager = CreateOptionalDefaultSubobject<USKInputManager>(TEXT("InputManager"));
 	CombatComponent = CreateDefaultSubobject<USKCombatComponent>(TEXT("CombatComponent"));
 	CameraManager = CreateOptionalDefaultSubobject<USKCameraManagerComponent>(TEXT("CameraManager"));
 	LockOnIndicator = CreateOptionalDefaultSubobject<USKLockOnIndicatorComponent>(TEXT("LockOnIndicator"));
 }
 
+/** 游戏线程在组件 BeginPlay 前注册属性集、ActorInfo 和生存策略；数值统一等待角色 Lua 表显式初始化。 */
+void ASKCharacter::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+    AbilitySystemComponent->AddAttributeSetSubobject(CharacterAttributes.Get());
+    AbilitySystemComponent->InitAbilityActorInfo(this, this);
+    SurvivalComponent->BindAttributeSystem(AbilitySystemComponent);
+    if (InputManager) SurvivalComponent->AddTickPrerequisiteComponent(InputManager);
+    CombatComponent->AddTickPrerequisiteComponent(SurvivalComponent);
+}
+
+/**
+ * 游戏线程在控制器接管后刷新 GAS ActorInfo，但不重新初始化属性或重复回血。
+ * @param NewController 本次接管的控制器，可为空；由角色/引擎持有，不转移所有权。
+ */
 void ASKCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
+    AbilitySystemComponent->InitAbilityActorInfo(this, this);
 
 	if (APlayerController* PC = Cast<APlayerController>(NewController))
 	{
@@ -127,17 +191,4 @@ void ASKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	{
 		InputManager->SetupInput(Input);
 	}
-}
-
-// ── 闪避状态 ──────────────────────────────────────────────
-
-void ASKCharacter::SetDodging(bool bActive)
-{
-	bIsDodging = bActive;
-}
-
-void ASKCharacter::SetDodgeDirection(float Fwd, float Lateral)
-{
-	DodgeDirection = Fwd;
-	DodgeDirectionLateral = Lateral;
 }

@@ -9,6 +9,13 @@
 class UBehaviorTree;
 class UBlackboardData;
 
+UENUM(BlueprintType)
+enum class ESekiroLuaBehaviorTreeSourceMode : uint8
+{
+    BehaviorTree,
+    Lua,
+};
+
 USTRUCT(BlueprintType)
 struct SEKIROLUABEHAVIORTREEEXTEDITOR_API FSekiroLuaBehaviorTreeAssetConfiguration
 {
@@ -19,6 +26,9 @@ struct SEKIROLUABEHAVIORTREEEXTEDITOR_API FSekiroLuaBehaviorTreeAssetConfigurati
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lua Behavior Tree")
     FString BlackboardPackagePath;        // 无已绑定 Blackboard 时复用的目标长包路径
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lua Behavior Tree")
+    ESekiroLuaBehaviorTreeSourceMode SourceMode = ESekiroLuaBehaviorTreeSourceMode::BehaviorTree; // 最近选择或同步来源，不驱动自动行为
 };
 
 UCLASS()

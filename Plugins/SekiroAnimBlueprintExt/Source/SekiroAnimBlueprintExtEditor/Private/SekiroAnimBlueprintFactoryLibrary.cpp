@@ -60,8 +60,12 @@
 #include "Kismet2/CompilerResultsLog.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Misc/PackageName.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Misc/SecureHash.h"
 #include "SekiroAnimGraphIRLibrary.h"
+#include "SekiroAnimBlueprintIRReader.h"
+#include "SekiroAnimGraphIRLuaWriter.h"
 #include "SekiroAnimGraphNodeRegistry.h"
 #include "SekiroLuaAnimBlueprintExtension.h"
 #include "SekiroLuaTransitionRuntimeLibrary.h"
@@ -133,10 +137,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
     const FName InPlaceCommitFailed = TEXT("Factory.InPlaceCommitFailed");
     const FName TransactionUnavailable = TEXT("Factory.TransactionUnavailable");
     const FName PIECompileForbidden = TEXT("Factory.PIECompileForbidden");
-    const FName CompileAllReentry = TEXT("Factory.CompileAllReentry");
     const FName CompileAssetReentry = TEXT("Factory.CompileAssetReentry");
 
-    bool GIsCompilingDirtyLuaAnimBlueprints = false;
     bool GIsCompilingLuaAnimBlueprintInPlace = false;
     bool GIsPreparingLuaAnimBlueprintGraph = false;
     TSet<UAnimBlueprint*> GPreparingLuaAnimBlueprints;
@@ -1678,11 +1680,23 @@ namespace SekiroAnimBlueprintFactoryPrivate
         FNativeAnimBlueprintBuilder(
             const FPreflightData& InPreflight,
             UAnimBlueprint& InBlueprint,
-            TArray<FSekiroAnimIRDiagnostic>& InDiagnostics)
+            TArray<FSekiroAnimIRDiagnostic>& InDiagnostics,
+            const FSekiroAnimBlueprintIR* InPreviousGeneratedIR = nullptr)
             : Preflight(InPreflight)
             , Blueprint(InBlueprint)
             , Diagnostics(InDiagnostics)
+            , PreviousGeneratedIR(InPreviousGeneratedIR)
+            , bIncremental(InPreviousGeneratedIR != nullptr)
         {
+            TArray<UEdGraph*> ExistingGraphs;
+            InBlueprint.GetAllGraphs(ExistingGraphs);
+            for (UEdGraph* ExistingGraph : ExistingGraphs)
+            {
+                if (ExistingGraph != nullptr)
+                {
+                    InitialNativeGraphs.Add(ExistingGraph);
+                }
+            }
             for (const FSekiroAnimIRLayer& Layer : InPreflight.Blueprint.Layers)
             {
                 for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
@@ -1691,6 +1705,29 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     for (const FSekiroAnimIRNode& Node : Graph.Nodes)
                     {
                         NodesById.Add(Node.Id, &Node);
+                    }
+                }
+            }
+            if (PreviousGeneratedIR != nullptr)
+            {
+                for (const FSekiroAnimIRLayer& Layer : PreviousGeneratedIR->Layers)
+                {
+                    for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+                    {
+                        PreviousGraphsById.Add(Graph.Id, &Graph);
+                        for (const FSekiroAnimIRNode& Node : Graph.Nodes)
+                        {
+                            PreviousOwnedNodeGuids.Add(MakeStableGuid(TEXT("Node"), Node.Id));
+                        }
+                        for (const FSekiroAnimIRState& State : Graph.StateMachine.States)
+                        {
+                            PreviousOwnedNodeGuids.Add(MakeStableGuid(TEXT("State"), State.Id));
+                        }
+                        for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
+                        {
+                            PreviousOwnedNodeGuids.Add(
+                                MakeStableGuid(TEXT("Transition"), Transition.Id));
+                        }
                     }
                 }
             }
@@ -1723,10 +1760,17 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
             for (UClass* InterfaceClass : Preflight.ImplementedInterfaceClasses)
             {
+                const bool bAlreadyImplemented = InterfaceClass != nullptr
+                    && Blueprint.ImplementedInterfaces.ContainsByPredicate(
+                        [InterfaceClass](const FBPInterfaceDescription& Description)
+                        {
+                            return Description.Interface == InterfaceClass;
+                        });
                 if (InterfaceClass == nullptr
-                    || !FBlueprintEditorUtils::ImplementNewInterface(
-                        &Blueprint,
-                        InterfaceClass->GetClassPathName()))
+                    || (!bAlreadyImplemented
+                        && !FBlueprintEditorUtils::ImplementNewInterface(
+                            &Blueprint,
+                            InterfaceClass->GetClassPathName())))
                 {
                     AddError(
                         Diagnostics,
@@ -1775,18 +1819,305 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
 
-            if (!BuildMemberVariables()) return false;
+            if (!BuildMemberVariables())
+            {
+                return ReportUnhandledBuildFailure(TEXT("member variables"));
+            }
             CurrentLayer = &MainLayer;
-            if (!BuildPoseGraph(*RootGraph, *MainGraph)) return false;
+            if (!BuildPoseGraph(*RootGraph, *MainGraph))
+            {
+                return ReportUnhandledBuildFailure(TEXT("main AnimGraph"));
+            }
             for (int32 LayerIndex = 1; LayerIndex < Preflight.Blueprint.Layers.Num(); ++LayerIndex)
             {
-                if (!BuildAnimationLayer(Preflight.Blueprint.Layers[LayerIndex])) return false;
+                if (!BuildAnimationLayer(Preflight.Blueprint.Layers[LayerIndex]))
+                {
+                    return ReportUnhandledBuildFailure(
+                        FString::Printf(
+                            TEXT("Animation Layer '%s'"),
+                            *Preflight.Blueprint.Layers[LayerIndex].Name));
+                }
             }
             CurrentLayer = nullptr;
-            return BuildEventGraph();
+            if (!BuildEventGraph())
+            {
+                return ReportUnhandledBuildFailure(TEXT("EventGraph"));
+            }
+            return true;
         }
 
     private:
+        /**
+         * 为 Builder 子步骤遗漏的失败诊断补充稳定错误，保证事务回滚原因始终可见。
+         * 已有 Error 时保持原诊断不变；本函数不修改 Blueprint，只能在当前 Builder 所在游戏线程调用。
+         *
+         * @param BuildStage 失败的物化阶段可读名称，不能为空。
+         * @return 始终返回 false，便于调用方直接结束构建。
+         */
+        bool ReportUnhandledBuildFailure(const FString& BuildStage)
+        {
+            if (!HasErrors(Diagnostics))
+            {
+                AddError(
+                    Diagnostics,
+                    InPlaceCommitFailed,
+                    FString::Printf(
+                        TEXT("Native AnimBlueprint Builder failed while materializing %s without a more specific diagnostic."),
+                        *BuildStage),
+                    Preflight.Blueprint.SourceModule,
+                    Preflight.Blueprint.SourceLocation);
+            }
+            return false;
+        }
+
+        /**
+         * 按 IR 稳定 ID 在指定 Graph 中复用同类型节点；类型变化时只替换该 Lua 节点。
+         * 复用节点保留对象身份、编辑器坐标以及 Lua 未显式写入的原生属性。
+         *
+         * @param Graph 节点所属原生 Graph。
+         * @param StableId Lua IR 稳定 ID。
+         * @return 找到的同类型节点；不存在时按 UE 标准生命周期创建新节点。
+         */
+        template <typename NodeType>
+        NodeType* CreateNativeNode(
+            UEdGraph& Graph,
+            const FString& StableId,
+            const int32 PositionX,
+            const int32 PositionY)
+        {
+            if (bIncremental)
+            {
+                const FGuid CandidateGuids[] = {
+                    MakeStableGuid(TEXT("Node"), StableId),
+                    MakeStableGuid(TEXT("State"), StableId),
+                    MakeStableGuid(TEXT("Transition"), StableId),
+                };
+                const TArray<UEdGraphNode*> ExistingNodes = Graph.Nodes;
+                for (UEdGraphNode* ExistingNode : ExistingNodes)
+                {
+                    if (ExistingNode == nullptr) continue;
+                    bool bGuidMatches = false;
+                    for (const FGuid& CandidateGuid : CandidateGuids)
+                    {
+                        if (ExistingNode->NodeGuid == CandidateGuid)
+                        {
+                            bGuidMatches = true;
+                            break;
+                        }
+                    }
+                    if (!bGuidMatches) continue;
+
+                    NodeType* TypedNode = Cast<NodeType>(ExistingNode);
+                    if (TypedNode != nullptr)
+                    {
+                        TypedNode->Modify();
+                        ReusedNativeNodes.Add(TypedNode);
+                        return TypedNode;
+                    }
+
+                    ExistingNode->Modify();
+                    FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+                    break;
+                }
+            }
+
+            return SekiroAnimBlueprintFactoryPrivate::CreateNativeNode<NodeType>(
+                Graph,
+                StableId,
+                PositionX,
+                PositionY);
+        }
+
+        /**
+         * 创建或复用原生函数调用节点；只在 Lua 声明该调用时更新函数引用。
+         *
+         * @param Graph 调用节点所属 K2 Graph。
+         * @param StableId Lua IR 稳定 ID。
+         * @param Function 目标原生函数。
+         * @return 可用的函数调用节点，参数非法时返回 nullptr。
+         */
+        UK2Node_CallFunction* CreateCallFunctionNode(
+            UEdGraph& Graph,
+            const FString& StableId,
+            UFunction* Function,
+            const int32 PositionX,
+            const int32 PositionY)
+        {
+            if (Function == nullptr) return nullptr;
+            const FGuid ExpectedGuid = MakeStableGuid(TEXT("K2Call"), StableId);
+            if (bIncremental)
+            {
+                for (UEdGraphNode* ExistingNode : Graph.Nodes)
+                {
+                    if (ExistingNode == nullptr || ExistingNode->NodeGuid != ExpectedGuid) continue;
+                    UK2Node_CallFunction* ExistingCall = Cast<UK2Node_CallFunction>(ExistingNode);
+                    if (ExistingCall != nullptr)
+                    {
+                        ExistingCall->Modify();
+                        ReusedNativeNodes.Add(ExistingCall);
+                        if (ExistingCall->GetTargetFunction() != Function)
+                        {
+                            ExistingCall->SetFromFunction(Function);
+                            ExistingCall->ReconstructNode();
+                        }
+                        return ExistingCall;
+                    }
+                    ExistingNode->Modify();
+                    FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+                    break;
+                }
+            }
+            return SekiroAnimBlueprintFactoryPrivate::CreateCallFunctionNode(
+                Graph,
+                StableId,
+                Function,
+                PositionX,
+                PositionY);
+        }
+
+        /** 仅为新建节点应用自动布局，增量复用节点保持编辑器中现有坐标。 */
+        void ApplyGeneratedPosition(UEdGraphNode* Node, const int32 PositionX, const int32 PositionY)
+        {
+            if (Node == nullptr || (bIncremental && ReusedNativeNodes.Contains(Node))) return;
+            Node->NodePosX = PositionX;
+            Node->NodePosY = PositionY;
+        }
+
+        /**
+         * 以 Animation Layer Interface 的 UFunction 为权威签名，补齐 Linked Anim Layer 缺失的 Pose 输入 Pin。
+         * UE5.2 的自层节点在宿主 SkeletonGeneratedClass 尚未因 ImplementNewInterface 重编译时，
+         * ReconstructNode 无法从宿主类解析新接口函数；本函数只补接口明确声明且原生节点尚不存在的 Pose 输入，
+         * 不创建标量可选 Pin、不修改接口或宿主类，也不触发 Blueprint 编译。
+         * 必须在游戏线程、节点已完成最后一次 Reconstruct 且当前 Builder 独占 Graph 时调用。
+         *
+         * @param LinkedLayerNode 待补齐输入 Pin 的原生 Linked Anim Layer 节点。
+         * @param InterfaceClass 已预检且已加载的 Animation Layer Interface 类，不可为空。
+         * @param LayerName 节点引用的接口函数名，必须能在 InterfaceClass 中解析。
+         * @param SourceNode IR 节点，仅用于稳定错误主题和源码位置。
+         * @return 接口函数存在且全部 Pose 输入均已存在或成功创建时返回 true，否则追加诊断并返回 false。
+         */
+        bool EnsureLinkedAnimLayerPosePins(
+            UAnimGraphNode_LinkedAnimLayer& LinkedLayerNode,
+            UClass& InterfaceClass,
+            const FName LayerName,
+            const FSekiroAnimIRNode& SourceNode)
+        {
+            UFunction* SignatureFunction =
+                InterfaceClass.FindFunctionByName(LayerName);
+            if (SignatureFunction == nullptr)
+            {
+                AddError(
+                    Diagnostics,
+                    LayerSignatureMismatch,
+                    FString::Printf(
+                        TEXT("Animation Layer Interface '%s' has no function '%s'."),
+                        *InterfaceClass.GetPathName(),
+                        *LayerName.ToString()),
+                    SourceNode.Id,
+                    SourceNode.SourceLocation);
+                return false;
+            }
+            const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
+            for (const FSekiroAnimIRPin& DeclaredPin : SourceNode.Pins)
+            {
+                if (DeclaredPin.Direction != ESekiroAnimIRPinDirection::Input
+                    || DeclaredPin.DataType != SekiroAnimGraphIRNames::PoseData)
+                {
+                    continue;
+                }
+
+                FProperty* Parameter = FindFProperty<FProperty>(
+                    SignatureFunction,
+                    FName(*DeclaredPin.Name));
+                if (Parameter == nullptr)
+                {
+                    AddError(
+                        Diagnostics,
+                        LayerSignatureMismatch,
+                        FString::Printf(
+                            TEXT("Animation Layer '%s' function '%s' has no parameter named '%s'."),
+                            *LayerName.ToString(),
+                            *SignatureFunction->GetPathName(),
+                            *DeclaredPin.Name),
+                        SourceNode.Id,
+                        SourceNode.SourceLocation);
+                    return false;
+                }
+                const bool bIsFunctionInput =
+                    Parameter->HasAnyPropertyFlags(CPF_Parm)
+                    && (!Parameter->HasAnyPropertyFlags(CPF_OutParm)
+                        || Parameter->HasAnyPropertyFlags(CPF_ReferenceParm));
+                if (!bIsFunctionInput)
+                {
+                    AddError(
+                        Diagnostics,
+                        LayerSignatureMismatch,
+                        FString::Printf(
+                            TEXT("Animation Layer '%s' parameter '%s' is not an input parameter."),
+                            *LayerName.ToString(),
+                            *DeclaredPin.Name),
+                        SourceNode.Id,
+                        SourceNode.SourceLocation);
+                    return false;
+                }
+
+                FEdGraphPinType PinType;
+                if (!K2Schema->ConvertPropertyToPinType(Parameter, PinType))
+                {
+                    AddError(
+                        Diagnostics,
+                        LayerSignatureMismatch,
+                        FString::Printf(
+                            TEXT("Animation Layer '%s' parameter '%s' cannot convert to an editor Pin type."),
+                            *LayerName.ToString(),
+                            *DeclaredPin.Name),
+                        SourceNode.Id,
+                        SourceNode.SourceLocation);
+                    return false;
+                }
+                if (!UAnimationGraphSchema::IsPosePin(PinType))
+                {
+                    AddError(
+                        Diagnostics,
+                        LayerSignatureMismatch,
+                        FString::Printf(
+                            TEXT("Animation Layer '%s' parameter '%s' is '%s', not a Pose input."),
+                            *LayerName.ToString(),
+                            *DeclaredPin.Name,
+                            *Parameter->GetCPPType()),
+                        SourceNode.Id,
+                        SourceNode.SourceLocation);
+                    return false;
+                }
+
+                if (LinkedLayerNode.FindPin(
+                    Parameter->GetFName(),
+                    EGPD_Input) != nullptr)
+                {
+                    continue;
+                }
+                UEdGraphPin* PosePin = LinkedLayerNode.CreatePin(
+                    EGPD_Input,
+                    UAnimationGraphSchema::MakeLocalSpacePosePin(),
+                    Parameter->GetFName());
+                if (PosePin == nullptr)
+                {
+                    AddError(
+                        Diagnostics,
+                        LayerSignatureMismatch,
+                        FString::Printf(
+                            TEXT("Failed to create Pose input '%s' for Animation Layer '%s'."),
+                            *Parameter->GetName(),
+                            *LayerName.ToString()),
+                        SourceNode.Id,
+                        SourceNode.SourceLocation);
+                    return false;
+                }
+                PosePin->PinFriendlyName = FText::FromName(Parameter->GetFName());
+            }
+            return true;
+        }
+
         /** 将接口 IR 的每个 Layer 声明物化为 UE 原生 Animation Layer Interface FunctionGraph。 */
         bool BuildAnimationLayerInterface()
         {
@@ -1811,11 +2142,9 @@ namespace SekiroAnimBlueprintFactoryPrivate
                         Layer.SourceLocation);
                     return false;
                 }
-                FBlueprintEditorUtils::AddFunctionGraph<UFunction>(
+                FBlueprintEditorUtils::AddDomainSpecificGraph(
                     &Blueprint,
-                    FunctionGraph,
-                    true,
-                    nullptr);
+                    FunctionGraph);
                 if (!BuildLayerSignatureNodes(Layer, *FunctionGraph, nullptr)) return false;
             }
             return true;
@@ -1880,11 +2209,14 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
 
-            const TArray<UEdGraphNode*> ExistingNodes = FunctionGraph->Nodes;
-            for (UEdGraphNode* ExistingNode : ExistingNodes)
+            if (!bIncremental)
             {
-                if (ExistingNode == nullptr || ExistingNode->IsA<UAnimGraphNode_Root>()) continue;
-                FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+                const TArray<UEdGraphNode*> ExistingNodes = FunctionGraph->Nodes;
+                for (UEdGraphNode* ExistingNode : ExistingNodes)
+                {
+                    if (ExistingNode == nullptr || ExistingNode->IsA<UAnimGraphNode_Root>()) continue;
+                    FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+                }
             }
             if (!BuildLayerSignatureNodes(Layer, *FunctionGraph, SignatureFunction)) return false;
             const FSekiroAnimIRGraph* RootGraph = FindGraph(Layer.RootGraphId);
@@ -1909,7 +2241,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     &Blueprint,
                     FunctionGraph,
                     SignatureFunction);
-                return true;
             }
 
             TArray<const FSekiroAnimIRFunctionParameter*> PoseParameters;
@@ -1932,11 +2263,38 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
             for (int32 PoseIndex = 0; PoseIndex < PoseParameters.Num(); ++PoseIndex)
             {
-                FGraphNodeCreator<UAnimGraphNode_LinkedInputPose> NodeCreator(FunctionGraph);
-                UAnimGraphNode_LinkedInputPose* InputNode = NodeCreator.CreateNode(false);
-                if (InputNode == nullptr) return false;
+                const FString StableInputId =
+                    Layer.Id + TEXT(".Input.") + PoseParameters[PoseIndex]->Name.ToString();
+                const FGuid StableInputGuid = MakeStableGuid(TEXT("Node"), StableInputId);
+                UAnimGraphNode_LinkedInputPose* InputNode = nullptr;
+                for (UEdGraphNode* ExistingNode : FunctionGraph.Nodes)
+                {
+                    UAnimGraphNode_LinkedInputPose* ExistingInput =
+                        Cast<UAnimGraphNode_LinkedInputPose>(ExistingNode);
+                    if (ExistingInput == nullptr
+                        || (ExistingInput->NodeGuid != StableInputGuid
+                            && ExistingInput->Node.Name
+                                != PoseParameters[PoseIndex]->Name))
+                    {
+                        continue;
+                    }
+                    InputNode = ExistingInput;
+                    InputNode->Modify();
+                    if (bIncremental) ReusedNativeNodes.Add(InputNode);
+                    break;
+                }
+                if (InputNode == nullptr)
+                {
+                    FGraphNodeCreator<UAnimGraphNode_LinkedInputPose> NodeCreator(FunctionGraph);
+                    InputNode = NodeCreator.CreateNode(false);
+                    if (InputNode == nullptr) return false;
+                    InputNode->Node.Name = PoseParameters[PoseIndex]->Name;
+                    InputNode->InputPoseIndex = PoseIndex;
+                    NodeCreator.Finalize();
+                }
                 InputNode->Node.Name = PoseParameters[PoseIndex]->Name;
                 InputNode->InputPoseIndex = PoseIndex;
+                InputNode->Inputs.Reset();
                 if (PoseIndex == 0)
                 {
                     for (const FSekiroAnimIRFunctionParameter* ValueParameter : ValueParameters)
@@ -1979,12 +2337,9 @@ namespace SekiroAnimBlueprintFactoryPrivate
                         }
                     }
                 }
-                NodeCreator.Finalize();
-                InputNode->NodeGuid = MakeStableGuid(
-                    TEXT("Node"),
-                    Layer.Id + TEXT(".Input.") + InputNode->Node.Name.ToString());
-                InputNode->NodePosX = -400;
-                InputNode->NodePosY = PoseIndex * 180;
+                InputNode->ReconstructNode();
+                InputNode->NodeGuid = StableInputGuid;
+                ApplyGeneratedPosition(InputNode, -400, PoseIndex * 180);
             }
             return true;
         }
@@ -2000,6 +2355,21 @@ namespace SekiroAnimBlueprintFactoryPrivate
             for (const FSekiroAnimIRVariable& Variable : Preflight.Blueprint.Variables)
             {
                 if (Preflight.InheritedVariableNames.Contains(Variable.Name)) continue;
+                FBPVariableDescription* ExistingDescription =
+                    Blueprint.NewVariables.FindByPredicate(
+                        [&Variable](const FBPVariableDescription& Description)
+                        {
+                            return Description.VarName == Variable.Name;
+                        });
+                if (ExistingDescription != nullptr)
+                {
+                    ExistingDescription->PropertyFlags |= CPF_BlueprintVisible;
+                    ExistingDescription->PropertyFlags &=
+                        ~(CPF_BlueprintReadOnly | CPF_DisableEditOnInstance);
+                    if (Variable.bTransient) ExistingDescription->PropertyFlags |= CPF_Transient;
+                    else ExistingDescription->PropertyFlags &= ~CPF_Transient;
+                    continue;
+                }
 
                 FEdGraphPinType PinType;
                 FString DefaultValue;
@@ -2061,6 +2431,26 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
 
         /**
+         * 从持久化生成基线中查找状态机过渡，用于避免重建未变化的 Rule Graph。
+         *
+         * @param GraphId 状态机 Graph 稳定 ID。
+         * @param TransitionId 过渡稳定 ID。
+         * @return 找到时返回上次实际生成的过渡，否则返回 nullptr。
+         */
+        const FSekiroAnimIRTransition* FindPreviousTransition(
+            const FString& GraphId,
+            const FString& TransitionId) const
+        {
+            const FSekiroAnimIRGraph* const* PreviousGraph = PreviousGraphsById.Find(GraphId);
+            if (PreviousGraph == nullptr || *PreviousGraph == nullptr) return nullptr;
+            for (const FSekiroAnimIRTransition& Transition : (*PreviousGraph)->StateMachine.Transitions)
+            {
+                if (Transition.Id == TransitionId) return &Transition;
+            }
+            return nullptr;
+        }
+
+        /**
          * 在工厂创建的 EventGraph 中生成 BlueprintUpdateAnimation override 及唯一 Lua 更新桥接。
          * Transition Rule 由各自的 Rule Graph 按需执行，本函数不枚举或预计算任何规则。
          * 必须在游戏线程调用，目标蓝图是本次 Builder 独占的新资产。
@@ -2094,23 +2484,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     Preflight.Blueprint.SourceModule,
                     Preflight.Blueprint.SourceLocation);
                 return false;
-            }
-
-            const FGuid GeneratedSelfGuid =
-                MakeStableGuid(TEXT("Node"), TEXT("EventGraph.Self"));
-            const FGuid GeneratedCallGuid =
-                MakeStableGuid(TEXT("K2Call"), TEXT("EvaluateBlueprintUpdateAnimation"));
-            const TArray<UEdGraphNode*> ExistingEventNodes = EventGraph->Nodes;
-            for (UEdGraphNode* ExistingNode : ExistingEventNodes)
-            {
-                if (ExistingNode == nullptr
-                    || (ExistingNode->NodeGuid != GeneratedSelfGuid
-                        && ExistingNode->NodeGuid != GeneratedCallGuid))
-                {
-                    continue;
-                }
-                ExistingNode->Modify();
-                FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
             }
 
             UK2Node_Event* EventNode = nullptr;
@@ -2174,9 +2547,17 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
             K2Schema->TrySetDefaultValue(*LuaUpdateModule, Preflight.Blueprint.SourceModule, false);
-            if (!K2Schema->TryCreateConnection(EventExecPin, LuaUpdateExec)
-                || !K2Schema->TryCreateConnection(SelfPin, LuaUpdateInstance)
-                || !K2Schema->TryCreateConnection(EventDelta, LuaUpdateDelta))
+            const TFunction<bool(UEdGraphPin*, UEdGraphPin*)> ConnectOrKeep =
+                [K2Schema](UEdGraphPin* Source, UEdGraphPin* Target)
+            {
+                return Source != nullptr
+                    && Target != nullptr
+                    && (Source->LinkedTo.Contains(Target)
+                        || K2Schema->TryCreateConnection(Source, Target));
+            };
+            if (!ConnectOrKeep(EventExecPin, LuaUpdateExec)
+                || !ConnectOrKeep(SelfPin, LuaUpdateInstance)
+                || !ConnectOrKeep(EventDelta, LuaUpdateDelta))
             {
                 AddError(Diagnostics, K2ConnectionFailed,
                     TEXT("Failed to connect Lua BlueprintUpdateAnimation bridge."),
@@ -2186,7 +2567,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
             return true;
         }
 
-        /** 把 Graph.Layout 中的逻辑分区单元格转换为确定性编辑器像素坐标。 */
+        /** 把 Graph.Layout 中的 Grid 单元格和精确坐标合并为确定性编辑器像素坐标，精确坐标最后覆盖 Grid。 */
         TMap<FString, FIntPoint> BuildExplicitLayoutPositions(const FSekiroAnimIRGraph& Graph) const
         {
             constexpr int32 RegionWidth = 2400;
@@ -2203,7 +2584,30 @@ namespace SekiroAnimBlueprintFactoryPrivate
                         OriginY + Item.Row * Grid.CellHeight));
                 }
             }
+            for (const FSekiroAnimIRLayoutPosition& Position : Graph.Layout.Positions)
+            {
+                Positions.Add(Position.ElementId, FIntPoint(Position.X, Position.Y));
+            }
             return Positions;
+        }
+
+        /**
+         * 强制应用 Pose/StatePose Graph 的精确像素坐标，使其在增量生成时也不被旧编辑器坐标保留规则忽略。
+         * 函数只修改已物化节点的 NodePosX/NodePosY，不改变 Graph 拓扑或 IR。
+         *
+         * @param Graph 待应用 Positions 的 Pose 或 StatePose IR Graph。
+         * @return 无返回值；未找到的原生节点会安全跳过。
+         */
+        void ApplyExactPoseGraphPositions(const FSekiroAnimIRGraph& Graph)
+        {
+            for (const FSekiroAnimIRLayoutPosition& Position : Graph.Layout.Positions)
+            {
+                UEdGraphNode* const* NativeNode = NativeNodes.Find(Position.ElementId);
+                if (NativeNode == nullptr || *NativeNode == nullptr) continue;
+                (*NativeNode)->Modify();
+                (*NativeNode)->NodePosX = Position.X;
+                (*NativeNode)->NodePosY = Position.Y;
+            }
         }
 
         /** 根据风格把拓扑主轴层级和同层序号转换为画布坐标。 */
@@ -2386,8 +2790,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 const FIntPoint* Position = ExplicitPositions.Find(Node->Id);
                 if (Position == nullptr) Position = AutomaticPositions.Find(Node->Id);
                 if (Position == nullptr) continue;
-                (*NativeNode)->NodePosX = Position->X;
-                (*NativeNode)->NodePosY = Position->Y;
+                ApplyGeneratedPosition(*NativeNode, Position->X, Position->Y);
             }
         }
 
@@ -2403,6 +2806,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 || Style == ESekiroAnimIRLayoutStyle::HierarchicalBlocks)
             {
                 ApplyHierarchicalPoseGraphLayout(Graph, ExplicitPositions);
+                ApplyExactPoseGraphPositions(Graph);
                 return;
             }
 
@@ -2455,8 +2859,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 const FIntPoint* Explicit = ExplicitPositions.Find(Node.Id);
                 if (Explicit != nullptr)
                 {
-                    (*NativeNode)->NodePosX = Explicit->X;
-                    (*NativeNode)->NodePosY = Explicit->Y;
+                    ApplyGeneratedPosition(*NativeNode, Explicit->X, Explicit->Y);
                     continue;
                 }
 
@@ -2495,9 +2898,9 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     }
                 }
                 Occupied.Add(Position);
-                (*NativeNode)->NodePosX = Position.X;
-                (*NativeNode)->NodePosY = Position.Y;
+                ApplyGeneratedPosition(*NativeNode, Position.X, Position.Y);
             }
+            ApplyExactPoseGraphPositions(Graph);
         }
 
         /**
@@ -2592,9 +2995,13 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
 
+            if (bIncremental && PreviousOwnedNodeGuids.Contains(NativeRoot->NodeGuid))
+            {
+                NativeRoot->Modify();
+                ReusedNativeNodes.Add(NativeRoot);
+            }
             NativeRoot->NodeGuid = MakeStableGuid(TEXT("Node"), RootNode.Id);
-            NativeRoot->NodePosX = 500;
-            NativeRoot->NodePosY = 0;
+            ApplyGeneratedPosition(NativeRoot, 500, 0);
             NativeNodes.Add(RootNode.Id, NativeRoot);
             return true;
         }
@@ -2631,21 +3038,46 @@ namespace SekiroAnimBlueprintFactoryPrivate
             if (!Node.EditorNodeClass.IsNull()
                 && FSekiroAnimGraphNodeRegistry::Find(Node.NodeType) == nullptr)
             {
-                UEdGraphNode* ReflectedNode = NewObject<UEdGraphNode>(
-                    &NativeGraph,
-                    *NodeClass,
-                    NAME_None,
-                    RF_Transactional);
-                UAnimGraphNode_Base* AnimNode = Cast<UAnimGraphNode_Base>(ReflectedNode);
-                if (AnimNode == nullptr) return ReportNodeCreationFailure(Node);
-
-                NativeGraph.AddNode(AnimNode, false, false);
-                AnimNode->CreateNewGuid();
-                AnimNode->PostPlacedNewNode();
-                if (AnimNode->Pins.IsEmpty()) AnimNode->AllocateDefaultPins();
+                UAnimGraphNode_Base* AnimNode = nullptr;
+                const FGuid StableNodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
+                if (bIncremental)
+                {
+                    for (UEdGraphNode* ExistingNode : NativeGraph.Nodes)
+                    {
+                        if (ExistingNode == nullptr || ExistingNode->NodeGuid != StableNodeGuid) continue;
+                        if (ExistingNode->GetClass() == *NodeClass)
+                        {
+                            AnimNode = Cast<UAnimGraphNode_Base>(ExistingNode);
+                            if (AnimNode != nullptr)
+                            {
+                                AnimNode->Modify();
+                                ReusedNativeNodes.Add(AnimNode);
+                            }
+                        }
+                        else
+                        {
+                            ExistingNode->Modify();
+                            FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+                        }
+                        break;
+                    }
+                }
+                if (AnimNode == nullptr)
+                {
+                    UEdGraphNode* ReflectedNode = NewObject<UEdGraphNode>(
+                        &NativeGraph,
+                        *NodeClass,
+                        NAME_None,
+                        RF_Transactional);
+                    AnimNode = Cast<UAnimGraphNode_Base>(ReflectedNode);
+                    if (AnimNode == nullptr) return ReportNodeCreationFailure(Node);
+                    NativeGraph.AddNode(AnimNode, false, false);
+                    AnimNode->CreateNewGuid();
+                    AnimNode->PostPlacedNewNode();
+                    if (AnimNode->Pins.IsEmpty()) AnimNode->AllocateDefaultPins();
+                }
                 AnimNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
-                AnimNode->NodePosX = PositionX;
-                AnimNode->NodePosY = PositionY;
+                ApplyGeneratedPosition(AnimNode, PositionX, PositionY);
 
                 for (const FSekiroAnimIRProperty& Property : Node.Properties)
                 {
@@ -2693,9 +3125,15 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 for (UAnimGraphNode_LinkedInputPose* ExistingInput : ExistingInputs)
                 {
                     if (ExistingInput != nullptr
-                        && ExistingInput->Node.Name == PoseNameProperty->Value.NameValue)
+                        && (ExistingInput->NodeGuid == MakeStableGuid(TEXT("Node"), Node.Id)
+                            || ExistingInput->Node.Name == PoseNameProperty->Value.NameValue))
                     {
                         LinkedInputNode = ExistingInput;
+                        if (bIncremental)
+                        {
+                            LinkedInputNode->Modify();
+                            ReusedNativeNodes.Add(LinkedInputNode);
+                        }
                         break;
                     }
                 }
@@ -2751,8 +3189,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     NodeCreator.Finalize();
                 }
                 LinkedInputNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
-                LinkedInputNode->NodePosX = PositionX;
-                LinkedInputNode->NodePosY = PositionY;
+                ApplyGeneratedPosition(LinkedInputNode, PositionX, PositionY);
                 NativeNodes.Add(Node.Id, LinkedInputNode);
                 return true;
             }
@@ -2766,8 +3203,12 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     : nullptr;
                 if (InstanceClass == nullptr) return ReportNodeCreationFailure(Node);
 
-                FGraphNodeCreator<UAnimGraphNode_LinkedAnimGraph> NodeCreator(NativeGraph);
-                UAnimGraphNode_LinkedAnimGraph* LinkedGraphNode = NodeCreator.CreateNode(false);
+                UAnimGraphNode_LinkedAnimGraph* LinkedGraphNode =
+                    CreateNativeNode<UAnimGraphNode_LinkedAnimGraph>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
                 if (LinkedGraphNode == nullptr) return ReportNodeCreationFailure(Node);
                 LinkedGraphNode->Node.InstanceClass = InstanceClass;
                 const FSekiroAnimIRProperty* GraphNameProperty =
@@ -2785,10 +3226,9 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     : nullptr;
                 if (FunctionReference == nullptr) return ReportNodeCreationFailure(Node);
                 FunctionReference->SetExternalMember(GraphName, InstanceClass);
-                NodeCreator.Finalize();
+                LinkedGraphNode->ReconstructNode();
                 LinkedGraphNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
-                LinkedGraphNode->NodePosX = PositionX;
-                LinkedGraphNode->NodePosY = PositionY;
+                ApplyGeneratedPosition(LinkedGraphNode, PositionX, PositionY);
                 NativeNodes.Add(Node.Id, LinkedGraphNode);
                 return true;
             }
@@ -2820,8 +3260,12 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     }
                 }
 
-                FGraphNodeCreator<UAnimGraphNode_LinkedAnimLayer> NodeCreator(NativeGraph);
-                UAnimGraphNode_LinkedAnimLayer* LinkedLayerNode = NodeCreator.CreateNode(false);
+                UAnimGraphNode_LinkedAnimLayer* LinkedLayerNode =
+                    CreateNativeNode<UAnimGraphNode_LinkedAnimLayer>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
                 if (LinkedLayerNode == nullptr) return ReportNodeCreationFailure(Node);
                 LinkedLayerNode->Node.Interface = InterfaceClass;
                 const FSekiroAnimIRProperty* InstanceClassProperty =
@@ -2842,9 +3286,15 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 if (FunctionReference == nullptr) return ReportNodeCreationFailure(Node);
                 if (InterfaceClass != nullptr)
                 {
+                    FGuid FunctionGuid;
+                    FBlueprintEditorUtils::GetFunctionGuidFromClassByFieldName(
+                        FBlueprintEditorUtils::GetMostUpToDateClass(InterfaceClass),
+                        LayerNameProperty->Value.NameValue,
+                        FunctionGuid);
                     FunctionReference->SetExternalMember(
                         LayerNameProperty->Value.NameValue,
-                        InterfaceClass);
+                        InterfaceClass,
+                        FunctionGuid);
                     LinkedLayerNode->InterfaceGuid =
                         FBlueprintEditorUtils::FindInterfaceGraphGuid(
                             LayerNameProperty->Value.NameValue,
@@ -2852,12 +3302,21 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 }
                 else
                 {
-                    FunctionReference->SetSelfMember(LayerNameProperty->Value.NameValue);
+                    FunctionReference->SetSelfMember(
+                        LayerNameProperty->Value.NameValue);
                 }
-                NodeCreator.Finalize();
+                LinkedLayerNode->ReconstructNode();
+                if (InterfaceClass != nullptr
+                    && !EnsureLinkedAnimLayerPosePins(
+                        *LinkedLayerNode,
+                        *InterfaceClass,
+                        LayerNameProperty->Value.NameValue,
+                        Node))
+                {
+                    return false;
+                }
                 LinkedLayerNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
-                LinkedLayerNode->NodePosX = PositionX;
-                LinkedLayerNode->NodePosY = PositionY;
+                ApplyGeneratedPosition(LinkedLayerNode, PositionX, PositionY);
                 NativeNodes.Add(Node.Id, LinkedLayerNode);
                 return true;
             }
@@ -2925,14 +3384,17 @@ namespace SekiroAnimBlueprintFactoryPrivate
             {
                 const FSekiroAnimIRProperty* PropertyName = FindProperty(Node, TEXT("PropertyName"));
                 if (PropertyName == nullptr) return ReportNodeCreationFailure(Node);
-                FGraphNodeCreator<UK2Node_VariableGet> NodeCreator(NativeGraph);
-                UK2Node_VariableGet* GetterNode = NodeCreator.CreateNode(false);
+                UK2Node_VariableGet* GetterNode =
+                    CreateNativeNode<UK2Node_VariableGet>(
+                        NativeGraph,
+                        Node.Id,
+                        PositionX,
+                        PositionY);
                 if (GetterNode == nullptr) return ReportNodeCreationFailure(Node);
                 GetterNode->VariableReference.SetSelfMember(PropertyName->Value.NameValue);
-                NodeCreator.Finalize();
+                GetterNode->ReconstructNode();
                 GetterNode->NodeGuid = MakeStableGuid(TEXT("Node"), Node.Id);
-                GetterNode->NodePosX = PositionX;
-                GetterNode->NodePosY = PositionY;
+                ApplyGeneratedPosition(GetterNode, PositionX, PositionY);
                 NativeNodes.Add(Node.Id, GetterNode);
                 return true;
             }
@@ -3122,11 +3584,17 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 }
 
                 const FSekiroAnimIRProperty* ModeProperty = FindProperty(Node, TEXT("Mode"));
-                OrientationNode->Node.Mode = ModeProperty != nullptr
-                    && ModeProperty->Value.NameValue == TEXT("Graph")
-                    ? EWarpingEvaluationMode::Graph
-                    : EWarpingEvaluationMode::Manual;
-                OrientationNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                if (ModeProperty != nullptr)
+                {
+                    OrientationNode->Node.Mode =
+                        ModeProperty->Value.NameValue == TEXT("Graph")
+                        ? EWarpingEvaluationMode::Graph
+                        : EWarpingEvaluationMode::Manual;
+                }
+                if (!ReusedNativeNodes.Contains(OrientationNode))
+                {
+                    OrientationNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                }
                 OrientationNode->Node.SpineBones.Reset();
                 TArray<FString> SpineBoneNames;
                 SpineBonesProperty->Value.StringValue.ParseIntoArray(SpineBoneNames, TEXT("|"), true);
@@ -3248,16 +3716,22 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     return ReportNodeCreationFailure(Node);
                 }
 
-                FootPlacementNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                if (!ReusedNativeNodes.Contains(FootPlacementNode))
+                {
+                    FootPlacementNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                }
                 FootPlacementNode->Node.IKFootRootBone = FBoneReference(FootRootProperty->Value.NameValue);
                 FootPlacementNode->Node.PelvisBone = FBoneReference(PelvisProperty->Value.NameValue);
                 FootPlacementNode->Node.LegDefinitions = *LegDefinitions;
                 const FSekiroAnimIRProperty* PlantSpeedModeProperty =
                     FindProperty(Node, TEXT("PlantSpeedMode"));
-                FootPlacementNode->Node.PlantSpeedMode = PlantSpeedModeProperty != nullptr
-                    && PlantSpeedModeProperty->Value.NameValue == TEXT("Manual")
-                    ? EWarpingEvaluationMode::Manual
-                    : EWarpingEvaluationMode::Graph;
+                if (PlantSpeedModeProperty != nullptr)
+                {
+                    FootPlacementNode->Node.PlantSpeedMode =
+                        PlantSpeedModeProperty->Value.NameValue == TEXT("Manual")
+                        ? EWarpingEvaluationMode::Manual
+                        : EWarpingEvaluationMode::Graph;
+                }
                 const EFootPlacementLockType* PlantLockType =
                     Preflight.FootPlacementLockTypes.Find(Node.Id);
                 if (PlantLockType != nullptr)
@@ -3342,7 +3816,10 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     return ReportNodeCreationFailure(Node);
                 }
 
-                LegIKNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                if (!ReusedNativeNodes.Contains(LegIKNode))
+                {
+                    LegIKNode->Node.AlphaInputType = EAnimAlphaInputType::Float;
+                }
                 LegIKNode->Node.LegsDefinition = *LegDefinitions;
                 const FSekiroAnimIRProperty* ReachPrecision = FindProperty(Node, TEXT("ReachPrecision"));
                 if (ReachPrecision != nullptr)
@@ -3432,13 +3909,25 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     return Property != nullptr ? Property->Value.FloatValue : DefaultValue;
                 };
                 TwoBoneIKNode->Node.EffectorLocation = FVector(
-                    ReadFloatProperty(TEXT("EffectorLocationX"), 0.0),
-                    ReadFloatProperty(TEXT("EffectorLocationY"), 0.0),
-                    ReadFloatProperty(TEXT("EffectorLocationZ"), 0.0));
+                    ReadFloatProperty(
+                        TEXT("EffectorLocationX"),
+                        TwoBoneIKNode->Node.EffectorLocation.X),
+                    ReadFloatProperty(
+                        TEXT("EffectorLocationY"),
+                        TwoBoneIKNode->Node.EffectorLocation.Y),
+                    ReadFloatProperty(
+                        TEXT("EffectorLocationZ"),
+                        TwoBoneIKNode->Node.EffectorLocation.Z));
                 TwoBoneIKNode->Node.JointTargetLocation = FVector(
-                    ReadFloatProperty(TEXT("JointTargetLocationX"), 0.0),
-                    ReadFloatProperty(TEXT("JointTargetLocationY"), 0.0),
-                    ReadFloatProperty(TEXT("JointTargetLocationZ"), 0.0));
+                    ReadFloatProperty(
+                        TEXT("JointTargetLocationX"),
+                        TwoBoneIKNode->Node.JointTargetLocation.X),
+                    ReadFloatProperty(
+                        TEXT("JointTargetLocationY"),
+                        TwoBoneIKNode->Node.JointTargetLocation.Y),
+                    ReadFloatProperty(
+                        TEXT("JointTargetLocationZ"),
+                        TwoBoneIKNode->Node.JointTargetLocation.Z));
 
                 const FSekiroAnimIRProperty* TakeEffectorRotationProperty =
                     FindProperty(Node, TEXT("bTakeRotationFromEffectorSpace"));
@@ -4038,9 +4527,13 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
             const bool bHasLuaRule = !Transition.RuleFunctionName.IsNone();
             const bool bHasNativeGate = Transition.Gate.RootIndex != INDEX_NONE;
+            if (bIncremental && ReusedNativeNodes.Contains(&TransitionNode))
+            {
+                ResultNode->Modify();
+                ReusedNativeNodes.Add(ResultNode);
+            }
             ResultNode->NodeGuid = MakeStableGuid(TEXT("TransitionResult"), Transition.Id);
-            ResultNode->NodePosX = 600;
-            ResultNode->NodePosY = 0;
+            ApplyGeneratedPosition(ResultNode, 600, 0);
             UK2Node_Self* SelfNode = CreateNativeNode<UK2Node_Self>(
                 *TransitionGraph,
                 TEXT("TransitionRule.Self.") + Transition.Id,
@@ -4511,8 +5004,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 Occupied.Add(Position);
                 UAnimStateNode* const* StateNode = StateNodes.Find(AutomaticEffectiveStates[Index]->Id);
                 if (StateNode == nullptr || *StateNode == nullptr) continue;
-                (*StateNode)->NodePosX = Position.X;
-                (*StateNode)->NodePosY = Position.Y;
+                ApplyGeneratedPosition(*StateNode, Position.X, Position.Y);
             }
 
             const int32 EffectiveRows = AutomaticEffectiveStates.Num() > 0
@@ -4531,20 +5023,21 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 Occupied.Add(Position);
                 UAnimStateNode* const* StateNode = StateNodes.Find(DisconnectedStates[Index]->Id);
                 if (StateNode == nullptr || *StateNode == nullptr) continue;
-                (*StateNode)->NodePosX = Position.X;
-                (*StateNode)->NodePosY = Position.Y;
+                ApplyGeneratedPosition(*StateNode, Position.X, Position.Y);
             }
 
             for (const TPair<FString, FIntPoint>& Pair : ExplicitPositions)
             {
                 UAnimStateNode* const* StateNode = StateNodes.Find(Pair.Key);
                 if (StateNode == nullptr || *StateNode == nullptr) continue;
-                (*StateNode)->NodePosX = Pair.Value.X;
-                (*StateNode)->NodePosY = Pair.Value.Y;
+                ApplyGeneratedPosition(*StateNode, Pair.Value.X, Pair.Value.Y);
             }
 
             UAnimStateNode* const* EntryStateNode = StateNodes.Find(Graph.StateMachine.EntryStateId);
-            if (NativeGraph.EntryNode != nullptr && EntryStateNode != nullptr && *EntryStateNode != nullptr)
+            if (NativeGraph.EntryNode != nullptr
+                && EntryStateNode != nullptr
+                && *EntryStateNode != nullptr
+                && (!bIncremental || !ReusedNativeNodes.Contains(*EntryStateNode)))
             {
                 NativeGraph.EntryNode->NodePosX = (*EntryStateNode)->NodePosX - EntryHorizontalOffset;
                 NativeGraph.EntryNode->NodePosY = (*EntryStateNode)->NodePosY;
@@ -4553,7 +5046,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
 
         /**
          * 将 StateMachine 显式 Grid 作为固定锚点，并按选定风格排列其余 State。
-         * HierarchicalBlocks 使用紧凑近方形网格；传统流式风格仍从 Entry 做 BFS 分层。
+         * Auto、CompactGrid 和旧 HierarchicalBlocks 都使用有效状态平方根上取整的紧凑网格；传统流式风格仍从 Entry 做 BFS 分层。
          */
         void ApplyStateMachineLayout(
             const FSekiroAnimIRGraph& Graph,
@@ -4563,9 +5056,27 @@ namespace SekiroAnimBlueprintFactoryPrivate
             ESekiroAnimIRLayoutStyle Style = Graph.Layout.Style;
             const TMap<FString, FIntPoint> ExplicitPositions = BuildExplicitLayoutPositions(Graph);
             if (Style == ESekiroAnimIRLayoutStyle::Auto
+                || Style == ESekiroAnimIRLayoutStyle::CompactGrid
                 || Style == ESekiroAnimIRLayoutStyle::HierarchicalBlocks)
             {
                 ApplyHierarchicalStateMachineLayout(Graph, NativeGraph, StateNodes, ExplicitPositions);
+                for (const FSekiroAnimIRLayoutPosition& Position : Graph.Layout.Positions)
+                {
+                    UAnimStateNode* const* StateNode = StateNodes.Find(Position.ElementId);
+                    if (StateNode == nullptr || *StateNode == nullptr) continue;
+                    (*StateNode)->Modify();
+                    (*StateNode)->NodePosX = Position.X;
+                    (*StateNode)->NodePosY = Position.Y;
+                }
+                UAnimStateNode* const* EntryStateNode =
+                    StateNodes.Find(Graph.StateMachine.EntryStateId);
+                if (NativeGraph.EntryNode != nullptr
+                    && EntryStateNode != nullptr
+                    && *EntryStateNode != nullptr)
+                {
+                    NativeGraph.EntryNode->NodePosX = (*EntryStateNode)->NodePosX - 240;
+                    NativeGraph.EntryNode->NodePosY = (*EntryStateNode)->NodePosY;
+                }
                 return;
             }
 
@@ -4606,8 +5117,7 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 const FIntPoint* Explicit = ExplicitPositions.Find(State.Id);
                 if (Explicit != nullptr)
                 {
-                    (*StateNode)->NodePosX = Explicit->X;
-                    (*StateNode)->NodePosY = Explicit->Y;
+                    ApplyGeneratedPosition(*StateNode, Explicit->X, Explicit->Y);
                     continue;
                 }
 
@@ -4634,12 +5144,30 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 }
                 while (Occupied.Contains(Position)) Position.Y += 260;
                 Occupied.Add(Position);
-                (*StateNode)->NodePosX = Position.X;
-                (*StateNode)->NodePosY = Position.Y;
+                ApplyGeneratedPosition(*StateNode, Position.X, Position.Y);
             }
 
             UAnimStateNode* const* EntryStateNode = StateNodes.Find(Graph.StateMachine.EntryStateId);
-            if (NativeGraph.EntryNode != nullptr && EntryStateNode != nullptr && *EntryStateNode != nullptr)
+            if (NativeGraph.EntryNode != nullptr
+                && EntryStateNode != nullptr
+                && *EntryStateNode != nullptr
+                && (!bIncremental || !ReusedNativeNodes.Contains(*EntryStateNode)))
+            {
+                NativeGraph.EntryNode->NodePosX = (*EntryStateNode)->NodePosX - 280;
+                NativeGraph.EntryNode->NodePosY = (*EntryStateNode)->NodePosY;
+            }
+            for (const FSekiroAnimIRLayoutPosition& Position : Graph.Layout.Positions)
+            {
+                UAnimStateNode* const* StateNode = StateNodes.Find(Position.ElementId);
+                if (StateNode == nullptr || *StateNode == nullptr) continue;
+                (*StateNode)->Modify();
+                (*StateNode)->NodePosX = Position.X;
+                (*StateNode)->NodePosY = Position.Y;
+            }
+            EntryStateNode = StateNodes.Find(Graph.StateMachine.EntryStateId);
+            if (NativeGraph.EntryNode != nullptr
+                && EntryStateNode != nullptr
+                && *EntryStateNode != nullptr)
             {
                 NativeGraph.EntryNode->NodePosX = (*EntryStateNode)->NodePosX - 280;
                 NativeGraph.EntryNode->NodePosY = (*EntryStateNode)->NodePosY;
@@ -4734,13 +5262,38 @@ namespace SekiroAnimBlueprintFactoryPrivate
             ApplyStateMachineLayout(Graph, NativeGraph, StateNodes);
 
             UAnimStateNode* const* EntryState = StateNodes.Find(Graph.StateMachine.EntryStateId);
-            if (NativeGraph.EntryNode == nullptr
-                || NativeGraph.EntryNode->Pins.Num() == 0
-                || EntryState == nullptr
-                || (*EntryState)->GetInputPin() == nullptr
-                || !NativeGraph.GetSchema()->TryCreateConnection(
-                    NativeGraph.EntryNode->Pins[0],
-                    (*EntryState)->GetInputPin()))
+            UEdGraphPin* EntryPin = NativeGraph.EntryNode != nullptr
+                && NativeGraph.EntryNode->Pins.Num() > 0
+                ? NativeGraph.EntryNode->Pins[0]
+                : nullptr;
+            UEdGraphPin* EntryStatePin = EntryState != nullptr
+                ? (*EntryState)->GetInputPin()
+                : nullptr;
+            bool bEntryConnected = EntryPin != nullptr
+                && EntryStatePin != nullptr
+                && EntryPin->LinkedTo.Contains(EntryStatePin);
+            if (!bEntryConnected && bIncremental && EntryPin != nullptr)
+            {
+                const TArray<UEdGraphPin*> ExistingEntryLinks = EntryPin->LinkedTo;
+                for (UEdGraphPin* ExistingStatePin : ExistingEntryLinks)
+                {
+                    UEdGraphNode* ExistingState =
+                        ExistingStatePin != nullptr ? ExistingStatePin->GetOwningNode() : nullptr;
+                    if (ExistingState != nullptr
+                        && PreviousOwnedNodeGuids.Contains(ExistingState->NodeGuid))
+                    {
+                        EntryPin->Modify();
+                        ExistingStatePin->Modify();
+                        EntryPin->BreakLinkTo(ExistingStatePin);
+                    }
+                }
+            }
+            if (!bEntryConnected && EntryPin != nullptr && EntryStatePin != nullptr)
+            {
+                bEntryConnected =
+                    NativeGraph.GetSchema()->TryCreateConnection(EntryPin, EntryStatePin);
+            }
+            if (!bEntryConnected)
             {
                 AddError(
                     Diagnostics,
@@ -4784,17 +5337,48 @@ namespace SekiroAnimBlueprintFactoryPrivate
                     return false;
                 }
 
+                const bool bTransitionWasReused =
+                    ReusedNativeNodes.Contains(TransitionNode);
                 TransitionNode->NodeGuid = MakeStableGuid(TEXT("Transition"), Transition.Id);
                 TransitionNode->CrossfadeDuration = Transition.Settings.BlendDuration;
                 TransitionNode->PriorityOrder = Transition.Settings.PriorityOrder;
                 TransitionNode->BlendMode = EAlphaBlendOption::Linear;
-                TransitionNode->CreateConnections(*SourceState, *TargetState);
+                if (TransitionNode->GetPreviousState() != *SourceState
+                    || TransitionNode->GetNextState() != *TargetState)
+                {
+                    TransitionNode->CreateConnections(*SourceState, *TargetState);
+                }
                 TransitionNode->BoundGraph->GraphGuid =
                     MakeStableGuid(TEXT("TransitionGraph"), Transition.Id);
                 FEdGraphUtilities::RenameGraphToNameOrCloseToName(
                     TransitionNode->BoundGraph,
                     Transition.Key);
-                if (!BuildTransitionRuleGraph(Transition, *TransitionNode, **SourceState)) return false;
+                const FSekiroAnimIRTransition* PreviousTransition =
+                    FindPreviousTransition(Graph.Id, Transition.Id);
+                const bool bRuleUnchanged = bTransitionWasReused
+                    && PreviousTransition != nullptr
+                    && FSekiroAnimIRTransition::StaticStruct()->CompareScriptStruct(
+                        PreviousTransition,
+                        &Transition,
+                        0);
+                if (!bRuleUnchanged)
+                {
+                    const TArray<UEdGraphNode*> RuleNodes = TransitionNode->BoundGraph->Nodes;
+                    for (UEdGraphNode* RuleNode : RuleNodes)
+                    {
+                        if (RuleNode == nullptr
+                            || RuleNode->IsA<UAnimGraphNode_TransitionResult>())
+                        {
+                            continue;
+                        }
+                        RuleNode->Modify();
+                        FBlueprintEditorUtils::RemoveNode(&Blueprint, RuleNode, true);
+                    }
+                    if (!BuildTransitionRuleGraph(Transition, *TransitionNode, **SourceState))
+                    {
+                        return false;
+                    }
+                }
                 ++TransitionIndex;
             }
 
@@ -4837,6 +5421,53 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 return false;
             }
 
+            if (SourcePin->LinkedTo.Contains(TargetPin)) return true;
+            if (bIncremental && !TargetPin->LinkedTo.IsEmpty())
+            {
+                const TArray<UEdGraphPin*> ExistingLinks = TargetPin->LinkedTo;
+                for (UEdGraphPin* ExistingSourcePin : ExistingLinks)
+                {
+                    UEdGraphNode* ExistingSourceNode =
+                        ExistingSourcePin != nullptr ? ExistingSourcePin->GetOwningNode() : nullptr;
+                    const bool bCurrentLuaOwned =
+                        ExistingSourceNode != nullptr
+                        && NativeNodes.FindKey(ExistingSourceNode) != nullptr;
+                    const bool bSchemaOwnedNewGraphInput =
+                        ExistingSourceNode != nullptr
+                        && !InitialNativeGraphs.Contains(&NativeGraph)
+                        && ExistingSourceNode->IsA<UAnimGraphNode_LinkedInputPose>();
+                    const bool bCurrentLayerRootConnection =
+                        CurrentLayer != nullptr
+                        && TargetNode != nullptr
+                        && (*TargetNode)->IsA<UAnimGraphNode_Root>();
+                    if (ExistingSourceNode == nullptr
+                        || (!PreviousOwnedNodeGuids.Contains(ExistingSourceNode->NodeGuid)
+                            && !bCurrentLuaOwned
+                            && !bSchemaOwnedNewGraphInput
+                            && !bCurrentLayerRootConnection))
+                    {
+                        AddError(
+                            Diagnostics,
+                            ConnectionFailed,
+                            FString::Printf(
+                                TEXT("Lua Link '%s' conflicts with an editor-owned connection on '%s.%s' from node '%s' (%s); graph existed before build: %s."),
+                                *Link.Id,
+                                *Link.Target.NodeId,
+                                *Link.Target.PinName,
+                                *ExistingSourceNode->GetName(),
+                                *ExistingSourceNode->GetClass()->GetPathName(),
+                                InitialNativeGraphs.Contains(&NativeGraph)
+                                    ? TEXT("true")
+                                    : TEXT("false")),
+                            Link.Id,
+                            Link.SourceLocation);
+                        return false;
+                    }
+                    ExistingSourcePin->Modify();
+                    TargetPin->Modify();
+                    ExistingSourcePin->BreakLinkTo(TargetPin);
+                }
+            }
             if (!NativeGraph.GetSchema()->TryCreateConnection(SourcePin, TargetPin))
             {
                 AddError(
@@ -4918,9 +5549,15 @@ namespace SekiroAnimBlueprintFactoryPrivate
         const FPreflightData& Preflight;
         UAnimBlueprint& Blueprint;
         TArray<FSekiroAnimIRDiagnostic>& Diagnostics;
+        const FSekiroAnimBlueprintIR* PreviousGeneratedIR = nullptr;
+        bool bIncremental = false;
         const FSekiroAnimIRLayer* CurrentLayer = nullptr;
         TMap<FString, const FSekiroAnimIRGraph*> GraphsById;
         TMap<FString, const FSekiroAnimIRNode*> NodesById;
+        TMap<FString, const FSekiroAnimIRGraph*> PreviousGraphsById;
+        TSet<FGuid> PreviousOwnedNodeGuids;
+        TSet<UEdGraphNode*> ReusedNativeNodes;
+        TSet<UEdGraph*> InitialNativeGraphs;
         TMap<FString, UEdGraph*> NativeGraphs;
         TMap<FString, UEdGraphNode*> NativeNodes;
     };
@@ -5089,6 +5726,159 @@ namespace SekiroAnimBlueprintFactoryPrivate
         return true;
     }
 
+    /** 收集一份 IR 中所有直接对应编辑器节点的确定性 Guid。 */
+    void CollectGeneratedNodeGuids(
+        const FSekiroAnimBlueprintIR& BlueprintIR,
+        TSet<FGuid>& OutNodeGuids)
+    {
+        OutNodeGuids.Reset();
+        for (const FSekiroAnimIRLayer& Layer : BlueprintIR.Layers)
+        {
+            for (const FSekiroAnimIRGraph& Graph : Layer.Graphs)
+            {
+                for (const FSekiroAnimIRNode& Node : Graph.Nodes)
+                {
+                    OutNodeGuids.Add(MakeStableGuid(TEXT("Node"), Node.Id));
+                }
+                for (const FSekiroAnimIRState& State : Graph.StateMachine.States)
+                {
+                    OutNodeGuids.Add(MakeStableGuid(TEXT("State"), State.Id));
+                }
+                for (const FSekiroAnimIRTransition& Transition : Graph.StateMachine.Transitions)
+                {
+                    OutNodeGuids.Add(MakeStableGuid(TEXT("Transition"), Transition.Id));
+                }
+            }
+        }
+    }
+
+    /** 判断两轮 IR 中同名变量的 Lua 所有配置是否保持一致。 */
+    bool AreGeneratedVariablesEquivalent(
+        const FSekiroAnimIRVariable& Previous,
+        const FSekiroAnimIRVariable& Current)
+    {
+        return Previous.DataType == Current.DataType
+            && Previous.TypeObjectPath == Current.TypeObjectPath
+            && Previous.bTransient == Current.bTransient
+            && FSekiroAnimIRValue::StaticStruct()->CompareScriptStruct(
+                &Previous.DefaultValue,
+                &Current.DefaultValue,
+                0);
+    }
+
+    /**
+     * 以持久化的上次生成 IR 为所有权清单，仅移除本轮已删除或类型已变化的 Lua 对象。
+     * 当前 IR 仍存在的节点、Graph、变量和手工对象保持原 UObject；节点属性和连接随后由 Builder 合并。
+     *
+     * @param Blueprint 待增量更新的标准动画蓝图。
+     * @param PreviousIR 上一次成功写入该资产的 IR。
+     * @param Preflight 当前已预检 IR。
+     * @param OutDiagnostics 接收外壳恢复失败诊断。
+     * @return 原生 Graph 外壳可用并完成差集清理时返回 true。
+     */
+    bool PrepareLuaOwnedBlueprintIncremental(
+        UAnimBlueprint& Blueprint,
+        const FSekiroAnimBlueprintIR& PreviousIR,
+        const FPreflightData& Preflight,
+        TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics)
+    {
+        Blueprint.Modify();
+        if (!EnsureLuaBlueprintShell(Blueprint))
+        {
+            AddError(
+                OutDiagnostics,
+                InPlaceCommitFailed,
+                TEXT("The target AnimBlueprint native shell could not be restored for incremental generation."),
+                Blueprint.GetPathName(),
+                Preflight.Blueprint.SourceLocation);
+            return false;
+        }
+
+        TSet<FGuid> PreviousNodeGuids;
+        TSet<FGuid> CurrentNodeGuids;
+        CollectGeneratedNodeGuids(PreviousIR, PreviousNodeGuids);
+        CollectGeneratedNodeGuids(Preflight.Blueprint, CurrentNodeGuids);
+
+        TArray<UEdGraph*> AllGraphs;
+        Blueprint.GetAllGraphs(AllGraphs);
+        for (UEdGraph* Graph : AllGraphs)
+        {
+            if (Graph == nullptr) continue;
+            const TArray<UEdGraphNode*> ExistingNodes = Graph->Nodes;
+            for (UEdGraphNode* ExistingNode : ExistingNodes)
+            {
+                if (ExistingNode == nullptr
+                    || !PreviousNodeGuids.Contains(ExistingNode->NodeGuid)
+                    || CurrentNodeGuids.Contains(ExistingNode->NodeGuid)
+                    || ExistingNode->IsA<UAnimGraphNode_Root>()
+                    || ExistingNode->IsA<UAnimGraphNode_StateResult>()
+                    || ExistingNode->IsA<UAnimGraphNode_TransitionResult>())
+                {
+                    continue;
+                }
+                ExistingNode->Modify();
+                FBlueprintEditorUtils::RemoveNode(&Blueprint, ExistingNode, true);
+            }
+        }
+
+        TSet<FName> CurrentLayerGraphNames;
+        for (int32 LayerIndex = 1; LayerIndex < Preflight.Blueprint.Layers.Num(); ++LayerIndex)
+        {
+            const FSekiroAnimIRLayer& Layer = Preflight.Blueprint.Layers[LayerIndex];
+            CurrentLayerGraphNames.Add(
+                Layer.FunctionName.IsNone() ? FName(*Layer.Name) : Layer.FunctionName);
+        }
+        for (int32 LayerIndex = 1; LayerIndex < PreviousIR.Layers.Num(); ++LayerIndex)
+        {
+            const FSekiroAnimIRLayer& PreviousLayer = PreviousIR.Layers[LayerIndex];
+            const FName PreviousGraphName = PreviousLayer.FunctionName.IsNone()
+                ? FName(*PreviousLayer.Name)
+                : PreviousLayer.FunctionName;
+            if (CurrentLayerGraphNames.Contains(PreviousGraphName)) continue;
+            TArray<UEdGraph*> CurrentGraphs;
+            Blueprint.GetAllGraphs(CurrentGraphs);
+            for (UEdGraph* Graph : CurrentGraphs)
+            {
+                if (Graph == nullptr || Graph->GetFName() != PreviousGraphName) continue;
+                FBlueprintEditorUtils::RemoveGraph(
+                    &Blueprint,
+                    Graph,
+                    EGraphRemoveFlags::MarkTransient);
+                break;
+            }
+        }
+
+        for (const FSoftClassPath& PreviousInterface : PreviousIR.ImplementedInterfaces)
+        {
+            if (Preflight.Blueprint.ImplementedInterfaces.Contains(PreviousInterface)) continue;
+            FBlueprintEditorUtils::RemoveInterface(
+                &Blueprint,
+                PreviousInterface.GetAssetPath(),
+                false);
+        }
+
+        TArray<FName> VariablesToReplace;
+        for (const FSekiroAnimIRVariable& PreviousVariable : PreviousIR.Variables)
+        {
+            const FSekiroAnimIRVariable* CurrentVariable =
+                Preflight.Blueprint.Variables.FindByPredicate(
+                    [&PreviousVariable](const FSekiroAnimIRVariable& Candidate)
+                    {
+                        return Candidate.Name == PreviousVariable.Name;
+                    });
+            if (CurrentVariable == nullptr
+                || !AreGeneratedVariablesEquivalent(PreviousVariable, *CurrentVariable))
+            {
+                VariablesToReplace.Add(PreviousVariable.Name);
+            }
+        }
+        if (!VariablesToReplace.IsEmpty())
+        {
+            FBlueprintEditorUtils::BulkRemoveMemberVariables(&Blueprint, VariablesToReplace);
+        }
+        return true;
+    }
+
     /**
      * 编译已完成 Graph 物化的标准 AnimBlueprint，并把原生编译错误转换为稳定 Factory 诊断。
      * 必须在游戏线程调用；成功会替换 GeneratedClass，失败可能留下待事务回滚的编辑器中间状态。
@@ -5242,7 +6032,6 @@ namespace SekiroAnimBlueprintFactoryPrivate
             DiscardCreatedBlueprint(AnimBlueprint);
             return nullptr;
         }
-
         return AnimBlueprint;
     }
 
@@ -5312,15 +6101,36 @@ namespace SekiroAnimBlueprintFactoryPrivate
         }
         Extension->Modify();
 
-        bool bPrepared = ResetLuaOwnedBlueprint(
-            Blueprint,
-            Preflight,
-            Extension->GeneratedVariableNames,
-            OutDiagnostics,
-            Preflight.Blueprint.SourceLocation);
+        const bool bUseIncrementalMerge =
+            Preflight.Blueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimBlueprint;
+        const FSekiroAnimBlueprintIR* PreviousGeneratedIR = nullptr;
+        if (bUseIncrementalMerge)
+        {
+            PreviousGeneratedIR = Extension->bHasLastGeneratedIR
+                && Extension->LastGeneratedIR.BlueprintKind
+                    == ESekiroAnimIRBlueprintKind::AnimBlueprint
+                ? &Extension->LastGeneratedIR
+                : &Preflight.Blueprint;
+        }
+        bool bPrepared = bUseIncrementalMerge
+            ? PrepareLuaOwnedBlueprintIncremental(
+                Blueprint,
+                *PreviousGeneratedIR,
+                Preflight,
+                OutDiagnostics)
+            : ResetLuaOwnedBlueprint(
+                Blueprint,
+                Preflight,
+                Extension->GeneratedVariableNames,
+                OutDiagnostics,
+                Preflight.Blueprint.SourceLocation);
         if (bPrepared)
         {
-            FNativeAnimBlueprintBuilder Builder(Preflight, Blueprint, OutDiagnostics);
+            FNativeAnimBlueprintBuilder Builder(
+                Preflight,
+                Blueprint,
+                OutDiagnostics,
+                bUseIncrementalMerge ? PreviousGeneratedIR : nullptr);
             bPrepared = Builder.Build() && !HasErrors(OutDiagnostics);
         }
         if (bPrepared)
@@ -5331,6 +6141,8 @@ namespace SekiroAnimBlueprintFactoryPrivate
                 if (Preflight.InheritedVariableNames.Contains(Variable.Name)) continue;
                 Extension->GeneratedVariableNames.Add(Variable.Name);
             }
+            Extension->LastGeneratedIR = Preflight.Blueprint;
+            Extension->bHasLastGeneratedIR = true;
             FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(&Blueprint);
             Blueprint.GetOutermost()->MarkPackageDirty();
             GEditor->EndTransaction();
@@ -5631,10 +6443,10 @@ bool USekiroAnimBlueprintFactoryLibrary::UpsertSkeletalMeshSocket(
 }
 
 /**
- * 为已有的标准 UAnimBlueprint 附加或更新 Lua 源扩展，并将资产标记为等待首次显式编译。
+ * 为已有的标准 UAnimBlueprint 附加或更新 Lua 源扩展，并将资产标记为等待首次显式导入。
  * 函数配置源身份并立即关闭多线程动画更新，但不读取 Lua、不清理现有 Graph，也不执行原生编译；
  * 因此可先安全接管旧动画蓝图，
- * 再通过 CompileLuaAnimBlueprintInPlace 完成带 staging 和事务回滚的结构替换。
+ * 再通过 Lua → AnimBlueprint 完成带 staging 和事务回滚的结构替换。
  * 必须在非 PIE 的游戏线程调用，且目标必须是精确 UAnimBlueprint 类型以继续使用 UE5.2 原生动画编译器。
  *
  * @param AnimBlueprint 要由 Lua 接管的现有标准动画蓝图；对象身份、路径、父类和 Skeleton 均保持不变。
@@ -5662,8 +6474,12 @@ bool USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
     Extension->Modify();
     AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
     Extension->LuaModuleName = LuaModuleName;
-    Extension->SourceMode = ESekiroLuaAnimBlueprintSourceMode::Lua;
-    Extension->MarkSourceDirty(TEXT("Lua source configured; compile the Animation Blueprint or start PIE."));
+    Extension->GeneratedLuaModuleName.Reset();
+    Extension->LastSynchronizedBlueprintHash.Reset();
+    Extension->LastSynchronizedLuaHash.Reset();
+    Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::NeverSynchronized;
+    Extension->MarkSourceDirty(
+        TEXT("Lua source configured; use Lua → AnimBlueprint to import it explicitly."));
     FBlueprintEditorUtils::MarkBlueprintAsModified(AnimBlueprint);
     AnimBlueprint->GetOutermost()->MarkPackageDirty();
     return true;
@@ -5673,7 +6489,7 @@ bool USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
  * 只读取扩展指定的 Lua 模块，以资产当前 ParentClass 和 TargetSkeleton 覆盖源码中的创建期提示，
  * 构建并验证 IR 与资产预检结果，然后缓存最近成功 IR。
  * 函数不修改 AnimGraph、EventGraph 或 GeneratedClass，不调用 UE 原生编译，也不保存或标脏 package。
- * 必须在非 PIE 的游戏线程调用；失败会保留旧 IR，但旧修订不会被 Generate From Lua 采用。
+ * 必须在非 PIE 的游戏线程调用；失败会保留旧 IR，但旧修订不会被 Lua → AnimBlueprint 采用。
  *
  * @param AnimBlueprint 带 Lua 扩展的精确标准 UAnimBlueprint；函数不取得对象所有权。
  * @param OutDiagnostics 接收 Lua 文件、行列、IR 验证和资源预检诊断；调用开始时清空。
@@ -5705,7 +6521,7 @@ bool USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
 
     USekiroLuaAnimBlueprintExtension* Extension =
         USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
-    if (Extension == nullptr || Extension->LuaModuleName.IsEmpty())
+    if (Extension == nullptr || Extension->GetExchangeLuaModuleName().IsEmpty())
     {
         AddError(
             OutDiagnostics,
@@ -5738,7 +6554,7 @@ bool USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
 
     FSekiroAnimBlueprintIR CheckedIR;
     bool bSucceeded = USekiroAnimGraphIRLibrary::CompileLuaModule(
-        Extension->LuaModuleName,
+        Extension->GetExchangeLuaModuleName(),
         CheckedIR,
         OutDiagnostics);
     if (bSucceeded)
@@ -5763,6 +6579,7 @@ bool USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
         OutDiagnostics.Num() > 0
             ? OutDiagnostics.Last().Message
             : TEXT("Lua animation source check failed."));
+    Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
     return false;
 }
 
@@ -5814,7 +6631,7 @@ bool USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
         Extension->MarkCompileFailed(
             OutDiagnostics.Num() > 0
                 ? OutDiagnostics.Last().Message
-                : TEXT("Generate From Lua failed."));
+                : TEXT("Lua → AnimBlueprint failed."));
         return false;
     }
 
@@ -5828,7 +6645,7 @@ bool USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
 /**
  * 按 Check、Generate、UE 原生 Compile 的固定顺序同步更新一个 Lua 动画蓝图，并可选保存 package。
  * Check 或 Generate 失败时不会调用原生编译；成功路径恰好调用一次 FKismetEditorUtilities::CompileBlueprint。
- * 必须在非 PIE 的游戏线程调用；全局重入会被拒绝，函数不会根据 SourceMode 改走 Native 分支。
+ * 必须在非 PIE 的游戏线程调用；全局重入会被拒绝，函数不读取旧 SourceMode 兼容字段。
  *
  * @param AnimBlueprint 带 Lua 扩展的标准 UAnimBlueprint；对象身份和路径保持不变。
  * @param bSavePackage true 时仅在全部编译成功后保存当前 package，false 时保留编辑器 Dirty 状态。
@@ -5884,8 +6701,39 @@ bool USekiroAnimBlueprintFactoryLibrary::CompileLuaAnimBlueprintInPlace(
         if (Extension != nullptr) Extension->MarkCompileFailed(OutDiagnostics.Last().Message);
         return false;
     }
-
-    if (Extension != nullptr) Extension->MarkCompileSucceeded();
+    if (Extension != nullptr)
+    {
+        Extension->MarkCompileSucceeded();
+        FSekiroAnimBlueprintIR BlueprintIR;
+        TArray<FSekiroAnimIRDiagnostic> SyncDiagnostics;
+        FString BlueprintHash;
+        FString LuaHash;
+        const bool bHasBlueprintHash = ReadAnimBlueprintToIR(
+            AnimBlueprint,
+            BlueprintIR,
+            SyncDiagnostics)
+            && ComputeCanonicalIRHash(BlueprintIR, BlueprintHash, SyncDiagnostics);
+        const bool bHasLuaHash = ComputeCanonicalIRHash(
+            Extension->LastSuccessfulIR,
+            LuaHash,
+            SyncDiagnostics);
+        OutDiagnostics.Append(SyncDiagnostics);
+        if (bHasBlueprintHash && bHasLuaHash)
+        {
+            Extension->MarkSynchronized(BlueprintHash, LuaHash);
+        }
+        else
+        {
+            Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
+            AddError(
+                OutDiagnostics,
+                TEXT("Factory.SyncHashFailed"),
+                TEXT("Lua import compiled successfully, but the synchronization hashes could not be recorded."),
+                AnimBlueprint->GetPathName(),
+                FSekiroAnimIRSourceLocation());
+            return false;
+        }
+    }
     if (bSavePackage)
     {
         UPackage* Package = AnimBlueprint->GetOutermost();
@@ -5935,155 +6783,336 @@ int32 USekiroAnimBlueprintFactoryLibrary::MarkLoadedLuaAnimBlueprintsDirty(
 
         USekiroLuaAnimBlueprintExtension* Extension =
             USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
-        if (Extension == nullptr || Extension->LuaModuleName.IsEmpty()) continue;
+        if (Extension == nullptr || Extension->GetExchangeLuaModuleName().IsEmpty()) continue;
 
-        Extension->MarkSourceDirty(Reason);
+        Extension->MarkLuaChanged(Reason);
         ++StaleSourceCount;
     }
     return StaleSourceCount;
 }
 
 /**
- * 对当前编辑器进程中全部已加载、带 Lua 源扩展且 bSourceDirty 的标准 AnimBlueprint 执行批量原地编译。
- * 函数先统一调用 UnLua HotReload，再逐资产调用 CompileLuaAnimBlueprintInPlace；单个失败不会阻止其他资产。
- * 必须在游戏线程且非 PIE/SIE 调用；全局重入会被拒绝，且不会主动加载未进入内存的资产。
+ * 只读地把现有标准 AnimBlueprint 转换为完整 Canonical IR。
+ * 函数将所有严格支持边界委托给通用 Reader，不调用 Modify、原生编译、保存或资产注册；失败时 OutBlueprint
+ * 保持为空值。只能在游戏线程调用。
  *
- * @param bSavePackages true 时成功后保存各资产 package；false 时只更新内存 Graph 并标记 package Dirty。
- * @param OutDiagnostics 汇总所有 Dirty 资产的结构化诊断；调用开始时清空，并同步写入编辑器日志。
- * @return 没有 Dirty 资产或全部 Dirty 资产编译成功时返回 true；线程、PIE、重入或任一失败时返回 false。
+ * @param AnimBlueprint 待读动画蓝图，可为空，函数不持有对象。
+ * @param OutBlueprint 成功时接收可验证的完整 IR，失败时为空值。
+ * @param OutDiagnostics 接收 Reader 与 Validator 的结构化诊断。
+ * @return 完整读取成功时返回 true，否则返回 false。
  */
-bool USekiroAnimBlueprintFactoryLibrary::CompileDirtyLoadedLuaAnimBlueprints(
-    const bool bSavePackages,
+bool USekiroAnimBlueprintFactoryLibrary::ReadAnimBlueprintToIR(
+    const UAnimBlueprint* AnimBlueprint,
+    FSekiroAnimBlueprintIR& OutBlueprint,
+    TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics)
+{
+    return FSekiroAnimBlueprintIRReader::Read(AnimBlueprint, OutBlueprint, OutDiagnostics);
+}
+
+/**
+ * 将 IR 复制、Canonicalize、Validate 后通过确定性 Lua Writer 生成完整结构文本，再对 UTF-8 字节计算 MD5。
+ * Writer 会反射写出 FSekiroAnimBlueprintIR 的全部 UPROPERTY，包括每个 Graph 的 Layout.Positions；数组已由
+ * Canonicalize 稳定排序，因此哈希不受输入声明顺序影响。函数不访问文件系统或 UObject 实例。
+ *
+ * @param Blueprint 待计算的完整 IR；函数不修改调用方值。
+ * @param OutHash 成功时接收 32 位小写十六进制哈希，失败时为空。
+ * @param OutDiagnostics 接收 Validator 或 Writer 诊断；调用开始时清空。
+ * @return IR 可规范化并确定性写出时返回 true，否则返回 false。
+ */
+bool USekiroAnimBlueprintFactoryLibrary::ComputeCanonicalIRHash(
+    const FSekiroAnimBlueprintIR& Blueprint,
+    FString& OutHash,
+    TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics)
+{
+    OutHash.Reset();
+    FString CanonicalText;
+    if (!FSekiroAnimGraphIRLuaWriter::WriteModule(
+        Blueprint,
+        CanonicalText,
+        OutDiagnostics))
+    {
+        return false;
+    }
+
+    const FTCHARToUTF8 Utf8Text(*CanonicalText);
+    OutHash = FMD5::HashBytes(
+        reinterpret_cast<const uint8*>(Utf8Text.Get()),
+        static_cast<uint64>(Utf8Text.Length())).ToLower();
+    return true;
+}
+
+/**
+ * 分别通过 Blueprint Reader 与 Exchange Lua CompileIR 获取两侧 Canonical IR 和稳定哈希，
+ * 再相对最近成功同步点更新状态。函数允许更新扩展的瞬时状态字段，但不调用 Modify、不标脏 package，
+ * 不修改任何 Graph/文件，也不执行 Blueprint 编译；任一读取失败时状态为 Error 且保留同步基线哈希。
+ * 必须在非 PIE 游戏线程调用。
+ *
+ * @param AnimBlueprint 待检查的精确标准动画蓝图，不可为空。
+ * @param OutDiagnostics 接收 Reader、CompileIR、Validator 或 Writer 诊断；调用开始时清空。
+ * @return 两侧 IR 与哈希均成功获得时返回 true；输入无效或任一侧失败时返回 false。
+ */
+bool USekiroAnimBlueprintFactoryLibrary::RefreshLuaAnimBlueprintSyncStatus(
+    UAnimBlueprint* AnimBlueprint,
     TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics)
 {
     using namespace SekiroAnimBlueprintFactoryPrivate;
-
     OutDiagnostics.Reset();
-    FSekiroAnimIRSourceLocation BatchLocation;
-    BatchLocation.LuaModule = TEXT("LoadedLuaAnimBlueprints");
-    BatchLocation.Line = 1;
-    BatchLocation.Column = 1;
-    if (!IsInGameThread())
+    USekiroLuaAnimBlueprintExtension* Extension =
+        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+    if (!IsInGameThread()
+        || AnimBlueprint == nullptr
+        || AnimBlueprint->GetClass() != UAnimBlueprint::StaticClass()
+        || Extension == nullptr
+        || Extension->GetExchangeLuaModuleName().IsEmpty()
+        || (GEditor != nullptr && GEditor->PlayWorld != nullptr))
     {
+        if (Extension != nullptr)
+        {
+            Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
+        }
+        FSekiroAnimIRSourceLocation Location;
+        Location.LuaModule = AnimBlueprint != nullptr
+            ? AnimBlueprint->GetPathName()
+            : TEXT("None");
         AddError(
             OutDiagnostics,
             WrongThread,
-            TEXT("CompileDirtyLoadedLuaAnimBlueprints must run on the game thread."),
-            TEXT("LoadedLuaAnimBlueprints"),
-            BatchLocation);
-        return false;
-    }
-    if (GEditor != nullptr && GEditor->PlayWorld != nullptr)
-    {
-        AddError(
-            OutDiagnostics,
-            PIECompileForbidden,
-            TEXT("Lua AnimBlueprint structure compilation is queued until PIE has ended."),
-            TEXT("LoadedLuaAnimBlueprints"),
-            BatchLocation);
-        return false;
-    }
-    if (GIsCompilingDirtyLuaAnimBlueprints)
-    {
-        AddError(
-            OutDiagnostics,
-            CompileAllReentry,
-            TEXT("A loaded Lua AnimBlueprint compilation batch is already running."),
-            TEXT("LoadedLuaAnimBlueprints"),
-            BatchLocation);
+            TEXT("Sync status refresh requires a configured UAnimBlueprint on the non-PIE game thread."),
+            Location.LuaModule,
+            Location);
         return false;
     }
 
-    TGuardValue<bool> CompileGuard(GIsCompilingDirtyLuaAnimBlueprints, true);
-    TArray<UAnimBlueprint*> LoadedLuaBlueprints;
-    for (TObjectIterator<UAnimBlueprint> Iterator; Iterator; ++Iterator)
+    FSekiroAnimBlueprintIR BlueprintIR;
+    FString BlueprintHash;
+    if (!ReadAnimBlueprintToIR(AnimBlueprint, BlueprintIR, OutDiagnostics)
+        || !ComputeCanonicalIRHash(BlueprintIR, BlueprintHash, OutDiagnostics))
     {
-        UAnimBlueprint* AnimBlueprint = *Iterator;
-        if (!IsValid(AnimBlueprint)
-            || !AnimBlueprint->IsAsset()
-            || AnimBlueprint->GetOutermost() == GetTransientPackage())
-        {
-            continue;
-        }
-
-        USekiroLuaAnimBlueprintExtension* Extension =
-            USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
-        const bool bCompilerOutOfDate = Extension != nullptr
-            && Extension->CompilerVersion
-                != USekiroLuaAnimBlueprintExtension::CurrentCompilerVersion;
-        if (Extension == nullptr
-            || Extension->LuaModuleName.IsEmpty()
-            || Extension->SourceMode != ESekiroLuaAnimBlueprintSourceMode::Lua
-            || (!Extension->bSourceDirty && !bCompilerOutOfDate))
-        {
-            continue;
-        }
-        LoadedLuaBlueprints.Add(AnimBlueprint);
-    }
-    LoadedLuaBlueprints.Sort([](const UAnimBlueprint& Left, const UAnimBlueprint& Right)
-    {
-        return Left.GetPathName() < Right.GetPathName();
-    });
-
-    if (LoadedLuaBlueprints.Num() == 0)
-    {
-        UE_LOG(
-            LogSekiroLuaAnimBlueprintCompiler,
-            Verbose,
-            TEXT("No loaded dirty Lua AnimBlueprint assets require compilation."));
-        return true;
+        Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
+        return false;
     }
 
     UUnLuaFunctionLibrary::HotReload();
-    bool bAllSucceeded = true;
-    for (UAnimBlueprint* AnimBlueprint : LoadedLuaBlueprints)
+    FSekiroAnimBlueprintIR LuaIR;
+    TArray<FSekiroAnimIRDiagnostic> LuaDiagnostics;
+    FString LuaHash;
+    const bool bLuaReady = USekiroAnimGraphIRLibrary::CompileLuaModule(
+        Extension->GetExchangeLuaModuleName(),
+        LuaIR,
+        LuaDiagnostics)
+        && ComputeCanonicalIRHash(LuaIR, LuaHash, LuaDiagnostics);
+    OutDiagnostics.Append(LuaDiagnostics);
+    if (!bLuaReady)
     {
-        TArray<FSekiroAnimIRDiagnostic> AssetDiagnostics;
-        const bool bAssetSucceeded = CompileLuaAnimBlueprintInPlace(
-            AnimBlueprint,
-            bSavePackages,
-            AssetDiagnostics);
-        bAllSucceeded &= bAssetSucceeded;
-        if (bAssetSucceeded)
-        {
-            UE_LOG(
-                LogSekiroLuaAnimBlueprintCompiler,
-                Display,
-                TEXT("Compiled dirty Lua AnimBlueprint '%s'."),
-                *AnimBlueprint->GetPathName());
-        }
-
-        for (const FSekiroAnimIRDiagnostic& Diagnostic : AssetDiagnostics)
-        {
-            if (Diagnostic.Severity == ESekiroAnimIRDiagnosticSeverity::Error)
-            {
-                UE_LOG(
-                    LogSekiroLuaAnimBlueprintCompiler,
-                    Error,
-                    TEXT("[%s] %s: %s (%s:%d:%d)"),
-                    *AnimBlueprint->GetPathName(),
-                    *Diagnostic.Code.ToString(),
-                    *Diagnostic.Message,
-                    *Diagnostic.SourceLocation.LuaModule,
-                    Diagnostic.SourceLocation.Line,
-                    Diagnostic.SourceLocation.Column);
-            }
-            else
-            {
-                UE_LOG(
-                    LogSekiroLuaAnimBlueprintCompiler,
-                    Warning,
-                    TEXT("[%s] %s: %s (%s:%d:%d)"),
-                    *AnimBlueprint->GetPathName(),
-                    *Diagnostic.Code.ToString(),
-                    *Diagnostic.Message,
-                    *Diagnostic.SourceLocation.LuaModule,
-                    Diagnostic.SourceLocation.Line,
-                    Diagnostic.SourceLocation.Column);
-            }
-        }
-        OutDiagnostics.Append(AssetDiagnostics);
+        Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::Error;
+        return false;
     }
 
-    return bAllSucceeded;
+    if (Extension->LastSynchronizedBlueprintHash.IsEmpty()
+        || Extension->LastSynchronizedLuaHash.IsEmpty())
+    {
+        Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::NeverSynchronized;
+        return true;
+    }
+
+    const bool bBlueprintChanged =
+        BlueprintHash != Extension->LastSynchronizedBlueprintHash;
+    const bool bLuaChanged = LuaHash != Extension->LastSynchronizedLuaHash;
+    Extension->SyncStatus = bBlueprintChanged && bLuaChanged
+        ? ESekiroLuaAnimBlueprintSyncStatus::BothChanged
+        : bBlueprintChanged
+            ? ESekiroLuaAnimBlueprintSyncStatus::BlueprintChanged
+            : bLuaChanged
+                ? ESekiroLuaAnimBlueprintSyncStatus::LuaChanged
+                : ESekiroLuaAnimBlueprintSyncStatus::InSync;
+    return true;
+}
+
+/**
+ * 把当前标准 AnimBlueprint 读取为 IR，并安全写入运行时模块旁的独立 `.generated.lua` 交换模块。
+ * 函数先写同目录唯一临时模块，再通过现有 Importer 回读并比较 Canonical IR；只有完全等价才替换目标。
+ * 手写 LuaModuleName 文件永不写入。成功后仅更新扩展 GeneratedLuaModuleName 并标脏资产，不编译、不保存资产。
+ * 必须在游戏线程且非 PIE 调用。
+ *
+ * @param AnimBlueprint 待读写交换元数据的标准动画蓝图；对象和 Graph 不会改变。
+ * @param OutGeneratedModuleName 成功时接收 `<LuaModuleName>.generated`，失败时为空。
+ * @param OutDiagnostics 接收 Reader、Writer、路径、文件和回读校验诊断。
+ * @param bKeepBackup 目标已存在时是否保留一份 `.bak`；false 仍使用临时回滚文件保证失败不覆盖。
+ * @return IR 完整读取、回读等价并原子替换成功时返回 true，否则保留旧目标和手写模块并返回 false。
+ */
+bool USekiroAnimBlueprintFactoryLibrary::AnimBlueprintToLua(
+    UAnimBlueprint* AnimBlueprint,
+    FString& OutGeneratedModuleName,
+    TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics,
+    const bool bKeepBackup)
+{
+    using namespace SekiroAnimBlueprintFactoryPrivate;
+    OutGeneratedModuleName.Reset();
+    OutDiagnostics.Reset();
+    FSekiroAnimIRSourceLocation Location;
+    Location.LuaModule = AnimBlueprint != nullptr ? AnimBlueprint->GetPathName() : TEXT("None");
+    if (!IsInGameThread()
+        || AnimBlueprint == nullptr
+        || AnimBlueprint->GetClass() != UAnimBlueprint::StaticClass()
+        || (GEditor != nullptr && GEditor->PlayWorld != nullptr))
+    {
+        AddError(OutDiagnostics, WrongThread, TEXT("AnimBlueprintToLua requires an exact UAnimBlueprint on the non-PIE game thread."), Location.LuaModule, Location);
+        return false;
+    }
+
+    USekiroLuaAnimBlueprintExtension* Extension =
+        USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
+    const FString RuntimeModule = Extension != nullptr
+        ? Extension->LuaModuleName
+        : FString();
+    TArray<FString> Segments;
+    RuntimeModule.ParseIntoArray(Segments, TEXT("."), false);
+    bool bSafeModule = !RuntimeModule.IsEmpty()
+        && !RuntimeModule.Contains(TEXT(".."))
+        && !RuntimeModule.Contains(TEXT("/"))
+        && !RuntimeModule.Contains(TEXT("\\"))
+        && !RuntimeModule.Contains(TEXT(":"))
+        && FPaths::IsRelative(RuntimeModule);
+    for (const FString& Segment : Segments)
+    {
+        if (Segment.IsEmpty())
+        {
+            bSafeModule = false;
+            break;
+        }
+        for (const TCHAR Character : Segment)
+        {
+            if (!FChar::IsAlnum(Character) && Character != TEXT('_'))
+            {
+                bSafeModule = false;
+                break;
+            }
+        }
+        if (!bSafeModule) break;
+    }
+    if (!bSafeModule)
+    {
+        AddError(OutDiagnostics, TEXT("Writer.UnsafeModulePath"), TEXT("LuaModuleName must be a relative dot-separated identifier without traversal or path separators."), RuntimeModule, Location);
+        return false;
+    }
+
+    FSekiroAnimBlueprintIR ReadIR;
+    if (!ReadAnimBlueprintToIR(AnimBlueprint, ReadIR, OutDiagnostics)) return false;
+    FString LuaText;
+    if (!FSekiroAnimGraphIRLuaWriter::WriteModule(ReadIR, LuaText, OutDiagnostics)) return false;
+
+    const FString GeneratedModule = RuntimeModule + TEXT(".generated");
+    const FString TempModule = RuntimeModule + TEXT(".generated_tmp_")
+        + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+    const FString ScriptRoot = FPaths::ConvertRelativePathToFull(
+        UUnLuaFunctionLibrary::GetScriptRootPath());
+    FString NormalizedRoot = ScriptRoot;
+    FPaths::NormalizeDirectoryName(NormalizedRoot);
+    const FString RelativeTarget = GeneratedModule.Replace(TEXT("."), TEXT("/")) + TEXT(".lua");
+    const FString RelativeTemp = TempModule.Replace(TEXT("."), TEXT("/")) + TEXT(".lua");
+    FString TargetPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(NormalizedRoot, RelativeTarget));
+    FString TempPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(NormalizedRoot, RelativeTemp));
+    FPaths::NormalizeFilename(TargetPath);
+    FPaths::NormalizeFilename(TempPath);
+    FString RootPrefix = NormalizedRoot;
+    FPaths::NormalizeFilename(RootPrefix);
+    RootPrefix += TEXT("/");
+    if (!TargetPath.StartsWith(RootPrefix, ESearchCase::IgnoreCase)
+        || !TempPath.StartsWith(RootPrefix, ESearchCase::IgnoreCase))
+    {
+        AddError(OutDiagnostics, TEXT("Writer.PathEscapesScriptRoot"), TEXT("Resolved generated module path escapes the configured UnLua ScriptRoot."), TargetPath, Location);
+        return false;
+    }
+
+    IFileManager& FileManager = IFileManager::Get();
+    if (!FileManager.MakeDirectory(*FPaths::GetPath(TargetPath), true)
+        || !FFileHelper::SaveStringToFile(
+            LuaText,
+            *TempPath,
+            FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+    {
+        AddError(OutDiagnostics, TEXT("Writer.TempWriteFailed"), TEXT("Failed to write generated Lua temporary file."), TempPath, Location);
+        FileManager.Delete(*TempPath, false, true);
+        return false;
+    }
+
+    UUnLuaFunctionLibrary::HotReload();
+    FSekiroAnimBlueprintIR RoundTripIR;
+    TArray<FSekiroAnimIRDiagnostic> RoundTripDiagnostics;
+    bool bEquivalent = USekiroAnimGraphIRLibrary::CompileLuaModule(
+        TempModule,
+        RoundTripIR,
+        RoundTripDiagnostics);
+    if (bEquivalent)
+    {
+        USekiroAnimGraphIRLibrary::Canonicalize(ReadIR);
+        USekiroAnimGraphIRLibrary::Canonicalize(RoundTripIR);
+        bEquivalent = FSekiroAnimBlueprintIR::StaticStruct()->CompareScriptStruct(
+            &ReadIR,
+            &RoundTripIR,
+            0);
+    }
+    if (!bEquivalent)
+    {
+        OutDiagnostics.Append(RoundTripDiagnostics);
+        AddError(OutDiagnostics, TEXT("Writer.RoundTripMismatch"), TEXT("Generated Lua did not round-trip to an equivalent Canonical IR; the old target was preserved."), GeneratedModule, Location);
+        FileManager.Delete(*TempPath, false, true);
+        return false;
+    }
+
+    FString BlueprintHash;
+    FString LuaHash;
+    TArray<FSekiroAnimIRDiagnostic> HashDiagnostics;
+    const bool bBlueprintHashed = ComputeCanonicalIRHash(
+        ReadIR,
+        BlueprintHash,
+        HashDiagnostics);
+    OutDiagnostics.Append(HashDiagnostics);
+    const bool bLuaHashed = ComputeCanonicalIRHash(
+        RoundTripIR,
+        LuaHash,
+        HashDiagnostics);
+    OutDiagnostics.Append(HashDiagnostics);
+    if (!bBlueprintHashed || !bLuaHashed)
+    {
+        AddError(
+            OutDiagnostics,
+            TEXT("Writer.SyncHashFailed"),
+            TEXT("Generated Lua passed round-trip validation, but synchronization hashes could not be calculated; the old target was preserved."),
+            GeneratedModule,
+            Location);
+        FileManager.Delete(*TempPath, false, true);
+        return false;
+    }
+
+    const FString BackupPath = TargetPath + (bKeepBackup ? TEXT(".bak") : TEXT(".rollback"));
+    const bool bHadTarget = FileManager.FileExists(*TargetPath);
+    if (bHadTarget)
+    {
+        FileManager.Delete(*BackupPath, false, true);
+        if (!FileManager.Move(*BackupPath, *TargetPath, true, true))
+        {
+            AddError(OutDiagnostics, TEXT("Writer.BackupFailed"), TEXT("Existing generated Lua could not be moved to its rollback file."), TargetPath, Location);
+            FileManager.Delete(*TempPath, false, true);
+            return false;
+        }
+    }
+    if (!FileManager.Move(*TargetPath, *TempPath, true, true))
+    {
+        if (bHadTarget) FileManager.Move(*TargetPath, *BackupPath, true, true);
+        AddError(OutDiagnostics, TEXT("Writer.AtomicReplaceFailed"), TEXT("Generated Lua atomic replacement failed; the previous target was restored."), TargetPath, Location);
+        FileManager.Delete(*TempPath, false, true);
+        return false;
+    }
+    if (bHadTarget && !bKeepBackup) FileManager.Delete(*BackupPath, false, true);
+
+    Extension->Modify();
+    Extension->GeneratedLuaModuleName = GeneratedModule;
+    Extension->bSourceDirty = false;
+    Extension->MarkSynchronized(BlueprintHash, LuaHash);
+    Extension->LastCompileMessage =
+        TEXT("AnimBlueprint IR exported to generated Lua exchange module.");
+    AnimBlueprint->GetOutermost()->MarkPackageDirty();
+    OutGeneratedModuleName = GeneratedModule;
+    return true;
 }

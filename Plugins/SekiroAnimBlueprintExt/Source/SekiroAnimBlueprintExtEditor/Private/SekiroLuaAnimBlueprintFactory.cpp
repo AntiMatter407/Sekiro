@@ -4,6 +4,7 @@
 #include "Animation/AnimInstance.h"
 #include "Factories/AnimBlueprintFactory.h"
 #include "SekiroLuaAnimBlueprintExtension.h"
+#include "UObject/Package.h"
 
 #define LOCTEXT_NAMESPACE "SekiroLuaAnimBlueprintFactory"
 
@@ -82,8 +83,8 @@ UObject* USekiroLuaAnimBlueprintFactory::FactoryCreateNew(
 
     AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
     Extension->LuaModuleName = LuaModuleName;
-    Extension->SourceMode = ESekiroLuaAnimBlueprintSourceMode::Lua;
-    Extension->MarkSourceDirty(TEXT("Lua animation blueprint source has not been compiled."));
+    Extension->MarkSourceDirty(
+        TEXT("Lua animation blueprint source has not been imported explicitly."));
     return AnimBlueprint;
 }
 

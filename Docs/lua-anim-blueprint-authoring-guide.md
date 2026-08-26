@@ -416,10 +416,15 @@ function ABP_Sekiro:AnimGraph(Graph)
     })
     main_flow:Place(machine, 0, 0)
     main_flow:Place(Graph.OutputNode, 2, 0)
+
+    -- 精确像素坐标优先于上面的 Grid 单元格，适合需要固定画布位置的关键节点。
+    Graph:SetPosition(machine, -320, 140)
 end
 ```
 
 同一 Graph 可以声明多个 Grid。`RegionColumn/RegionRow` 决定分区位置，`Place(element, column, row)` 决定元素在分区内的单元格；未显式 Place 的节点由插件根据连接关系和 `LayoutStyle` 自动补位。
+
+`Graph:SetPosition(element, x, y)` 和 `Machine:SetPosition(state, x, y)` 直接声明 UE Graph 画布像素坐标。元素必须属于当前 Graph，每个元素只能声明一个精确坐标，X/Y 必须是 -1,000,000 到 1,000,000 之间的有限整数。布局优先级固定为：精确 `SetPosition` > `Grid:Place` > 自动布局。因此同一元素可以同时保留 Grid 语义与精确坐标，最终以精确坐标为准。
 
 `HierarchicalBlocks` 是默认风格。在 Pose Graph 中，它从 Result 反向递归：一个节点的直接输入根节点在其左侧同一列纵向对齐，每个输入连同自己的下级输入视为不可重叠的子块，再把整组抽象为上一级输入块。这样方向选择器、步态选择器和各自的 SequencePlayer 会形成清晰的局部组，而不是按拓扑深度铺成一条长线。没有连接到 Result 的节点不参与主树尺寸计算，会在主树下方单独紧凑排列。
 
@@ -427,7 +432,6 @@ end
 
 ```lua
 function Locomotion.StateMachine(Machine)
-    Machine.LayoutStyle = LayoutStyle.HierarchicalBlocks
     Machine:Entry("Idle")
     local idle = Machine:State("Idle")
     local move = Machine:State("Move")
@@ -437,15 +441,16 @@ function Locomotion.StateMachine(Machine)
         RegionRow = 0,
     })
     entry_flow:Place(idle, 0, 0)
+    Machine:SetPosition(idle, 120, 80)
     -- Move 未显式放置，将参与状态机的紧凑近方形网格。
 end
 ```
 
-在 StateMachine 中，`HierarchicalBlocks` 只统计 Entry 或 Transition 连接到的有效状态，列数取有效自动状态数量平方根的上取整。例如 8 个有效状态采用 3×3 网格。孤立状态不参与主网格的 N 值计算，而是在主网格下方单独成组。
+在 StateMachine 中，未显式设置 `LayoutStyle` 时默认使用 `CompactGrid`。它只统计 Entry 或 Transition 连接到的有效自动状态，列数取数量平方根的上取整。例如 8 个有效状态采用 3×3 网格。孤立状态不参与主网格的 N 值计算，而是在主网格下方单独成组。旧 IR 缺少 Layout 时的 `Auto` 也按该规则处理。
 
-可用风格为 `Auto`、`LeftToRight`、`RightToLeft`、`TopToBottom`、`BottomToTop`、`CompactGrid`、`Radial` 和 `HierarchicalBlocks`。`Auto` 作为兼容入口也解析为 `HierarchicalBlocks`；`Radial` 主要用于循环状态机。
+可用风格为 `Auto`、`LeftToRight`、`RightToLeft`、`TopToBottom`、`BottomToTop`、`CompactGrid`、`Radial` 和 `HierarchicalBlocks`。Pose/StatePose Graph 的 `Auto` 按 `HierarchicalBlocks` 处理，StateMachine Graph 的 `Auto` 按 `CompactGrid` 处理；`Radial` 主要用于循环状态机。
 
-显式 Grid 始终优先于自动排版。同一元素只能 Place 一次，同一单元格不能重复占用，节点/State 也不能放入其他 Graph 的 Grid。
+显式 Grid 始终优先于自动排版，精确坐标又始终优先于 Grid。同一元素只能 Place 一次，同一单元格不能重复占用，节点/State 也不能放入其他 Graph 的 Grid。
 
 ## 八、Transition Rule
 
@@ -612,6 +617,19 @@ UAnimInstance 更新
 
 Lua 来源动画蓝图的 Transition 全部使用强类型原生 Rule AST，可保持并行动画更新。`BlueprintUpdateAnimation` 仍先在游戏线程采集并写入变量，Sequence Player、混合、状态机、Root Motion、Curve 和 Notify 随后由 UE 原生 AnimNode 求值。启用 `RootMotionFromEverything` 时，引擎仍可能为需要即时根运动的帧选择同步更新。
 
+## 双向同步工具栏
+
+动画蓝图编辑器在原生 Compile 区域后依次提供：`Check Lua`、`Lua → AnimBlueprint`、`AnimBlueprint → Lua`、同步状态、Lua 模块名和 `Editor Debug`。
+
+- `Check Lua` 只执行 Exchange Lua 模块的 `CompileIR()`、规范化、校验与资源预检，不修改 Graph 或文件。
+- `Lua → AnimBlueprint` 是唯一显式导入入口：事务性更新 Graph 后执行一次 UE 原生编译，但不自动保存资产。
+- `AnimBlueprint → Lua` 通过只读 Reader 生成 Canonical IR，再安全写入独立 `.generated.lua` 交换模块；不会修改 Graph。
+- 同步状态按钮只读刷新两侧 Canonical IR 哈希。哈希包含节点、状态和过渡的 Layout Positions；状态为 `Never Synchronized`、`In Sync`、`Blueprint Changed`、`Lua Changed`、`Both Changed` 或 `Error`。
+- 导入会覆盖已改变的 Blueprint 侧、导出会覆盖已改变的 Lua 侧时，工具栏会在任何写操作前明确确认；取消不会修改 Graph、Lua 文件或同步基线。
+- Lua 文件监听只标记 `Lua Changed`，不会自动导入；Graph 或布局变化在点击同步状态时检测。
+
+原生 Compile/F7 始终只编译当前 Blueprint Graph，PIE 前也只重置运行时缓存；二者都不会隐式执行 Lua 生成、导入或导出。
+
 角色移动策略与 Pose 求值分离：`Gameplay.Sekiro.Movement.SKMovementComponent` 在原生 CharacterMovement 求值前选择锁定四向素材，并让 ActorYaw 平滑追向锁定目标；`ABP_Sekiro.BlueprintUpdateAnimation` 把实际移动方向相对当前 Actor 的角度镜像到生成变量。锁定 Start、Cycle、Stop 与 Step 使用 UE5.2 标准 `Orientation Warping` Graph 模式：节点从输入 Pose 的 `RootMotionDelta` Attribute 读取素材原方向，把 Root Motion 位移与下半身同步重定向到 `LocomotionAngle`，再通过 `Spine/Spine1/Spine2` 反向补偿保持上半身朝向。项目 Graph 中不再实例化自定义 `SpineYawCompensation` 节点；输入释放时锁存角度供 Stop 使用，Graph 方案也不再请求旧 StopTurn 换脚回正。锁定四方向按 `45°/135°` 初始分类，并保留 `10°` 滞回避免边界换腿抖动。自由移动仍由 Actor 朝输入方向旋转；Jump 继续使用八方向素材和 Manual Orientation Warping。
 
 ## 十三、调试与常见错误
@@ -622,12 +640,12 @@ Lua 来源动画蓝图的 Transition 全部使用强类型原生 Rule AST，可�
 
 需要连续观察运行时真实层级、动画来源、混合权重与 Transition 实参时，使用 `Sekiro.LuaAnim.Debug` 或 `Sekiro.LuaAnim.Snapshot [IntervalSeconds]`，再从编辑器 `Window > Lua Anim Snapshot Viewer` 打开时间轴回放。完整命令和操作说明见 [Lua 动画蓝图层级调试与快照回放](lua-anim-snapshot-debugger.md)。
 
-`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Generate From Lua` 或 Lua 源码编译流程中命中，不会在 PIE 每帧执行。Lua 调试器只负责 `BlueprintUpdateAnimation` 等运行时 Lua；强类型 Transition Rule 不进入 Lua Runtime。
+`AnimGraph()`、`StateMachine()` 和 `StateGraph_*()` 是编辑器生成期函数，它们的断点只在 `Check Lua`、`Lua → AnimBlueprint` 或显式同步状态刷新中命中，不会在 PIE 每帧执行。Lua 调试器只负责 `BlueprintUpdateAnimation` 等运行时 Lua；强类型 Transition Rule 不进入 Lua Runtime。
 
 动画蓝图编辑器工具栏的 `Editor Debug: Off/On` 是按用户持久化的 Lua 调试端口开关：
 
 - `Off`（默认）：编辑器阶段不监听 9966，`Main.lua` 在 PIE 世界启动后才开启调试，因此只能调试运行时 Lua。
-- `On`：编辑器阶段立即监听 9966，可在点击 `Check Lua`、`Generate From Lua` 或 Compile 时调试 `CompileIR()` 与 Graph 声明函数。
+- `On`：编辑器阶段立即监听 9966，可在点击 `Check Lua`、`Lua → AnimBlueprint` 或同步状态刷新时调试 `CompileIR()` 与 Graph 声明函数；原生 Compile/F7 不执行 `CompileIR()`。
 - 从 `On` 切换为 `Off` 会立即停止编辑器调试器并释放端口；PIE/SIE 运行期间禁止切换。
 
 ### 必填 Sequence 缺失

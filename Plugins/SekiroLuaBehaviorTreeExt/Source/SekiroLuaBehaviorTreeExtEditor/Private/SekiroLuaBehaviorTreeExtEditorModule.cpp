@@ -2,18 +2,23 @@
 
 #include "BehaviorTree/BehaviorTree.h"
 #include "Editor.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "Misc/MessageDialog.h"
 #include "Logging/MessageLog.h"
 #include "MessageLogModule.h"
 #include "SekiroBehaviorTreeFactoryLibrary.h"
+#include "SekiroBehaviorTreeExporterLibrary.h"
 #include "SekiroBehaviorTreeIR.h"
 #include "ToolMenu.h"
 #include "ToolMenuEntry.h"
 #include "ToolMenuSection.h"
 #include "ToolMenus.h"
 #include "Toolkits/AssetEditorToolkitMenuContext.h"
+#include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "SekiroLuaBehaviorTreeExtEditor"
 
@@ -95,15 +100,21 @@ namespace
     }
 
     /**
-     * 判断当前资产是否允许执行 Check/Generate。
-     * PIE/SIE 期间禁止资产生成，LuaModuleName 为空时也禁用按钮。
+     * 判断当前资产是否允许执行显式 Lua 检查或双向同步。
+     * PIE/SIE 期间禁止结构与文件操作，LuaModuleName 为空时也禁用按钮。
      *
      * @param BehaviorTree 目标行为树弱引用。
      * @return 资产有效、模块已配置且未运行 PIE/SIE 时返回 true。
      */
     bool CanRunAssetAction(const TWeakObjectPtr<UBehaviorTree> BehaviorTree)
     {
-        if (!BehaviorTree.IsValid() || !GEditor || GEditor->PlayWorld) return false;
+        if (!BehaviorTree.IsValid()
+            || !GEditor
+            || GEditor->PlayWorld
+            || GEditor->bIsSimulatingInEditor)
+        {
+            return false;
+        }
         FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
         return USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
                 BehaviorTree.Get(),
@@ -112,7 +123,7 @@ namespace
     }
 
     /**
-     * 向行为树模式工具栏动态添加 Lua 模块输入框、Check 和 Generate。
+     * 向行为树模式工具栏动态添加 Source Mode、Lua 模块输入框和三个显式操作按钮。
      * 每次构造都从 UAssetEditorToolkitMenuContext 获取当前资产，因此多个编辑器窗口互不串用配置。
      *
      * @param Menu 当前工具栏菜单。
@@ -127,6 +138,76 @@ namespace
             TEXT("SekiroLuaBehaviorTree"),
             LOCTEXT("ToolbarSection", "Lua Behavior Tree"));
 
+        const TSharedRef<SComboButton> SourceModeCombo =
+            SNew(SComboButton)
+            .ToolTipText(LOCTEXT(
+                "SourceModeTooltip",
+                "仅记录最近选择或同步来源；切换不会导入、导出、编译或保存。"))
+            .IsEnabled_Lambda([WeakBehaviorTree]()
+            {
+                return WeakBehaviorTree.IsValid()
+                    && GEditor
+                    && !GEditor->PlayWorld
+                    && !GEditor->bIsSimulatingInEditor;
+            })
+            .OnGetMenuContent_Lambda([WeakBehaviorTree]()
+            {
+                FMenuBuilder MenuBuilder(true, nullptr);
+                MenuBuilder.AddMenuEntry(
+                    LOCTEXT("SourceBehaviorTree", "Source: BehaviorTree"),
+                    LOCTEXT("SourceBehaviorTreeTooltip", "仅记录 BehaviorTree 为最近来源。"),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateLambda([WeakBehaviorTree]()
+                    {
+                        FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+                        USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+                            WeakBehaviorTree.Get(),
+                            Configuration);
+                        Configuration.SourceMode =
+                            ESekiroLuaBehaviorTreeSourceMode::BehaviorTree;
+                        USekiroBehaviorTreeFactoryLibrary::SetLuaAssetConfiguration(
+                            WeakBehaviorTree.Get(),
+                            Configuration);
+                    })));
+                MenuBuilder.AddMenuEntry(
+                    LOCTEXT("SourceLua", "Source: Lua"),
+                    LOCTEXT("SourceLuaTooltip", "仅记录 Lua 为最近来源。"),
+                    FSlateIcon(),
+                    FUIAction(FExecuteAction::CreateLambda([WeakBehaviorTree]()
+                    {
+                        FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+                        USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+                            WeakBehaviorTree.Get(),
+                            Configuration);
+                        Configuration.SourceMode = ESekiroLuaBehaviorTreeSourceMode::Lua;
+                        USekiroBehaviorTreeFactoryLibrary::SetLuaAssetConfiguration(
+                            WeakBehaviorTree.Get(),
+                            Configuration);
+                    })));
+                return MenuBuilder.MakeWidget();
+            })
+            .ButtonContent()
+            [
+                SNew(STextBlock)
+                .Text_Lambda([WeakBehaviorTree]()
+                {
+                    FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+                    USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+                        WeakBehaviorTree.Get(),
+                        Configuration);
+                    return Configuration.SourceMode
+                        == ESekiroLuaBehaviorTreeSourceMode::Lua
+                        ? LOCTEXT("CurrentSourceLua", "Source: Lua")
+                        : LOCTEXT("CurrentSourceBehaviorTree", "Source: BehaviorTree");
+                })
+            ];
+        Section.AddEntry(FToolMenuEntry::InitWidget(
+            TEXT("SekiroLuaSourceMode"),
+            SourceModeCombo,
+            LOCTEXT("SourceModeLabel", "Source Mode"),
+            true,
+            false));
+
         const TSharedRef<SEditableTextBox> ModuleTextBox =
             SNew(SEditableTextBox)
             .MinDesiredWidth(220.0f)
@@ -134,6 +215,13 @@ namespace
             .ToolTipText(LOCTEXT(
                 "LuaModuleTooltip",
                 "为当前 Behavior Tree 资产保存 Lua require 模块名。"))
+            .IsEnabled_Lambda([WeakBehaviorTree]()
+            {
+                return WeakBehaviorTree.IsValid()
+                    && GEditor
+                    && !GEditor->PlayWorld
+                    && !GEditor->bIsSimulatingInEditor;
+            })
             .Text_Lambda([WeakBehaviorTree]()
             {
                 FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
@@ -189,7 +277,7 @@ namespace
             LOCTEXT("CheckTooltip", "校验当前资产绑定的 Lua 行为树，不修改资产。"),
             FSlateIcon()));
 
-        const FUIAction GenerateAction(
+        const FUIAction ImportAction(
             FExecuteAction::CreateLambda([WeakBehaviorTree]()
             {
                 UBlackboardData* Blackboard = nullptr;
@@ -203,7 +291,7 @@ namespace
                         GeneratedBehaviorTree,
                         Diagnostics);
                 ReportDiagnostics(
-                    LOCTEXT("GenerateAction", "Lua 行为树生成"),
+                    LOCTEXT("ImportAction", "Lua → BehaviorTree"),
                     bSucceeded,
                     Diagnostics);
             }),
@@ -213,12 +301,53 @@ namespace
                     return CanRunAssetAction(WeakBehaviorTree);
                 }));
         Section.AddEntry(FToolMenuEntry::InitToolBarButton(
-            TEXT("SekiroLuaGenerate"),
-            GenerateAction,
-            LOCTEXT("GenerateLabel", "Generate"),
+            TEXT("SekiroLuaImport"),
+            ImportAction,
+            LOCTEXT("ImportLabel", "Lua → BehaviorTree"),
             LOCTEXT(
-                "GenerateTooltip",
-                "使用当前 Lua 配置原地生成并保存 Behavior Tree 与 Blackboard。"),
+                "ImportTooltip",
+                "仅在点击时使用 Lua 原地重建并保存 BehaviorTree 与 Blackboard。"),
+            FSlateIcon()));
+
+        const FUIAction ExportAction(
+            FExecuteAction::CreateLambda([WeakBehaviorTree]()
+            {
+                FSekiroLuaBehaviorTreeAssetConfiguration Configuration;
+                USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
+                    WeakBehaviorTree.Get(),
+                    Configuration);
+                const EAppReturnType::Type Confirmation = FMessageDialog::Open(
+                    EAppMsgType::YesNo,
+                    LOCTEXT(
+                        "ExportConfirmation",
+                        "将把当前 BehaviorTree 写入对应 Lua 文件；若文件已存在会覆盖。是否继续？"));
+                if (Confirmation != EAppReturnType::Yes) return;
+
+                FString FilePath;
+                TArray<FSekiroBehaviorTreeDiagnostic> Diagnostics;
+                const bool bSucceeded =
+                    USekiroBehaviorTreeExporterLibrary::ExportBehaviorTreeToLua(
+                        WeakBehaviorTree.Get(),
+                        Configuration.LuaModuleName,
+                        true,
+                        FilePath,
+                        Diagnostics);
+                ReportDiagnostics(
+                    LOCTEXT("ExportAction", "BehaviorTree → Lua"),
+                    bSucceeded,
+                    Diagnostics);
+            }),
+            FCanExecuteAction::CreateLambda([WeakBehaviorTree]()
+            {
+                return CanRunAssetAction(WeakBehaviorTree);
+            }));
+        Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+            TEXT("SekiroLuaExport"),
+            ExportAction,
+            LOCTEXT("ExportLabel", "BehaviorTree → Lua"),
+            LOCTEXT(
+                "ExportTooltip",
+                "仅在点击并确认时把当前资产写入 Lua，并执行 round-trip 校验。"),
             FSlateIcon()));
     }
 }

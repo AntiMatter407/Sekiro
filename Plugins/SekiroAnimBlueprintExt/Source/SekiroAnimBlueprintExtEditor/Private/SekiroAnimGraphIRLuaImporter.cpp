@@ -26,6 +26,7 @@ namespace SekiroAnimGraphIRLua
     const FName InvalidEnumValue(TEXT("IR.LuaInvalidEnumValue"));
     const FName InvalidArray(TEXT("IR.LuaInvalidArray"));
     const FName InvalidNumber(TEXT("IR.LuaInvalidNumber"));
+    constexpr int32 MaximumLayoutCoordinate = 1000000;
 
     struct FParseContext
     {
@@ -310,6 +311,80 @@ namespace SekiroAnimGraphIRLua
     }
 
     /**
+     * 读取 Graph 精确布局坐标，允许 Lua integer 或数学上的整数 number。
+     * 函数拒绝 NaN、无穷大、小数、int32 溢出和超出合理编辑器画布范围的值；结束时恢复 Lua 栈顶。
+     *
+     * @param Context 当前解析上下文。
+     * @param TableIndex 父 table 栈索引。
+     * @param FieldName UTF-8 坐标字段名。
+     * @param FieldPath 用于诊断的完整字段路径。
+     * @param SourceLocation 所属 Graph 的 Lua 声明位置。
+     * @param OutValue 接收范围内的像素整数坐标。
+     * @return 字段是有限、合理范围内的整数时返回 true，否则追加诊断并返回 false。
+     */
+    bool ReadLayoutCoordinateField(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const char* FieldName,
+        const FString& FieldPath,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        int32& OutValue)
+    {
+        const int32 InitialTop = lua_gettop(Context.State);
+        ON_SCOPE_EXIT { lua_settop(Context.State, InitialTop); };
+
+        const int32 Type = lua_getfield(
+            Context.State,
+            lua_absindex(Context.State, TableIndex),
+            FieldName);
+        if (Type == LUA_TNIL)
+        {
+            AddLuaError(
+                Context,
+                MissingField,
+                FString::Printf(TEXT("Missing required field '%s'."), *FieldPath),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+        if (Type != LUA_TNUMBER)
+        {
+            AddLuaError(
+                Context,
+                InvalidFieldType,
+                FString::Printf(
+                    TEXT("Field '%s' must be a finite integer, got %s."),
+                    *FieldPath,
+                    *DescribeLuaType(Context.State, Type)),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+
+        const double Value = lua_tonumber(Context.State, -1);
+        if (!FMath::IsFinite(Value)
+            || FMath::TruncToDouble(Value) != Value
+            || Value < -MaximumLayoutCoordinate
+            || Value > MaximumLayoutCoordinate)
+        {
+            AddLuaError(
+                Context,
+                InvalidNumber,
+                FString::Printf(
+                    TEXT("Field '%s' must be a finite integer between -%d and %d."),
+                    *FieldPath,
+                    MaximumLayoutCoordinate,
+                    MaximumLayoutCoordinate),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+
+        OutValue = static_cast<int32>(Value);
+        return true;
+    }
+
+    /**
      * 读取严格 Lua integer 到 int64，不接受浮点表示。
      * 函数结束时恢复 Lua 栈顶。
      *
@@ -585,6 +660,141 @@ namespace SekiroAnimGraphIRLua
         return true;
     }
 
+    /**
+     * 读取严格 1-based Lua string 数组，并把每个元素转换为不加载对象的类软路径。
+     * 数组字段必填，键必须为连续整数，元素不接受 table、number 或 Lua 隐式字符串转换。
+     * 本函数仅在持有当前 UnLua Env 的游戏线程调用，结束时恢复进入时的 Lua 栈顶。
+     *
+     * @param Context 当前解析上下文和诊断输出。
+     * @param TableIndex 父 table 的有效栈索引。
+     * @param FieldName UTF-8 数组字段名。
+     * @param FieldPath 用于诊断的完整字段路径。
+     * @param SourceLocation 数组所属 Blueprint 的 Lua 位置。
+     * @param OutArray 接收转换后的类软路径；函数开始时清空。
+     * @return 数组形状及全部字符串元素合法时返回 true，否则追加稳定诊断并返回 false。
+     */
+    bool ParseSoftClassPathArrayField(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const char* FieldName,
+        const FString& FieldPath,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        TArray<FSoftClassPath>& OutArray)
+    {
+        const int32 InitialTop = lua_gettop(Context.State);
+        ON_SCOPE_EXIT { lua_settop(Context.State, InitialTop); };
+
+        OutArray.Reset();
+        const int32 Type = lua_getfield(
+            Context.State,
+            lua_absindex(Context.State, TableIndex),
+            FieldName);
+        if (Type == LUA_TNIL)
+        {
+            AddLuaError(
+                Context,
+                MissingField,
+                FString::Printf(TEXT("Missing required field '%s'."), *FieldPath),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+        if (Type != LUA_TTABLE)
+        {
+            AddLuaError(
+                Context,
+                InvalidFieldType,
+                FString::Printf(
+                    TEXT("Field '%s' must be a 1-based string array table, got %s."),
+                    *FieldPath,
+                    *DescribeLuaType(Context.State, Type)),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+
+        const int32 ArrayIndex = lua_absindex(Context.State, -1);
+        const size_t ArrayLength = lua_rawlen(Context.State, ArrayIndex);
+        if (ArrayLength > static_cast<size_t>(MAX_int32))
+        {
+            AddLuaError(
+                Context,
+                InvalidArray,
+                FString::Printf(TEXT("Array '%s' exceeds supported length."), *FieldPath),
+                FieldPath,
+                SourceLocation);
+            return false;
+        }
+
+        lua_pushnil(Context.State);
+        while (lua_next(Context.State, ArrayIndex) != 0)
+        {
+            const bool bIntegerKey =
+                lua_type(Context.State, -2) == LUA_TNUMBER
+                && lua_isinteger(Context.State, -2);
+            const lua_Integer Key = bIntegerKey ? lua_tointeger(Context.State, -2) : 0;
+            if (!bIntegerKey || Key < 1 || Key > static_cast<lua_Integer>(ArrayLength))
+            {
+                AddLuaError(
+                    Context,
+                    InvalidArray,
+                    FString::Printf(
+                        TEXT("Field '%s' must contain only contiguous 1-based integer keys."),
+                        *FieldPath),
+                    FieldPath,
+                    SourceLocation);
+                return false;
+            }
+            lua_pop(Context.State, 1);
+        }
+
+        OutArray.Reserve(static_cast<int32>(ArrayLength));
+        for (int32 ElementIndex = 1; ElementIndex <= static_cast<int32>(ArrayLength); ++ElementIndex)
+        {
+            const int32 ElementTypeCode =
+                lua_rawgeti(Context.State, ArrayIndex, ElementIndex);
+            const FString ElementPath =
+                FString::Printf(TEXT("%s[%d]"), *FieldPath, ElementIndex);
+            if (ElementTypeCode != LUA_TSTRING)
+            {
+                AddLuaError(
+                    Context,
+                    ElementTypeCode == LUA_TNIL ? InvalidArray : InvalidFieldType,
+                    FString::Printf(
+                        TEXT("Array element '%s' must be string, got %s."),
+                        *ElementPath,
+                        *DescribeLuaType(Context.State, ElementTypeCode)),
+                    ElementPath,
+                    SourceLocation);
+                return false;
+            }
+
+            size_t Utf8Length = 0;
+            const char* Utf8Value =
+                lua_tolstring(Context.State, -1, &Utf8Length);
+            if (Utf8Length > static_cast<size_t>(MAX_int32))
+            {
+                AddLuaError(
+                    Context,
+                    InvalidNumber,
+                    FString::Printf(
+                        TEXT("String array element '%s' exceeds supported length."),
+                        *ElementPath),
+                    ElementPath,
+                    SourceLocation);
+                return false;
+            }
+            const FUTF8ToTCHAR ConvertedValue(
+                Utf8Value,
+                static_cast<int32>(Utf8Length));
+            OutArray.Emplace(
+                FString(ConvertedValue.Length(), ConvertedValue.Get()));
+            lua_pop(Context.State, 1);
+        }
+
+        return true;
+    }
+
     bool ParsePin(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRPin& OutPin);
     bool ParseProperty(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRProperty& OutProperty);
     bool ParseLink(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLink& OutLink);
@@ -593,6 +803,7 @@ namespace SekiroAnimGraphIRLua
     bool ParseTransition(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRTransition& OutTransition);
     bool ParseLayoutItem(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayoutItem& OutItem);
     bool ParseLayoutGrid(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayoutGrid& OutGrid);
+    bool ParseLayoutPosition(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayoutPosition& OutPosition);
     bool ParseGraph(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRGraph& OutGraph);
     bool ParseLayer(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRLayer& OutLayer);
     bool ParseVariable(FParseContext& Context, int32 TableIndex, const FString& Path, const FSekiroAnimIRSourceLocation& SourceLocation, FSekiroAnimIRVariable& OutVariable);
@@ -1132,6 +1343,47 @@ namespace SekiroAnimGraphIRLua
             && ParseArrayField(Context, TableIndex, "Items", Path + TEXT(".Items"), SourceLocation, OutGrid.Items, &ParseLayoutItem);
     }
 
+    /**
+     * 解析一个 Graph 元素的精确 UE 画布像素坐标。
+     * ElementId 归属与唯一性留给 IR Validator 统一检查；本函数只负责字段类型和坐标数值范围。
+     *
+     * @param Context 当前解析上下文。
+     * @param TableIndex Position table 栈索引。
+     * @param Path Position 完整字段路径。
+     * @param SourceLocation 所属 Graph 的 Lua 声明位置。
+     * @param OutPosition 接收稳定元素 ID 与像素坐标。
+     * @return 三个必填字段均合法时返回 true，否则返回 false。
+     */
+    bool ParseLayoutPosition(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const FString& Path,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        FSekiroAnimIRLayoutPosition& OutPosition)
+    {
+        return ReadStringField(
+                Context,
+                TableIndex,
+                "ElementId",
+                Path + TEXT(".ElementId"),
+                SourceLocation,
+                OutPosition.ElementId)
+            && ReadLayoutCoordinateField(
+                Context,
+                TableIndex,
+                "X",
+                Path + TEXT(".X"),
+                SourceLocation,
+                OutPosition.X)
+            && ReadLayoutCoordinateField(
+                Context,
+                TableIndex,
+                "Y",
+                Path + TEXT(".Y"),
+                SourceLocation,
+                OutPosition.Y);
+    }
+
     /** 解析可选 Graph.Layout；旧 IR 缺少字段时保留 Auto 与空分区以维持兼容。 */
     bool ParseGraphLayoutField(
         FParseContext& Context,
@@ -1155,7 +1407,16 @@ namespace SekiroAnimGraphIRLua
         FString StyleName;
         return ReadStringField(Context, LayoutIndex, "Style", Path + TEXT(".Style"), SourceLocation, StyleName)
             && ParseLayoutStyle(Context, StyleName, Path + TEXT(".Style"), SourceLocation, OutLayout.Style)
-            && ParseArrayField(Context, LayoutIndex, "Grids", Path + TEXT(".Grids"), SourceLocation, OutLayout.Grids, &ParseLayoutGrid);
+            && ParseArrayField(Context, LayoutIndex, "Grids", Path + TEXT(".Grids"), SourceLocation, OutLayout.Grids, &ParseLayoutGrid)
+            && ParseArrayField(
+                Context,
+                LayoutIndex,
+                "Positions",
+                Path + TEXT(".Positions"),
+                SourceLocation,
+                OutLayout.Positions,
+                &ParseLayoutPosition,
+                true);
     }
 
     /**
@@ -1188,7 +1449,79 @@ namespace SekiroAnimGraphIRLua
     }
 
     /**
-     * 解析动画 Layer 及其 Graph 数组。
+     * 解析动画 Layer 函数参数声明。
+     * 本函数只转换 Lua IR 字段，不加载 TypeObjectPath；必须在当前 UnLua Env 所在线程调用。
+     *
+     * @param Context 当前解析上下文和诊断输出。
+     * @param TableIndex 参数 table 的有效栈索引。
+     * @param Path 参数完整路径。
+     * @param SourceLocation 父 Layer 位置。
+     * @param OutParameter 接收函数参数结果。
+     * @return 所有必填字段存在且类型正确时返回 true，否则追加稳定诊断并返回 false。
+     */
+    bool ParseFunctionParameter(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const FString& Path,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        FSekiroAnimIRFunctionParameter& OutParameter)
+    {
+        if (!ParseSourceLocationField(
+            Context,
+            TableIndex,
+            Path + TEXT(".SourceLocation"),
+            SourceLocation,
+            OutParameter.SourceLocation))
+        {
+            return false;
+        }
+
+        FString TypeObjectPath;
+        if (!ReadNameField(
+                Context,
+                TableIndex,
+                "Name",
+                Path + TEXT(".Name"),
+                OutParameter.SourceLocation,
+                OutParameter.Name)
+            || !ReadNameField(
+                Context,
+                TableIndex,
+                "DataType",
+                Path + TEXT(".DataType"),
+                OutParameter.SourceLocation,
+                OutParameter.DataType)
+            || !ReadStringField(
+                Context,
+                TableIndex,
+                "TypeObjectPath",
+                Path + TEXT(".TypeObjectPath"),
+                OutParameter.SourceLocation,
+                TypeObjectPath)
+            || !ReadBoolField(
+                Context,
+                TableIndex,
+                "bIsPose",
+                Path + TEXT(".bIsPose"),
+                OutParameter.SourceLocation,
+                OutParameter.bIsPose)
+            || !ReadInt32Field(
+                Context,
+                TableIndex,
+                "DeclarationOrder",
+                Path + TEXT(".DeclarationOrder"),
+                OutParameter.SourceLocation,
+                OutParameter.DeclarationOrder))
+        {
+            return false;
+        }
+
+        OutParameter.TypeObjectPath = FSoftObjectPath(TypeObjectPath);
+        return true;
+    }
+
+    /**
+     * 解析动画 Layer 的函数签名及其 Graph 数组。
      *
      * @param Context 当前解析上下文。
      * @param TableIndex Layer table 栈索引。
@@ -1205,11 +1538,22 @@ namespace SekiroAnimGraphIRLua
         FSekiroAnimIRLayer& OutLayer)
     {
         if (!ParseSourceLocationField(Context, TableIndex, Path + TEXT(".SourceLocation"), SourceLocation, OutLayer.SourceLocation)) return false;
-        return ReadStringField(Context, TableIndex, "Id", Path + TEXT(".Id"), OutLayer.SourceLocation, OutLayer.Id)
-            && ReadStringField(Context, TableIndex, "Name", Path + TEXT(".Name"), OutLayer.SourceLocation, OutLayer.Name)
-            && ReadStringField(Context, TableIndex, "RootGraphId", Path + TEXT(".RootGraphId"), OutLayer.SourceLocation, OutLayer.RootGraphId)
-            && ParseArrayField(Context, TableIndex, "Graphs", Path + TEXT(".Graphs"), OutLayer.SourceLocation, OutLayer.Graphs, &ParseGraph)
-            && ReadInt32Field(Context, TableIndex, "DeclarationOrder", Path + TEXT(".DeclarationOrder"), OutLayer.SourceLocation, OutLayer.DeclarationOrder);
+        FString InterfaceClassPath;
+        if (!ReadStringField(Context, TableIndex, "Id", Path + TEXT(".Id"), OutLayer.SourceLocation, OutLayer.Id)
+            || !ReadStringField(Context, TableIndex, "Name", Path + TEXT(".Name"), OutLayer.SourceLocation, OutLayer.Name)
+            || !ReadNameField(Context, TableIndex, "FunctionName", Path + TEXT(".FunctionName"), OutLayer.SourceLocation, OutLayer.FunctionName)
+            || !ReadStringField(Context, TableIndex, "InterfaceClass", Path + TEXT(".InterfaceClass"), OutLayer.SourceLocation, InterfaceClassPath)
+            || !ReadBoolField(Context, TableIndex, "bOverride", Path + TEXT(".bOverride"), OutLayer.SourceLocation, OutLayer.bOverride)
+            || !ParseArrayField(Context, TableIndex, "Parameters", Path + TEXT(".Parameters"), OutLayer.SourceLocation, OutLayer.Parameters, &ParseFunctionParameter)
+            || !ReadStringField(Context, TableIndex, "RootGraphId", Path + TEXT(".RootGraphId"), OutLayer.SourceLocation, OutLayer.RootGraphId)
+            || !ParseArrayField(Context, TableIndex, "Graphs", Path + TEXT(".Graphs"), OutLayer.SourceLocation, OutLayer.Graphs, &ParseGraph)
+            || !ReadInt32Field(Context, TableIndex, "DeclarationOrder", Path + TEXT(".DeclarationOrder"), OutLayer.SourceLocation, OutLayer.DeclarationOrder))
+        {
+            return false;
+        }
+
+        OutLayer.InterfaceClass = FSoftClassPath(InterfaceClassPath);
+        return true;
     }
 
     /**
@@ -1248,6 +1592,58 @@ namespace SekiroAnimGraphIRLua
     }
 
     /**
+     * 读取 BlueprintKind 的稳定字符串并转换为 IR 枚举，不接受大小写变体或未知资产种类。
+     * 本函数只解析值，不改变其他 Blueprint 字段，也不加载任何 UObject；必须在当前 UnLua Env 所在线程调用。
+     *
+     * @param Context 当前解析上下文和诊断输出。
+     * @param TableIndex Blueprint 根 table 的有效栈索引。
+     * @param SourceLocation Blueprint 的 Lua 位置。
+     * @param OutKind 接收 AnimBlueprint 或 AnimationLayerInterface 枚举值。
+     * @return 必填字符串存在且为受支持字面量时返回 true，否则追加稳定诊断并返回 false。
+     */
+    bool ParseBlueprintKindField(
+        FParseContext& Context,
+        const int32 TableIndex,
+        const FSekiroAnimIRSourceLocation& SourceLocation,
+        ESekiroAnimIRBlueprintKind& OutKind)
+    {
+        const FString FieldPath(TEXT("Blueprint.BlueprintKind"));
+        FString KindName;
+        if (!ReadStringField(
+            Context,
+            TableIndex,
+            "BlueprintKind",
+            FieldPath,
+            SourceLocation,
+            KindName))
+        {
+            return false;
+        }
+
+        if (KindName == TEXT("AnimBlueprint"))
+        {
+            OutKind = ESekiroAnimIRBlueprintKind::AnimBlueprint;
+            return true;
+        }
+        if (KindName == TEXT("AnimationLayerInterface"))
+        {
+            OutKind = ESekiroAnimIRBlueprintKind::AnimationLayerInterface;
+            return true;
+        }
+
+        AddLuaError(
+            Context,
+            InvalidEnumValue,
+            FString::Printf(
+                TEXT("Field '%s' has unsupported value '%s'."),
+                *FieldPath,
+                *KindName),
+            FieldPath,
+            SourceLocation);
+        return false;
+    }
+
+    /**
      * 把 CompileIR 返回的根 table 显式转换为 FSekiroAnimBlueprintIR。
      * 本函数只做类型化读取，不运行 Validator、不加载软路径对象，结束时保持 Lua 栈不变。
      *
@@ -1268,10 +1664,18 @@ namespace SekiroAnimGraphIRLua
         FString ParentClassPath;
         FString TargetSkeletonPath;
         if (!ReadInt32Field(Context, TableIndex, "SchemaVersion", TEXT("Blueprint.SchemaVersion"), OutBlueprint.SourceLocation, OutBlueprint.SchemaVersion)
+            || !ParseBlueprintKindField(Context, TableIndex, OutBlueprint.SourceLocation, OutBlueprint.BlueprintKind)
             || !ReadStringField(Context, TableIndex, "SourceModule", TEXT("Blueprint.SourceModule"), OutBlueprint.SourceLocation, OutBlueprint.SourceModule)
             || !ReadStringField(Context, TableIndex, "ParentAnimInstanceClass", TEXT("Blueprint.ParentAnimInstanceClass"), OutBlueprint.SourceLocation, ParentClassPath)
             || !ReadStringField(Context, TableIndex, "TargetSkeleton", TEXT("Blueprint.TargetSkeleton"), OutBlueprint.SourceLocation, TargetSkeletonPath)
             || !ParseArrayField(Context, TableIndex, "Variables", TEXT("Blueprint.Variables"), OutBlueprint.SourceLocation, OutBlueprint.Variables, &ParseVariable, true)
+            || !ParseSoftClassPathArrayField(
+                Context,
+                TableIndex,
+                "ImplementedInterfaces",
+                TEXT("Blueprint.ImplementedInterfaces"),
+                OutBlueprint.SourceLocation,
+                OutBlueprint.ImplementedInterfaces)
             || !ParseArrayField(Context, TableIndex, "Layers", TEXT("Blueprint.Layers"), OutBlueprint.SourceLocation, OutBlueprint.Layers, &ParseLayer))
         {
             return false;

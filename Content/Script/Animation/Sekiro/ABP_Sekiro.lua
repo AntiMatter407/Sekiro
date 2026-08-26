@@ -7,12 +7,23 @@ local LayoutStyle = require("Animation.Compiler.LayoutStyle")
 local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 local CombatBasePose = require("Animation.Sekiro.Layer.Combat.CombatBasePose")
-local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
+local OverlayPose = require("Animation.Sekiro.Layer.Combat.OverlayPose")
+local PoseCorrection = require("Animation.Sekiro.Layer.PoseCorrection")
 local Direction = require("Animation.Sekiro.Shared.Direction")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
 local DirectionEnum = "/Script/Sekiro.ESKLocomotionDirection"
 local GaitEnum = "/Script/Sekiro.ESKAnimGait"
+local OverlayStateEnum = "/Script/Sekiro.ESKAnimOverlayState"
+local AnimationLayerInterface =
+    "/Game/Characters/Sekiro/ALI_Sekiro.ALI_Sekiro_C"
+local PoseLayerParameters = {
+    {
+        Name = "SourcePose",
+        DataType = "Pose",
+        bIsPose = true,
+    },
+}
 local RootMotionMode = {
     Ignore = 1,
     Everything = 2,
@@ -23,6 +34,9 @@ local ABP_Sekiro = LuaAnimBlueprint:Extend("ABP_Sekiro", {
     SourceModule = "Animation.Sekiro.ABP_Sekiro",
     ParentAnimInstanceClass = "/Script/Sekiro.SKAnimInstance",
     TargetSkeleton = "/Game/Characters/Sekiro/Sekiro_Skeleton.Sekiro_Skeleton",
+    ImplementedInterfaces = {
+        AnimationLayerInterface,
+    },
 })
 
 ---把 UE Sequence Player 报告的原生动画短名解析为 Lua 资源表中的语义名称。
@@ -85,8 +99,6 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("LockOnOrientationWarpingAlpha", "Float", 0.0)
     self:Variable("StopOrientationWarpingAlpha", "Float", 0.0)
     self:Variable("StepOrientationWarpingAlpha", "Float", 0.0)
-    self:Variable("StopTurnDirection", "Enum", Direction.Cardinal.Right, DirectionEnum)
-    self:Variable("bStopTurnRequested", "Bool", false)
     -- 预留锁定模式切换边沿；当前只记录上一帧状态，尚无 Graph 或规则消费者。
     self:Variable("bWasLockedOn", "Bool", false)
     self:Variable("bLatchedActionLockedOn", "Bool", false)
@@ -95,54 +107,78 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("bWasSprintRequested", "Bool", false)
     self:Variable("bTurnInPlaceRequested", "Bool", false)
     self:Variable("bWasTurnInPlaceRequested", "Bool", false)
+    self:Variable("bPivotRequested", "Bool", false)
+    self:Variable("bWasPivotRequested", "Bool", false)
     self:Variable("JumpDirection", "Enum", Direction.Octant.Forward, DirectionEnum)
     self:Variable("JumpDirectionResidualAngle", "Float", 0.0)
     self:Variable("JumpWarpingAlpha", "Float", 0.0)
     self:Variable("bDirectionalJump", "Bool", false)
     self:Variable("bJumpStartedLockedOn", "Bool", false)
     self:Variable("bJumpStartedCrouchedPose", "Bool", false)
+    self:Variable("PeakFallSpeed", "Float", 0.0)
+    self:Variable("bHeavyLand", "Bool", false)
     self:Variable("bWasInAir", "Bool", false)
     self:Variable("FootIKAlpha", "Float", 0.0)
     self:Variable("bCombatHasMovementInput", "Bool", false)
+    self:Variable("bOverlayInAir", "Bool", false)
+    self:Variable("PoseOverlayState", "Enum", 0, OverlayStateEnum)
 end
 
----声明根动画图：Locomotion 经惯性化后与上半身 Slot 按 Spine 分层，再进入收拔刀右手 IK、Foot Placement 与双腿 Leg IK。
----Foot Placement 自行读取 CharacterMovement 接地状态并执行双脚地面检测，Lua 只声明骨骼与调参。
----@param Graph LuaAnimGraph 基类创建的主 AnimGraph。
----@return nil result 最终姿势连接 Graph Result。
-function ABP_Sekiro:AnimGraph(Graph)
-    Graph.LayoutStyle = LayoutStyle.HierarchicalBlocks
-    self:DeclareVariables()
-    local foot_ik = Tuning.FootIK
-    local weapon_ik = Tuning.WeaponIK
-    local combat_base_pose = Graph:StateMachine("CombatBasePose", CombatBasePose)
+---构建 BasePoses 动画层；只狼 Locomotion、空中与持续防御状态仍由原生状态机求值。
+---@param graph LuaAnimGraph BasePoses 动画层函数图。
+---@param _inputs table<string, LuaAnimPin> 本层没有输入姿势；参数只为统一动画层回调签名。
+---@return nil result 状态机输出直接连接本层结果。
+local function build_base_poses_layer(graph, _inputs)
+    local locomotion = graph:StateMachine("BasePosesLocomotion", CombatBasePose)
+    graph.Result:Connect(locomotion.Pose)
 
-    -- UE 动画姿势 Pin 不能直接扇出到两个消费者；基础战斗姿态先缓存，再供上半身 Slot 和分层混合共同读取。
-    local locomotion_cache = Graph:Node(
-        "LocomotionForUpperBody",
-        EditorNodeClass.SaveCachedPose,
-        {
-            CacheName = "LocomotionForUpperBody",
-        },
-        "SaveCachedPose")
-    locomotion_cache.Pose:Connect(combat_base_pose.Pose)
-    local locomotion_for_slot = Graph:Node(
-        "LocomotionSlotSource",
-        EditorNodeClass.UseCachedPose,
-        {
-            CacheName = locomotion_cache.Name,
-        },
-        "UseCachedPose")
-    local locomotion_for_base = Graph:Node(
-        "LocomotionBlendBase",
-        EditorNodeClass.UseCachedPose,
-        {
-            CacheName = locomotion_cache.Name,
-        },
-        "UseCachedPose")
+    local layout = graph:Grid("BasePosesFlow", {
+        RegionColumn = 0,
+        RegionRow = 0,
+    })
+    layout:Place(locomotion, 0, 0)
+    layout:Place(graph.OutputNode, 1, 0)
+end
 
-    -- Slot 没有 Montage 时透传移动姿势；收拔刀播放时只替换 Spine 及其后代。
-    local upper_body_slot = Graph:Node(
+---构建 BaseLayer 扩展边界；当前保持只狼基础姿势不变，后续可由角色子类独立覆盖。
+---@param graph LuaAnimGraph BaseLayer 动画层函数图。
+---@param inputs table<string, LuaAnimPin> SourcePose 是 BasePoses 的输出。
+---@return nil result 当前直接透传输入姿势。
+local function build_base_layer(graph, inputs)
+    graph.Result:Connect(inputs.SourcePose)
+end
+
+---构建 OverlayLayer；Default、Sword、Guard、Combat 在独立 Function Graph 中选择。
+---@param graph LuaAnimGraph OverlayLayer 动画层函数图。
+---@param inputs table<string, LuaAnimPin> SourcePose 是 BaseLayer 的输出。
+---@return nil result Overlay 合成结果连接本层输出。
+local function build_overlay_layer(graph, inputs)
+    local overlay = OverlayPose.Build(graph, inputs.SourcePose)
+    graph.Result:Connect(overlay.Pose.Pose)
+
+    local layout = graph:Grid("OverlayLayerFlow", {
+        RegionColumn = 0,
+        RegionRow = 0,
+    })
+    layout:Place(overlay.SourceCache, 0, 2)
+    layout:Place(overlay.DefaultPose, 1, 0)
+    layout:Place(overlay.SwordPose, 1, 1)
+    layout:Place(overlay.GuardGroundPose, 1, 2)
+    layout:Place(overlay.GuardAirPose, 1, 3)
+    layout:Place(overlay.GuardAirCondition, 1, 4)
+    layout:Place(overlay.GuardPose, 2, 3)
+    layout:Place(overlay.CombatPose, 1, 5)
+    layout:Place(overlay.OverlayState, 2, 5)
+    layout:Place(overlay.Selector, 3, 2)
+    layout:Place(graph.OutputNode, 4, 2)
+end
+
+---构建 LayerBlending；上半身收拔刀与全身战斗 Montage 在独立层中保持明确优先级。
+---@param graph LuaAnimGraph LayerBlending 动画层函数图。
+---@param inputs table<string, LuaAnimPin> SourcePose 是 OverlayLayer 的输出。
+---@return nil result 全身战斗 Slot 输出连接本层结果。
+local function build_layer_blending(graph, inputs)
+    local upper_body_slot = graph:Node(
         "WeaponUpperBodySlot",
         EditorNodeClass.Slot,
         {
@@ -150,9 +186,9 @@ function ABP_Sekiro:AnimGraph(Graph)
             bAlwaysUpdateSourcePose = true,
         },
         "Slot")
-    upper_body_slot.Source:Connect(locomotion_for_slot.Pose)
+    upper_body_slot.Source:Connect(inputs.SourcePose)
 
-    local upper_body_blend = Graph:Node(
+    local upper_body_blend = graph:Node(
         "WeaponUpperBodyBlend",
         EditorNodeClass.LayeredBlendPerBone,
         {
@@ -163,12 +199,10 @@ function ABP_Sekiro:AnimGraph(Graph)
             bBlendRootMotionBasedOnRootBone = false,
         },
         "LayeredBlendPerBone")
-    -- 两个输入都源自同一份 Locomotion 缓存；关闭按根骨权重筛选，避免 Spine 过滤器把基础 Root Motion 一并裁掉。
-    upper_body_blend.BasePose:Connect(locomotion_for_base.Pose)
+    upper_body_blend.BasePose:Connect(inputs.SourcePose)
     upper_body_blend.BlendPose:Connect(upper_body_slot.Pose)
 
-    -- 攻击、Raise/Lower 与 Deflect 都是全身动作；Slot 放在持续姿态状态机和上半身分层之后。
-    local combat_full_body_slot = Graph:Node(
+    local combat_full_body_slot = graph:Node(
         "CombatFullBodySlot",
         EditorNodeClass.Slot,
         {
@@ -177,98 +211,126 @@ function ABP_Sekiro:AnimGraph(Graph)
         },
         "Slot")
     combat_full_body_slot.Source:Connect(upper_body_blend.Pose)
+    graph.Result:Connect(combat_full_body_slot.Pose)
 
-    local to_component = Graph:Node(
-        "SkeletalControlsLocalToComponent",
-        EditorNodeClass.LocalToComponentSpace,
+    local layout = graph:Grid("LayerBlendingFlow", {
+        RegionColumn = 0,
+        RegionRow = 0,
+    })
+    layout:Place(upper_body_slot, 0, 1)
+    layout:Place(upper_body_blend, 1, 0)
+    layout:Place(combat_full_body_slot, 2, 0)
+    layout:Place(graph.OutputNode, 3, 0)
+end
+
+---构建 FootIK 动画层；手部约束、Foot Placement 与 Leg IK 只在此处执行一次。
+---@param graph LuaAnimGraph FootIK 动画层函数图。
+---@param inputs table<string, LuaAnimPin> SourcePose 是 LayerBlending 的输出。
+---@return nil result 骨骼修正后的 Local Space Pose 连接本层结果。
+local function build_foot_ik_layer(graph, inputs)
+    local correction = PoseCorrection.Build(graph, inputs.SourcePose)
+    graph.Result:Connect(correction.Pose.Pose)
+
+    local layout = graph:Grid("FootIKFlow", {
+        RegionColumn = 0,
+        RegionRow = 0,
+    })
+    layout:Place(correction.ToComponent, 0, 0)
+    layout:Place(correction.WeaponHandIK, 1, 0)
+    layout:Place(correction.FootPlacement, 2, 0)
+    layout:Place(correction.FootIKAlpha, 2, 1)
+    layout:Place(correction.LegIK, 3, 0)
+    layout:Place(correction.ToLocal, 4, 0)
+    layout:Place(graph.OutputNode, 5, 0)
+end
+
+---声明根动画图：主图只组装职责明确的 Animation Layer，并保留旧状态机作为 UE5.2 资产迁移保护。
+---@param Graph LuaAnimGraph 基类创建的主 AnimGraph。
+---@return nil result 最终姿势连接 Graph Result。
+function ABP_Sekiro:AnimGraph(Graph)
+    Graph.LayoutStyle = LayoutStyle.HierarchicalBlocks
+    self:DeclareVariables()
+    -- 旧资产已经序列化 CombatBasePoseGraph。保留未连接的兼容节点，避免 UE5.2 删除嵌套旧图时产生孤立节点；
+    -- 实际输出改由 BasePoses Animation Layer 内的新状态机提供。
+    local legacy_base_pose = Graph:StateMachine("CombatBasePose", CombatBasePose)
+    local base_poses = Graph:LinkedAnimLayer("BasePoses", {
+        LayerName = "BasePoses",
+        InterfaceClass = AnimationLayerInterface,
+    })
+    local base_layer = Graph:LinkedAnimLayer("BaseLayer", {
+        LayerName = "BaseLayer",
+        InterfaceClass = AnimationLayerInterface,
+        Parameters = PoseLayerParameters,
+    })
+    base_layer.SourcePose:Connect(base_poses.Pose)
+    local overlay_layer = Graph:LinkedAnimLayer("OverlayLayer", {
+        LayerName = "OverlayLayer",
+        InterfaceClass = AnimationLayerInterface,
+        Parameters = PoseLayerParameters,
+    })
+    overlay_layer.SourcePose:Connect(base_layer.Pose)
+    local layer_blending = Graph:LinkedAnimLayer("LayerBlending", {
+        LayerName = "LayerBlending",
+        InterfaceClass = AnimationLayerInterface,
+        Parameters = PoseLayerParameters,
+    })
+    layer_blending.SourcePose:Connect(overlay_layer.Pose)
+    local foot_ik = Graph:LinkedAnimLayer("FootIK", {
+        LayerName = "FootIK",
+        InterfaceClass = AnimationLayerInterface,
+        Parameters = PoseLayerParameters,
+    })
+    foot_ik.SourcePose:Connect(layer_blending.Pose)
+
+    local final_inertialization = Graph:Node(
+        "FinalPoseInertialization",
+        EditorNodeClass.Inertialization,
         nil,
-        "LocalToComponentSpace")
-    to_component.LocalPose:Connect(combat_full_body_slot.Pose)
-
-    -- 挂点与刀身偏移反解得到收拔刀共用目标；Montage 曲线只在换挂帧附近平滑约束右手，
-    -- 动作前段保持零权重，让原始收拔刀动画完整驱动手臂接近刀柄。
-    -- 关节目标引用输入姿势的右肘位置，保留原动画肘部弯曲方向；禁止拉伸以免改变手臂比例。
-    local weapon_hand_ik = Graph:Node(
-        "WeaponHandIK",
-        EditorNodeClass.TwoBoneIK,
-        {
-            IKBone = weapon_ik.IKBone,
-            EffectorLocationSpace = "BoneSpace",
-            EffectorTargetSocketName = weapon_ik.EffectorSocket,
-            JointTargetLocationSpace = "BoneSpace",
-            JointTargetBoneName = weapon_ik.JointTargetBone,
-            bTakeRotationFromEffectorSpace = true,
-            bAllowStretching = false,
-            AlphaInputType = "Curve",
-            AlphaCurveName = CurveNames.WeaponHandIK,
-        },
-        "TwoBoneIK")
-    weapon_hand_ik.ComponentPose:Connect(to_component.ComponentPose)
-
-    local foot_placement = Graph:Node(
-        "FootPlacement",
-        EditorNodeClass.FootPlacement,
-        {
-            IKFootRootBone = foot_ik.IKFootRootBone,
-            PelvisBone = foot_ik.PelvisBone,
-            LegDefinitions = foot_ik.FootPlacementLegDefinitions,
-            PlantSpeedMode = foot_ik.PlantSpeedMode,
-            PlantLockType = foot_ik.PlantLockType,
-            PelvisMaxOffset = foot_ik.PelvisMaxOffset,
-            PelvisHorizontalRebalancingWeight = foot_ik.PelvisHorizontalRebalancingWeight,
-            PlantSpeedThreshold = foot_ik.PlantSpeedThreshold,
-            PlantDistanceToGround = foot_ik.PlantDistanceToGround,
-            TraceStartOffset = foot_ik.TraceStartOffset,
-            TraceEndOffset = foot_ik.TraceEndOffset,
-            TraceSweepRadius = foot_ik.TraceSweepRadius,
-            TraceMaxGroundPenetration = foot_ik.TraceMaxGroundPenetration,
-            bTraceEnabled = true,
-        },
-        "FootPlacement")
-    foot_placement.ComponentPose:Connect(weapon_hand_ik.Pose)
-
-    -- Foot Placement 和 Leg IK 必须使用同一权重；否则空中关闭贴地后，Leg IK 仍会把双脚拉回旧目标。
-    local foot_ik_alpha = Graph:Property("FootIKAlpha", "FootIKAlpha")
-    foot_placement.Alpha:Connect(foot_ik_alpha.Value)
-
-    local leg_ik = Graph:Node(
-        "DualLegIK",
-        EditorNodeClass.LegIK,
-        {
-            LegDefinitions = foot_ik.LegIKLegDefinitions,
-            ReachPrecision = foot_ik.ReachPrecision,
-            MaxIterations = foot_ik.MaxIterations,
-        },
-        "LegIK")
-    leg_ik.ComponentPose:Connect(foot_placement.Pose)
-    leg_ik.Alpha:Connect(foot_ik_alpha.Value)
-
-    local to_local = Graph:Node(
-        "FootIKComponentToLocal",
-        EditorNodeClass.ComponentToLocalSpace,
-        nil,
-        "ComponentToLocalSpace")
-    to_local.ComponentPose:Connect(leg_ik.Pose)
-    Graph.Result:Connect(to_local.Pose)
+        "Inertialization")
+    final_inertialization.Source:Connect(foot_ik.Pose)
+    Graph.Result:Connect(final_inertialization.Pose)
 
     local main_flow = Graph:Grid("MainFlow", {
         RegionColumn = 0,
         RegionRow = 0,
     })
-    main_flow:Place(combat_base_pose, 0, 0)
-    main_flow:Place(locomotion_cache, 1, 0)
-    main_flow:Place(locomotion_for_base, 2, 0)
-    main_flow:Place(locomotion_for_slot, 2, 1)
-    main_flow:Place(upper_body_slot, 3, 1)
-    main_flow:Place(upper_body_blend, 4, 0)
-    main_flow:Place(combat_full_body_slot, 5, 0)
-    main_flow:Place(to_component, 6, 0)
-    main_flow:Place(weapon_hand_ik, 7, 0)
-    main_flow:Place(foot_placement, 8, 0)
-    main_flow:Place(foot_ik_alpha, 8, 1)
-    main_flow:Place(leg_ik, 9, 0)
-    main_flow:Place(to_local, 10, 0)
-    main_flow:Place(Graph.OutputNode, 11, 0)
+    main_flow:Place(base_poses, 0, 0)
+    main_flow:Place(base_layer, 1, 0)
+    main_flow:Place(overlay_layer, 2, 0)
+    main_flow:Place(layer_blending, 3, 0)
+    main_flow:Place(foot_ik, 4, 0)
+    main_flow:Place(final_inertialization, 5, 0)
+    main_flow:Place(Graph.OutputNode, 6, 0)
+    main_flow:Place(legacy_base_pose, 0, 2)
+end
+
+---声明 ALS V4 风格的职责动画层；主 AnimGraph 仅调用这些原生 Animation Layer Function Graph。
+---@return nil result 各层会随 IR 生成到动画蓝图的动画层列表。
+function ABP_Sekiro:DeclareAnimationLayers()
+    self:AnimLayer("BasePoses", {
+        InterfaceClass = AnimationLayerInterface,
+        bOverride = true,
+    }, build_base_poses_layer)
+    self:AnimLayer("BaseLayer", {
+        InterfaceClass = AnimationLayerInterface,
+        bOverride = true,
+        Parameters = PoseLayerParameters,
+    }, build_base_layer)
+    self:AnimLayer("OverlayLayer", {
+        InterfaceClass = AnimationLayerInterface,
+        bOverride = true,
+        Parameters = PoseLayerParameters,
+    }, build_overlay_layer)
+    self:AnimLayer("LayerBlending", {
+        InterfaceClass = AnimationLayerInterface,
+        bOverride = true,
+        Parameters = PoseLayerParameters,
+    }, build_layer_blending)
+    self:AnimLayer("FootIK", {
+        InterfaceClass = AnimationLayerInterface,
+        bOverride = true,
+        Parameters = PoseLayerParameters,
+    }, build_foot_ik_layer)
 end
 
 ---每帧在游戏线程更新原生 Graph 消费的方向、步态和一次性动作锁存变量。
@@ -284,6 +346,8 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     -- Foot Placement 在 UE 5.2 中不会因 CharacterMovement 进入 Falling 而自动停用，必须由 Lua 显式控制权重。
     -- 空中快速淡出可保留跳跃原姿势；落地较慢淡入可避免斜面命中变化导致骨盆和双腿瞬间弹跳。
     Inst.bCombatHasMovementInput = has_input
+    Inst.bOverlayInAir = Inst.bIsInAir == true
+    Inst.PoseOverlayState = Inst.OverlayState
     local suppress_foot_ik = Inst.bIsInAir == true or Inst.bIsCombatFullBodyActionActive == true
     local foot_ik_target = suppress_foot_ik and 0.0 or 1.0
     local current_foot_ik_alpha = Inst.FootIKAlpha or foot_ik_target
@@ -307,16 +371,43 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
         or Direction.Cardinal.Forward
 
     Inst.bPoseCrouching = crouching
+    -- Pivot 读取新输入相对当前速度的夹角；进入/退出双阈值保证反向输入不会在边界反复切换。
+    -- Sprint 使用自己的方向停止资产，不进入复用 Start 的 Pivot 降级状态。
+    local pivot_threshold = Inst.bWasPivotRequested == true
+        and Tuning.PivotExitAngle
+        or Tuning.PivotEnterAngle
+    local pivot_requested = has_input
+        and Inst.bIsMoving == true
+        and Inst.bIsInAir ~= true
+        and Inst.bIsDodging ~= true
+        and Inst.bIsCombatFullBodyActionActive ~= true
+        and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
+        and math.abs(Inst.DirectionDelta or 0.0) >= pivot_threshold
+    if pivot_requested and Inst.bWasPivotRequested ~= true then
+        Inst.LatchedActionDirection = direction
+        Inst.LatchedActionGait = pose_gait
+        Inst.bLatchedActionLockedOn = lock_on_locomotion_active
+        Inst.LatchedFreeStartDirection = Direction.ResolveFreeTurnDirection(
+            Inst.MoveDirectionAngleBeforeRotation)
+    end
+    Inst.bPivotRequested = pivot_requested
+
+    -- ALS V4 的 Turn In Place 检查使用未平滑的瞄准偏角；RootYawOffset 只负责姿势偏差表达。
+    -- Movement 会在请求产生后开始消耗 ActorYaw，若用平滑 RootYawOffset 判断，偏差可能尚未达到阈值就被旋转清除。
+    local turn_yaw_delta = Inst.AimYawDelta or Inst.RootYawOffset or 0.0
+    local turn_in_place_threshold = Inst.bWasTurnInPlaceRequested == true
+        and Tuning.IdleTurnExitAngle
+        or Tuning.IdleTurnEnterAngle
     local turn_in_place_requested = locked_on
         and not has_input
         and Inst.bIsMoving ~= true
         and Inst.bIsInAir ~= true
         and Inst.bIsDodging ~= true
         and Inst.bIsCombatFullBodyActionActive ~= true
-        and math.abs(Inst.AimYawDelta or 0) >= Tuning.IdleTurnEnterAngle
+        and math.abs(turn_yaw_delta) >= turn_in_place_threshold
     if turn_in_place_requested and Inst.bWasTurnInPlaceRequested ~= true then
         -- 原地转向只使用最接近的左右素材；接近 180 度时稳定选择右转，不使用 Back 动画。
-        Inst.LatchedTurnDirection = Direction.ResolveFreeTurnDirection(Inst.AimYawDelta)
+        Inst.LatchedTurnDirection = Direction.ResolveFreeTurnDirection(turn_yaw_delta)
     end
     Inst.bTurnInPlaceRequested = turn_in_place_requested
     if has_input then
@@ -344,8 +435,6 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
             and Inst.DesiredGait ~= UE.ESKAnimGait.Sprint
         Inst.StopOrientationWarpingAlpha =
             stop_direction_alignment_enabled and 1.0 or 0.0
-        -- Actor 已持续追向锁定目标，不再残留“素材主轴驱动的 ActorYaw”，因此 Stop 后不需要专用换脚回正。
-        Inst.bStopTurnRequested = false
     end
 
     if Inst.bIsDodging == true and Inst.bWasDodging ~= true then
@@ -390,6 +479,22 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
                 Tuning.JumpWarpingMaxAngle)
             or 0.0
         Inst.JumpWarpingAlpha = locked_on and directional_jump and 1.0 or 0.0
+        -- 每次离地重新开始统计；Heavy Land 会在预测到高速接地或实际接地边沿锁存。
+        Inst.PeakFallSpeed = 0.0
+        Inst.bHeavyLand = false
+    end
+    if Inst.bIsInAir == true then
+        Inst.PeakFallSpeed = math.max(Inst.PeakFallSpeed or 0.0, Inst.FallSpeed or 0.0)
+        local heavy_land_predicted =
+            (Inst.LandPredictionAmount or 0.0) >= Tuning.HeavyLandPredictionThreshold
+            and (Inst.PeakFallSpeed or 0.0) >= Tuning.HeavyLandMinFallSpeed
+        if heavy_land_predicted then
+            Inst.bHeavyLand = true
+        end
+    elseif Inst.bWasInAir == true then
+        -- 没有命中预测表面时仍按本次峰值速度兜底，避免从平台边缘落地后错误播放轻落地。
+        Inst.bHeavyLand = Inst.bHeavyLand == true
+            or (Inst.PeakFallSpeed or 0.0) >= Tuning.HeavyLandMinFallSpeed
     end
 
     Inst.LockOnLocomotionAngle = lock_on_locomotion_active
@@ -407,6 +512,7 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     Inst.bWasDodging = Inst.bIsDodging == true
     Inst.bWasSprintRequested = sprint_requested
     Inst.bWasTurnInPlaceRequested = turn_in_place_requested
+    Inst.bWasPivotRequested = pivot_requested
     Inst.bWasInAir = Inst.bIsInAir == true
 end
 

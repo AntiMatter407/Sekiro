@@ -603,7 +603,7 @@ async def cmd_enhanced_input(args):
 async def cmd_anim_blueprint(args):
     """anim_blueprint — 动画蓝图操作"""
     if not args:
-        return {"error": "用法: anim_blueprint <create|add_state|add_transition|delete_transition|add_node|add_slot|info|compile|layout|set_anim_class> [参数...]"}
+        return {"error": "用法: anim_blueprint <create|add_state|add_transition|delete_transition|add_node|add_slot|upsert_skeleton_slot|remove_state_machine|info|compile|layout|set_anim_class> [参数...]"}
 
     action = args[0]
     if action == "create":
@@ -764,6 +764,32 @@ async def cmd_anim_blueprint(args):
             "name": "anim_blueprint",
             "arguments": node_args
         })
+    elif action == "upsert_skeleton_slot":
+        # bridge.py anim_blueprint upsert_skeleton_slot <Skeleton路径> <Slot名称> [SlotGroup名称]
+        if len(args) < 3:
+            return {"error": "用法: anim_blueprint upsert_skeleton_slot <Skeleton路径> <Slot名称> [SlotGroup名称]"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {
+                "action": "upsert_skeleton_slot",
+                "path": args[1],
+                "slot_name": args[2],
+                "slot_group_name": args[3] if len(args) > 3 else "DefaultGroup",
+            }
+        })
+    elif action == "remove_state_machine":
+        # 只允许删除没有任何 Pin 连接的状态机，避免误删有效 Lua 生成拓扑。
+        if len(args) < 3:
+            return {"error": "用法: anim_blueprint remove_state_machine <ABP路径> <状态机名称> [--force]"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {
+                "action": "remove_state_machine",
+                "path": args[1],
+                "state_machine_name": args[2],
+                "force": "--force" in args[3:],
+            }
+        })
     elif action == "add_curve":
         # bridge.py anim_blueprint add_curve <动画路径> <曲线名> [--type int|float] [--keys json] [--frames f,f] [--values v,v] [--overwrite true|false]
         if len(args) < 3:
@@ -883,7 +909,7 @@ async def cmd_anim_blueprint(args):
             "arguments": kwargs
         })
     else:
-        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, add_curve, info, compile, layout, rename_node, set_anim_class"}
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, upsert_skeleton_slot, remove_state_machine, add_curve, info, compile, layout, rename_node, set_anim_class"}
 
 
 def _find_ue_editor():

@@ -41,13 +41,13 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `CanEnterLoop` | 使用中 | `int bool` | Start 或锁定 Jump InAir 过渡段已进入可衔接循环姿势的窗口 | Locomotion Start、非锁定/原地 Jump Start、锁定 Jump InAir Sequence | Lua GroundLocomotion 的 Start 到 Cycle；Jump Start/InAir 到 Loop |
 | `CanEnterStop` | 使用中 | `int bool` | 当前 Start/Loop 帧可进入匹配的 Stop | Start Sequence、BlendSpace 使用的 Loop 样本 Sequence | Lua GroundLocomotion 的 Start/Cycle 到 Stop |
 | `CanEnterIdle` | 使用中 | `int bool` | Stop 已进入可回 Idle 或退出外层 Sprint 的窗口 | Walk/Run/Sprint Stop Sequence | Stop 到 Idle；外层 Sprint 到 Standing/Crouching |
-| `StopTurnDirectionAlignment` | 使用中 | `float` | StopTurn 换脚期间保留脊柱回正的连续权重，并在动作结束前回落到 0 | Standing/Crouching 左右 Idle Turn Sequence | `ABP_Sekiro` 更新 `StopTurnSpineYawCompensationAlpha`，StopTurn 的脊柱补偿节点消费 |
+| `StopTurnDirectionAlignment` | 保留 | `float` | 旧 StopTurn 换脚方案使用的方向补偿权重 | Standing/Crouching 左右 Idle Turn Sequence | 无；GroundedMode 已删除 StopTurn 状态，现有 4 条曲线只保留供资产审计 |
 | `WeaponHandIK` | 使用中 | `float` | 收拔刀换挂点附近约束右手到刀柄目标的权重，动作前段和换挂完成后为 0 | `Anim_Sekiro_a000_700500_Additive`、`Anim_Sekiro_a000_700510_Additive` | `ABP_Sekiro` 的 `WeaponHandIK` TwoBoneIK |
 | `CanExitStep` | 使用中 | `int bool` | Step 已进入可返回普通地面移动的尾部窗口 | 四方向 Step Sequence | 外层 Step 到 Standing/Crouching |
-| `CanExitTurn` | 使用中 | `int bool` | 原地 Turn 已进入可返回 Idle 的尾部窗口 | 站立/蹲姿左右 Idle Turn Sequence | Lua GroundLocomotion 的 Turn 到 Idle |
+| `CanExitTurn` | 使用中 | `int bool` | TurnInPlace 已进入可返回 Idle 的尾部窗口 | 站立/蹲姿左右 Idle Turn Sequence | Lua GroundLocomotion 的 TurnInPlace 到 Idle |
 | `CanEnterInAir` | 使用中 | `int bool` | 锁定八方向 Jump Start 已进入可衔接方向 InAir 过渡段的窗口 | 锁定八方向 Jump Start Sequence | Jump Start 到 DirectionalInAir |
-| `CanResumeMovement` | 使用中 | `int bool` | Jump Land 已恢复到可被移动输入安全打断的姿势窗口 | 原地/非锁定共用及锁定八方向 Jump Land Sequence | 有输入时外层 InAir 提前返回 Grounded |
-| `CanExitLand` | 使用中 | `int bool` | Jump Land 已进入可完整结束落地的尾部窗口 | 原地/非锁定共用及锁定八方向 Jump Land Sequence | 无输入时外层 InAir 返回 Grounded |
+| `CanResumeMovement` | 使用中 | `int bool` | Jump Land 已恢复到可被移动输入安全打断的姿势窗口 | 原地/非锁定共用、锁定八方向及 Standing/Crouching Heavy Land Sequence | 有输入时外层 InAir 提前返回 Grounded |
+| `CanExitLand` | 使用中 | `int bool` | Jump Land 已进入可完整结束落地的尾部窗口 | 原地/非锁定共用、锁定八方向及 Standing/Crouching Heavy Land Sequence | 无输入时外层 InAir 返回 Grounded |
 | `AttackSide` | 使用中 | `int enum` | 当前攻击动作提交下一攻击侧，`-1=Left`、`0=Keep`、`1=Right` | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
 | `CanAcceptLightAttack` | 使用中 | `int bool` | 当前攻击动作允许缓存下一段短按攻击 | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
 | `CanAcceptHeavyAttack` | 使用中 | `int bool` | 当前攻击动作允许缓存蓄力攻击 | 首版地面攻击 Sequence | Lua 战斗动作状态机 |
@@ -56,11 +56,14 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `CanCancelToJump` | 使用中 | `int bool` | 当前地面攻击允许取消到物理 Jump | Ground/Land 战斗 Sequence | InputManager 在 Jump Started 时交给 Combat Lua 采样 |
 | `FootPlant` | 已生成 | `int enum` | 当前稳定触地脚 | 需要脚步分析的 Locomotion Sequence | 自动标注、调试和相位校验；GroundLocomotion 暂未直接消费 |
 | `MovePhase` | 已生成 | `float` | 一个步态周期中的循环相位 | Start 与周期 Loop | 自动标注、调试和后续精确相位匹配；当前 GroundLocomotion 未直接消费 |
-| `FrameFlags` | 保留 | `int flags` | TAE 帧级行为标志 | 有对应 TAE 事件的动作动画 | 当前无正式运行时消费者 |
+
+Foot IK 的运行时权重不由上述资产曲线提供。主 AnimGraph 使用生成变量 `FootIKAlpha` 同时驱动 Foot Placement 和 Leg IK：空中或全身动作期间淡出，接地后平滑淡入。当前 Foot Placement 配置为 `PlantLockType = Unlocked`，因此 `FootPlant` 不得被误解为左右脚锁定开关；`MovePhase` 也不参与当前 Sync Group 的运行时相位选择。
+| `DisableTurning` | 使用中 | `int bool` | 原版 TAE JT=7 禁止转向窗口；`1` 禁止修改 ActorYaw，`0` 允许按转速曲线转向 | 当前战斗配置引用的攻击 Sequence | Movement Lua 在全身攻击期间直接采样 |
+| `AttackTurnSpeed` | 使用中 | `float step` | 原版 TAE Type=224 转向速度，单位为度/秒；常量插值，未被事件覆盖的攻击帧使用 `360` | 当前战斗配置引用的攻击 Sequence | Movement Lua 按固定最大角速度更新 ActorYaw |
 | `CancelActions` | 保留 | `int enum` | TAE 动作取消窗口类型 | 有对应 TAE 事件的动作动画 | 当前无正式运行时消费者 |
 | `AttackHitbox` | 使用中 | `int enum` | TAE 攻击框类型窗口；非零值表示刀身攻击查询有效 | 当前战斗配置引用且具有原版 Type 1 事件的攻击动画 | Lua 战斗组件按活动 Sequence 采样并驱动 WeaponManager 碰撞 |
 
-基础 Locomotion 动画不得因为旧 TAE 管线存在，就批量写入 `FrameFlags`、`CancelActions` 或 `AttackHitbox`。没有可靠源数据、没有消费者的曲线不写入资产。
+基础 Locomotion 动画不得因为旧 TAE 管线存在，就批量写入 `DisableTurning`、`AttackTurnSpeed`、`CancelActions` 或 `AttackHitbox`。没有可靠源数据、没有消费者的曲线不写入资产。项目不再生成需要运行时位运算解码的 `FrameFlags`；新增 TAE 行为必须登记为独立语义曲线。
 
 ## 三、CanEnter 曲线
 
@@ -116,29 +119,29 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 适用动画是 Walk/Run Stop、Sprint Stop，以及确实以 Idle 为目标的 TurnStop。当前由统一 Grounded 阶段状态机的 `Stop -> Idle` Gate 消费。
 
-### StopTurnDirectionAlignment
+### StopTurnDirectionAlignment（旧方案保留）
 
-含义：锁定斜向移动释放输入后，Stop 保持释放前的 Actor 朝向与四向素材，使原始 Root Motion 继续沿锁存方向完成制动；残差角达到阈值时进入专用 StopTurn，利用左右 Turn 动画的真实换脚过程逐步撤销脊柱回正。
+该曲线曾用于 Stop 后进入专用 StopTurn 换脚状态。当前锁定移动由 Movement Lua 持续控制 ActorYaw，Stop 使用 Graph Orientation Warping 保持锁存方向，不再产生需要第二段换脚动画消除的素材主轴残差，因此运行时消费者已经删除。
 
-生成方式：
+历史数据：
 
 1. 只写入 Standing/Crouching 的 Left/Right Idle Turn，共 4 个 Sequence。
-2. 第 0～4 帧保持 `1`，确保 Stop→StopTurn 混合完成前不丢失原有斜向姿势。
+2. 第 0～4 帧保持 `1`，曾用于确保 Stop→StopTurn 混合完成前不丢失原有斜向姿势。
 3. 第 4～15 帧随 Turn 动画的换脚过程线性衰减到 `0`。
 4. `CanExitTurn` 在第 17 帧开启，因此回正至少提前 2 帧完成。
 5. 曲线使用 `float` 线性插值，不得改成 `int bool`。
 
-`BlueprintUpdateAnimation` 读取的是上一轮 Graph 求值后的曲线。为避免 Stop→StopTurn 的首个混合帧把“尚未出现的曲线”误当成零，运行时先保持输入释放时的权重；当曲线达到 `0.9` 后锁存为已接管，随后才持续用曲线值更新 `StopTurnSpineYawCompensationAlpha`。旧 `StopDirectionAlignment` 已从 16 个 Stop Sequence 删除，禁止在没有换脚动作的 Stop 尾段直接撤销角度。
+现有资产中的曲线暂不批量删除，以便对照历史方案；新动画不得再生成该曲线。`CanExitTurn` 仍由正式的 TurnInPlace 状态消费，与此旧曲线无关。
 
 ### Step、Turn 与 Jump 曲线
 
 - `CanExitStep`：写入四方向 Step；从动画尾部提前 `0.06` 秒开启，使 `Step -> Cycle/Idle` 保留交叉混合区间。
-- `CanExitTurn`：写入站立和蹲姿的左右 Idle Turn；从动画尾部提前约 `0.12` 秒开启，使 `Turn -> Idle` 保留交叉混合区间。当前资产由 AIBridge `anim_blueprint add_curve` 按实际时长写入并保存。
+- `CanExitTurn`：写入站立和蹲姿的左右 Idle Turn；从动画尾部提前约 `0.12` 秒开启，使 `TurnInPlace -> Idle` 保留交叉混合区间。当前资产由 AIBridge `anim_blueprint add_curve` 按实际时长写入并保存。
 - `CanEnterInAir`：只写入锁定八方向 Jump Start；从动画尾部提前 `0.08` 秒开启，使 Start 完成后衔接非循环的 DirectionalInAir。
 - `CanEnterLoop`：写入非锁定前向/原地 Jump Start 和锁定八方向 Jump InAir；从动画尾部提前 `0.08` 秒开启，仍未落地时进入通用 Jump Loop。
-- `CanResumeMovement`：写入原地/非锁定共用及锁定八方向 Jump Land。`Jump_Light_Stand` 在归一化 35% 开启；锁定八方向 Land 因与地面 Cycle 姿势差异更大，在归一化 50% 开启。有移动输入时可以较早恢复 Cycle，但不会从 Land 首帧硬切。
-- `CanExitLand`：同样写入全部 Jump Land；保持原有窗口，`Jump_Light_Stand` 在归一化 90%（`0.600s`）开启，锁定八方向 Land 在归一化 92%（`0.920s`）开启。没有移动输入时继续完整播放 Land，不受提前移动窗口影响。
-- 三者均由 `generate_locomotion_move_curve_payload.py` 根据实际 Sequence 时长生成 `0 -> 1` 阶梯键，并在动画末尾重复允许值。
+- `CanResumeMovement`：写入原地/非锁定共用、锁定八方向及 Standing/Crouching Heavy Land。`Jump_Light_Stand` 在归一化 35% 开启；锁定八方向 Land 在归一化 50% 开启；Heavy Land 在归一化 60%（`1.500s`）开启，保留更完整的落地受力姿势。
+- `CanExitLand`：同样写入全部 Jump Land；`Jump_Light_Stand` 在归一化 90%（`0.600s`）开启，锁定八方向 Land 在归一化 92%（`0.920s`）开启，Heavy Land 在第 72 帧（`2.400s`，归一化 96%）开启。没有移动输入时继续完整播放 Land。
+- 轻落地与方向落地曲线由 `generate_locomotion_move_curve_payload.py` 根据实际 Sequence 时长生成；Heavy Land 两条资产由 AIBridge 按实际 `2.5s` 时长写入。所有曲线均使用 `0 -> 1` 阶梯键，并在动画末尾重复允许值。
 
 ### MoveTransition 拆分记录
 
@@ -152,7 +155,7 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 
 迁移时保留原关键帧时间，将每种值展开成目标曲线的 `0/1` 阶梯关键帧，并删除连续重复值。只有实际出现过 `1` 的目标曲线才写入该动画；写入成功后删除旧 `MoveTransition`。
 
-旧迁移数据保留在 `Script/temp/split_move_transition_curves.json` 供审计。当前生成器直接写独立曲线，不再先生成 `MoveTransition` 再拆分。截至 2026-07-24，Lua 动画蓝图引用资产的语义曲线验证结果为：`CanEnterLoop` 35 个、`CanEnterStop` 41 个、`CanEnterIdle` 19 个、`CanExitStep` 4 个、`CanExitTurn` 4 个、`CanEnterInAir` 8 个、`CanResumeMovement` 9 个、`CanExitLand` 9 个、`StopTurnDirectionAlignment` 4 个，96 个资产零错误。Jump 的非锁定/原地 Start 与锁定 DirectionalInAir 已补齐 `CanEnterLoop`；锁定八方向 Start 保留 `CanEnterInAir`。
+旧迁移数据保留在 `Script/temp/split_move_transition_curves.json` 供审计。当前生成器直接写独立曲线，不再先生成 `MoveTransition` 再拆分。截至 2026-07-29，Lua 动画蓝图引用资产的语义曲线验证结果为：`CanEnterLoop` 35 个、`CanEnterStop` 41 个、`CanEnterIdle` 19 个、`CanExitStep` 4 个、`CanExitTurn` 4 个、`CanEnterInAir` 8 个、`CanResumeMovement` 11 个、`CanExitLand` 11 个，另有 4 个资产保留已无运行时消费者的旧 `StopTurnDirectionAlignment`，98 个资产零错误。Jump 的非锁定/原地 Start 与锁定 DirectionalInAir 已补齐 `CanEnterLoop`；锁定八方向 Start 保留 `CanEnterInAir`。
 
 蹲姿 Locomotion 使用 `005000~005603` 资源组，与站姿 Idle/Turn、Walk/Run Start/Loop/Stop 语义对应。`Script/generate_crouch_locomotion_curves.py` 从站姿规范 payload 读取关键帧，按源/目标动画时长转换归一化位置后写入蹲姿资源；第二组 Start（`005110~005113`、`005410~005413`）复用同方向第一组 Start 模板。当前结果覆盖 37 个资产，其中 Idle 和 4 个 Idle Turn 不写无消费者曲线，其余 32 个资产共写入 80 条曲线：`CanEnterLoop` 16 条、`CanEnterStop` 24 条、`CanEnterIdle` 8 条、`MovePhase` 24 条、`FootPlant` 8 条。
 
@@ -165,11 +168,9 @@ UE 底层仍以浮点曲线保存数据，项目在写入和使用层约定以�
 | `Start -> Stop` | 输入释放后等待 `CanEnterStop >= 0.5` |
 | `Start -> Cycle` | 保持移动时等待 `CanEnterLoop >= 0.5` |
 | `Cycle -> Stop` | 停止意图确认后等待 `CanEnterStop >= 0.5` |
-| `Stop -> StopTurn` | 无新输入、残差角达到阈值且 `CanEnterIdle >= 0.5` |
-| `Stop -> Idle` | 无新输入、无需明显回正且 `CanEnterIdle >= 0.5` |
-| `StopTurn -> Idle` | 没有新输入或闪避且 `CanExitTurn >= 0.5` |
+| `Stop -> Idle` | 无新输入且 `CanEnterIdle >= 0.5` |
 | `Step -> Standing/Crouching` | Dodge 结束后等待 `CanExitStep >= 0.5` |
-| `Turn -> Idle` | 没有移动或闪避输入时等待 `CanExitTurn >= 0.5` |
+| `TurnInPlace -> Idle` | 没有移动或闪避输入时等待 `CanExitTurn >= 0.5` |
 | `Sprint -> Standing/Crouching` | Sprint 意图结束后等待嵌套 Stop 输出的 `CanEnterIdle >= 0.5` |
 | `Jump Start -> DirectionalInAir` | 锁定有向跳仍在空中且 `CanEnterInAir >= 0.5` |
 | `Jump Start -> Loop` | 非锁定或原地跳仍在空中且 `CanEnterLoop >= 0.5` |
@@ -223,9 +224,11 @@ function GroundLocomotion.CanEnter_Cycle_Stop(Inst)
 end
 ```
 
-曲线名集中声明在 `Animation.Sekiro.Shared.CurveNames`。`CanEnterLoop/Stop/Idle`、`CanExitStep`、`CanExitTurn`、`CanEnterInAir`、`CanResumeMovement` 和 `CanExitLand` 已有正式 Transition 消费者；`StopTurnDirectionAlignment` 由 UpdateAnimation 转换为 StopTurn 节点权重；`FootPlant` 和 `MovePhase` 继续用于标注、调试和后续相位匹配。
+曲线名集中声明在 `Animation.Sekiro.Shared.CurveNames`。`CanEnterLoop/Stop/Idle`、`CanExitStep`、`CanExitTurn`、`CanEnterInAir`、`CanResumeMovement` 和 `CanExitLand` 已有正式 Transition 消费者；`StopTurnDirectionAlignment` 只保留在旧资产中，不再登记为运行时曲线名；`FootPlant` 和 `MovePhase` 继续用于标注、调试和后续相位匹配。
 
 战斗动作曲线由 `USKCombatComponent` 直接采样活动 Sequence。空中攻击 `308000/308010/308020` 在第 9 帧开启 `CanAcceptLightAttack`、第 12 帧开启 `CanCancelToGuard`，并保持到实际第 29 帧；落地攻击 `308050/308060/308070` 使用相同开启帧并保持到实际第 50 帧。两组首版均不写 `CanAcceptHeavyAttack` 和 `AttackSide`，因此长按按轻攻击处理且刀侧沿用进入动作时的锁存值。
+
+攻击转向同样由 `USKCombatComponent` 提供活动 Sequence 采样位置，但由 Movement Lua 决定目标朝向。`DisableTurning>=0.5` 时不得修改 ActorYaw；否则按 `AttackTurnSpeed * DeltaTime` 限制单帧最大转角。转向在原生 CharacterMovement 消费本帧 Root Motion 前完成，攻击期间不启用普通 Locomotion Root Motion 方向修正。
 
 `CanCancelToJump` 按原始 TAE JT119 写入七条地面攻击与三条 Land 攻击。原始数据缺少首段窗口的 `Left`、`Combo_01` 和 Land 三段额外补 `0.00~0.10s`；Air 攻击不写该曲线并由状态仲裁拒绝二次 Jump。
 

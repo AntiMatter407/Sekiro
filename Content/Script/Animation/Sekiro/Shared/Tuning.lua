@@ -35,6 +35,10 @@
 ---@field SlotName string 动态 Montage 与动画图共享的上半身 Slot 名称。
 ---@field BranchFilters string Layered Blend Per Bone 使用的骨骼分支过滤串。
 
+---@class SekiroCombatLayerSettings
+---@field FullBodySlotName string 攻击、弹反和防御起落动作共用的全身 Slot 名称。
+---@field GuardPoseBlendDuration number Guard Ground/Air 内部切换时长，单位为秒。
+
 ---@class SekiroWeaponIKSettings
 ---@field IKBone string 右臂双骨骼链的末端手骨骼名。
 ---@field JointTargetBone string 用当前姿势保持弯曲方向的右肘参考骨骼名。
@@ -45,8 +49,11 @@
 ---@field LockedDirectionForwardBoundaryAngle number 锁定移动 Forward 扇区的绝对角上限，单位为度。
 ---@field LockedDirectionBackBoundaryAngle number 锁定移动 Back 扇区的绝对角下限，单位为度。
 ---@field LockedDirectionHysteresisAngle number 锁定 Forward/Back 离开自身扇区时保留的防抖容差，单位为度。
----@field IdleTurnEnterAngle number 预留的非锁定 Idle Turn 进入角，单位为度；当前尚无独立 Idle Turn 状态。
----@field SprintLargeTurnEnterAngle number 预留的 Sprint 大角度制动阈值，单位为度；当前尚未接入状态逻辑。
+---@field IdleTurnEnterAngle number 锁定待机 Turn In Place 的进入角，单位为度。
+---@field IdleTurnExitAngle number 锁定待机 Turn In Place 的退出角，单位为度；与进入角形成迟滞以避免边界抖动。
+---@field PivotEnterAngle number 移动方向相对当前速度达到该角度时进入 Pivot，单位为度。
+---@field PivotExitAngle number Pivot 中方向差回落到该角度后允许返回 Cycle，单位为度。
+---@field SprintLargeTurnEnterAngle number Sprint 大角度制动阈值，单位为度；Sprint 不进入 Pivot，留给方向 Stop 资产处理。
 ---@field StartBlendDuration number 进入 Start 的过渡时长，单位为秒。
 ---@field CycleBlendDuration number Start 与 Cycle 之间的过渡时长，单位为秒。
 ---@field DirectionBlendDuration number 四方向素材分支切换的过渡时长，单位为秒。
@@ -59,13 +66,14 @@
 ---@field JumpBlendDuration number Jump Start、InAir 与 Land 之间的过渡时长，单位为秒。
 ---@field JumpDirectionalSpeedThreshold number 离地时判定有向 Jump 的最小实际水平速度，单位 cm/s。
 ---@field JumpWarpingMaxAngle number Jump 八方向素材允许的最大量化残差，单位为度。
+---@field HeavyLandMinFallSpeed number 选择 Heavy Land 的最小峰值下落速度，单位 cm/s。
+---@field HeavyLandPredictionThreshold number LandPredictionAmount 达到该值时可提前锁存 Heavy Land。
 ---@field LockOnWarpingInterpSpeed number Jump 等单节点 Orientation Warping 的默认原生插值速度。
----@field StopTurnMinResidualAngle number Stop 结束后需要播放换脚回正动作的最小残差角，单位为度。
----@field StopTurnAlignmentCurveReadyThreshold number StopTurn 曲线被视为已由当前 Turn Sequence 完整接管的权重阈值。
 ---@field LockOnOrientationWarping SekiroLockOnOrientationWarpingSettings Jump 等方向扭曲节点使用的骨骼与轴配置。
 ---@field FootIK SekiroFootIKSettings 最终 Locomotion Pose 使用的原生双脚落地与腿部求解配置。
 ---@field UpperBody SekiroUpperBodySettings 收拔刀等上半身动作使用的 Slot 与骨骼范围。
 ---@field WeaponIK SekiroWeaponIKSettings 收拔刀换挂窗口使用的右手 IK 骨骼与目标 Socket。
+---@field Combat SekiroCombatLayerSettings ALS V4 风格 Overlay 与全身战斗 Slot 的集中配置。
 ---@field CurveThreshold number CanEnterStop 等门控曲线被视为开启的阈值。
 ---@field DirectionSyncGroup string Standing/Crouch Cycle Sequence 使用的原生同步组名称。
 local Tuning = {
@@ -74,6 +82,9 @@ local Tuning = {
     LockedDirectionBackBoundaryAngle = 120,
     LockedDirectionHysteresisAngle = 10,
     IdleTurnEnterAngle = 25,
+    IdleTurnExitAngle = 3,
+    PivotEnterAngle = 135,
+    PivotExitAngle = 45,
     SprintLargeTurnEnterAngle = 100,
 
     StartBlendDuration = 0.10,
@@ -88,9 +99,9 @@ local Tuning = {
     JumpBlendDuration = 0.08,
     JumpDirectionalSpeedThreshold = 3.0,
     JumpWarpingMaxAngle = 22.5,
+    HeavyLandMinFallSpeed = 850.0,
+    HeavyLandPredictionThreshold = 0.25,
     LockOnWarpingInterpSpeed = 12.0,
-    StopTurnMinResidualAngle = 15.0,
-    StopTurnAlignmentCurveReadyThreshold = 0.9,
     UpperBody = {
         SlotName = "DefaultSlot",
         -- Spine 是 Pelvis 之上的第一段躯干骨；深度 0 覆盖其后代，同时保留下半身移动姿势。

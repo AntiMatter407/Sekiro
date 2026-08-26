@@ -17,6 +17,10 @@ import subprocess
 import sys
 from typing import Optional
 
+from sekiro_asset_manager.bone_name_normalizer import (
+    normalize_internal_root_bone_names,
+)
+from sekiro_asset_manager.animation_aliases import materialize_tae_animation_aliases
 from sekiro_asset_manager.pipeline_config import PipelineConfig, config as default_config
 
 
@@ -296,8 +300,42 @@ class AnimationImporter:
             print(f"  [错误] 动画 JSON 未生成: {output_json}")
             return False
 
-        self._strip_sekiro_prefix(output_json)
+        tae_ok, tae_logic_json = self._extract_tae_logic(anibnd_dir, output_json)
+        if not tae_ok:
+            return False
+
+        self._strip_sekiro_prefix(output_json, tae_logic_json)
         return True
+
+    def _extract_tae_logic(self, anibnd_dir: str, animation_json: str) -> tuple[bool, str]:
+        """提取同一 anibnd 中的 TAE 引用关系，供逻辑动画别名物化。"""
+        has_tae = any(
+            file_name.lower().endswith(".tae")
+            for _root, _dirs, files in os.walk(anibnd_dir)
+            for file_name in files
+        )
+        if not has_tae:
+            return True, ""
+
+        extractor = self.config.tool_path("sekiro_tae_extractor")
+        if not extractor or not os.path.exists(extractor):
+            print(f"  [错误] SekiroTAEExtractor 未找到: {extractor}")
+            return False, ""
+
+        base_name, _extension = os.path.splitext(animation_json)
+        tae_logic_json = f"{base_name}_tae.json"
+        run = subprocess.run(
+            [extractor, anibnd_dir, tae_logic_json],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if run.returncode != 0 or not os.path.exists(tae_logic_json):
+            print((run.stdout or "")[-2000:])
+            print((run.stderr or "")[-2000:])
+            print("  [错误] TAE 动画引用提取失败")
+            return False, ""
+        return True, tae_logic_json
 
     def run_md_fix(self, src_json: str, combined_out: str) -> bool:
         fix_script = os.path.join(self.config.scripts_dir, "fix_md_anim_bones.py")
@@ -327,6 +365,7 @@ class AnimationImporter:
         target_path: str,
         asset_name: Optional[str] = None,
         skeleton_name: Optional[str] = None,
+        anim_names: Optional[list[str]] = None,
     ) -> bool:
         ue_cmd = self.config.get_unreal_editor_cmd()
         if not os.path.exists(ue_cmd):
@@ -352,6 +391,8 @@ class AnimationImporter:
         ]
         if asset_name:
             cmd.append(f"-AssetName={asset_name}")
+        if anim_names:
+            cmd.append(f"-AnimName={','.join(anim_names)}")
 
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         if run.returncode != 0:
@@ -367,15 +408,35 @@ class AnimationImporter:
                     return os.path.join(root, file_name)
         return ""
 
-    def _strip_sekiro_prefix(self, output_json: str) -> None:
+    def _strip_sekiro_prefix(self, output_json: str, tae_logic_json: str = "") -> None:
         with open(output_json, "r", encoding="utf-8") as file:
             data = json.load(file)
         changed = False
+        bone_names = data.get("BoneNames", [])
+        had_internal_root = "Root" in bone_names
+        rename_map = normalize_internal_root_bone_names(
+            bone_names, data.get("BoneParents", [])
+        )
+        if rename_map and had_internal_root:
+            print("  Normalized internal source bone: Root -> RootPos")
+            changed = True
         for anim in data.get("Animations", []):
             name = anim.get("Name", "")
             if name.startswith("Sekiro_"):
                 anim["Name"] = name[7:]
                 changed = True
+
+        if tae_logic_json:
+            with open(tae_logic_json, "r", encoding="utf-8") as file:
+                tae_data = json.load(file)
+            alias_report = materialize_tae_animation_aliases(data, tae_data)
+            materialized = alias_report["materialized"]
+            skipped = alias_report["skipped"]
+            if materialized:
+                print(f"  Materialized {len(materialized)} TAE animation aliases")
+                changed = True
+            if skipped:
+                print(f"  [警告] {len(skipped)} TAE animation aliases could not be materialized")
         if changed:
             with open(output_json, "w", encoding="utf-8") as file:
                 json.dump(data, file, indent=2, ensure_ascii=False)

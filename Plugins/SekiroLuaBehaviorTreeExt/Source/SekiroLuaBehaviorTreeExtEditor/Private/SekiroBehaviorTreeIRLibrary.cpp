@@ -6,6 +6,7 @@
 #include "BehaviorTree/BTTaskNode.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType.h"
+#include "Editor.h"
 #include "LuaEnv.h"
 #include "LuaValue.h"
 #include "Misc/ScopeExit.h"
@@ -578,6 +579,81 @@ namespace SekiroBehaviorTreeIR
         Visited.Add(NodeId);
         return false;
     }
+
+    /**
+     * 仅从当前 UnLua 环境的 package.loaded 清除一个精确模块键。
+     * 本函数不执行 require、不触碰其他模块，也不创建或修改资产；只能在游戏线程且非 PIE/SIE 调用。
+     *
+     * @param LuaModuleName 要清除缓存的完整 require 模块名。
+     * @param OutDiagnostics 接收环境或输入错误；调用方负责预先清空。
+     * @return 精确缓存键已设为 nil 时返回 true，环境不可用或处于 PIE/SIE 时返回 false。
+     */
+    bool InvalidateLuaModuleCache(
+        const FString& LuaModuleName,
+        TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics)
+    {
+        FParseContext Context;
+        Context.ModuleName = LuaModuleName;
+        Context.Diagnostics = &OutDiagnostics;
+        FSekiroBehaviorTreeSourceLocation Location;
+        Location.LuaModule = LuaModuleName;
+        if (LuaModuleName.IsEmpty()
+            || !IsInGameThread()
+            || (GEditor
+                && (GEditor->PlayWorld || GEditor->bIsSimulatingInEditor)))
+        {
+            AddError(
+                Context,
+                InvalidInput,
+                TEXT("刷新 Lua 模块只能在非 PIE/SIE 的编辑器游戏线程执行。"),
+                LuaModuleName,
+                Location);
+            return false;
+        }
+
+        IUnLuaModule* UnLuaModule =
+            FModuleManager::LoadModulePtr<IUnLuaModule>(TEXT("UnLua"));
+        if (!UnLuaModule)
+        {
+            AddError(
+                Context,
+                InvalidInput,
+                TEXT("无法加载 UnLua 模块。"),
+                LuaModuleName,
+                Location);
+            return false;
+        }
+        if (!UnLuaModule->IsActive()) UnLuaModule->SetActive(true);
+        UnLua::FLuaEnv* Environment = UnLuaModule->GetEnv();
+        if (!Environment)
+        {
+            AddError(
+                Context,
+                InvalidInput,
+                TEXT("UnLua 环境不可用。"),
+                LuaModuleName,
+                Location);
+            return false;
+        }
+
+        lua_State* State = Environment->GetMainState();
+        const int32 InitialTop = lua_gettop(State);
+        ON_SCOPE_EXIT { lua_settop(State, InitialTop); };
+        if (lua_getglobal(State, "package") != LUA_TTABLE
+            || lua_getfield(State, -1, "loaded") != LUA_TTABLE)
+        {
+            AddError(
+                Context,
+                InvalidInput,
+                TEXT("Lua package.loaded 表不可用。"),
+                LuaModuleName,
+                Location);
+            return false;
+        }
+        lua_pushnil(State);
+        lua_setfield(State, -2, TCHAR_TO_UTF8(*LuaModuleName));
+        return true;
+    }
 }
 
 /**
@@ -639,6 +715,31 @@ bool USekiroBehaviorTreeIRLibrary::CompileLuaModule(
     }
     if (!ParseIR(Context, CompiledValues[0].GetIndex(), OutIR)) return false;
     return Validate(OutIR, OutDiagnostics);
+}
+
+/**
+ * 清除目标模块的 require 缓存后重新导入强类型 IR，保证显式文件同步验证读取刚写入内容。
+ * 只允许非 PIE/SIE 的编辑器游戏线程调用；仅清除精确 package.loaded 键，不影响其他 Lua 模块。
+ *
+ * @param LuaModuleName 需要强制重新加载的完整 require 模块名。
+ * @param OutIR 接收新文件编译出的值语义 IR；函数开始时重置。
+ * @param OutDiagnostics 接收缓存刷新、导入和结构校验诊断；函数开始时清空。
+ * @return 缓存刷新和完整 CompileLuaModule 均成功时返回 true。
+ */
+bool USekiroBehaviorTreeIRLibrary::CompileLuaModuleFresh(
+    const FString& LuaModuleName,
+    FSekiroBehaviorTreeIR& OutIR,
+    TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics)
+{
+    OutIR = FSekiroBehaviorTreeIR();
+    OutDiagnostics.Reset();
+    if (!SekiroBehaviorTreeIR::InvalidateLuaModuleCache(
+            LuaModuleName,
+            OutDiagnostics))
+    {
+        return false;
+    }
+    return CompileLuaModule(LuaModuleName, OutIR, OutDiagnostics);
 }
 
 /**

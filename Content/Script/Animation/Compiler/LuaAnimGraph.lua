@@ -35,6 +35,8 @@ local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass"
 ---@field OutputNode LuaAnimNode 固定的 OutputPose 或 StateResult 根节点。
 ---@field Result LuaAnimPin 固定根节点的 Pose 输入 Pin，业务 Graph 把最终姿势连接到这里。
 ---@field RootNodeId string 固定结果节点稳定 ID。
+---@field LayoutPositions SekiroAnimIRLayoutPosition[] 精确像素坐标声明。
+---@field LayoutPositionIds table<string, boolean> 已声明精确坐标的元素 ID 集合。
 local LuaAnimGraph = CompilerClass:Extend("LuaAnimGraph")
 
 ---@class LuaLinkedAnimLayerConfig
@@ -136,6 +138,8 @@ function LuaAnimGraph:Initialize(config)
     self.LayoutGrids = {}
     self.LayoutGridNames = {}
     self.LayoutElementIds = {}
+    self.LayoutPositions = {}
+    self.LayoutPositionIds = {}
 
     ---@type LuaAnimNode
     local output_node = LuaAnimNode:New({
@@ -195,6 +199,27 @@ function LuaAnimGraph:SequencePlayer(name)
         EditorNodeClass.SequencePlayer,
         nil,
         "SequencePlayer")
+end
+
+---把当前 Graph 的节点固定到 UE 画布精确像素坐标。
+---精确坐标可与 Grid 声明并存且优先级更高；同一元素不允许重复设置精确坐标。
+---@param element LuaAnimNode 当前 Pose 或 StatePose Graph 直接拥有的节点。
+---@param x number UE Graph 画布横向像素整数坐标。
+---@param y number UE Graph 画布纵向像素整数坐标。
+---@return LuaAnimNode element 原样返回已定位节点，便于继续声明。
+function LuaAnimGraph:SetPosition(element, x, y)
+    assert(element ~= nil and type(element.Id) == "string", "Graph:SetPosition requires LuaAnimNode")
+    assert(element.Graph == self, "Positioned node must belong to the same Graph")
+    assert(self.LayoutPositionIds[element.Id] == nil, "Graph element may only have one exact position")
+    local position_x = IRSchema.RequireLayoutCoordinate(x, "X")
+    local position_y = IRSchema.RequireLayoutCoordinate(y, "Y")
+    self.LayoutPositionIds[element.Id] = true
+    table.insert(self.LayoutPositions, {
+        ElementId = element.Id,
+        X = position_x,
+        Y = position_y,
+    })
+    return element
 end
 
 ---创建 AnimInstance 生成变量的原生 Getter；变量类型决定复用的注册契约。
@@ -575,6 +600,34 @@ function LuaAnimGraph:LinkPins(source_pin, target_pin)
     return self:Link(source_pin.Node, source_pin.Name, target_pin.Node, target_pin.Name)
 end
 
+---解析节点实际声明的 Pin；结构型动态节点使用实例 Pin，普通节点继续使用注册契约。
+---@param node LuaAnimNode 待校验的连线端点节点。
+---@param pin_name string 待解析的 Pin 名称。
+---@param direction SekiroAnimIRPinDirection 当前连线要求的 Pin 方向。
+---@return LuaAnimNodePinContract pin_contract 包含方向、类型和复用约束的实际 Pin 契约。
+local function require_node_pin(node, pin_name, direction)
+    if node.Contract ~= nil and node.Contract.bDynamicPins ~= true then
+        return NodeContracts.RequirePin(node.Contract, pin_name, direction)
+    end
+
+    for _, declared_pin in ipairs(node.Pins or {}) do
+        if declared_pin.Name == pin_name then
+            assert(declared_pin.Direction == direction, string.format(
+                "Pin '%s.%s' is '%s', expected '%s'",
+                node.NodeType,
+                pin_name,
+                declared_pin.Direction,
+                direction))
+            return declared_pin
+        end
+    end
+
+    error(string.format(
+        "NodeType '%s' has no declared Pin '%s'",
+        node.NodeType,
+        pin_name))
+end
+
 ---连接两个节点的具名 Pin，并根据端点语义自动生成稳定 Link ID。
 ---@param source_node LuaAnimNode 提供输出 Pin 的节点。
 ---@param source_pin string 源节点输出 Pin 名称。
@@ -585,12 +638,8 @@ function LuaAnimGraph:Link(source_node, source_pin, target_node, target_pin)
     assert(source_node ~= nil and target_node ~= nil, "Graph:Link requires source and target Nodes")
     IRSchema.RequireSemanticName(source_pin, "Source Pin")
     IRSchema.RequireSemanticName(target_pin, "Target Pin")
-    local source_contract = source_node.Contract ~= nil
-        and NodeContracts.RequirePin(source_node.Contract, source_pin, "Output")
-        or { bAllowMultipleConnections = true }
-    local target_contract = target_node.Contract ~= nil
-        and NodeContracts.RequirePin(target_node.Contract, target_pin, "Input")
-        or { bAllowMultipleConnections = false }
+    local source_contract = require_node_pin(source_node, source_pin, "Output")
+    local target_contract = require_node_pin(target_node, target_pin, "Input")
     for _, existing_link in ipairs(self.Links) do
         local source_is_reused = existing_link.Source.NodeId == source_node.Id
             and existing_link.Source.PinName == source_pin
@@ -662,6 +711,7 @@ function LuaAnimGraph:ToIR()
         Layout = {
             Style = self.LayoutStyle,
             Grids = layout_grids,
+            Positions = self.LayoutPositions,
         },
         DeclarationOrder = self.DeclarationOrder,
         SourceLocation = self.SourceLocation,

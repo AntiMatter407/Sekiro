@@ -42,8 +42,8 @@ Console.WriteLine($"Loading SDT template: {templatePath}");
 TAE.Template template = TAE.Template.ReadXMLFile(templatePath);
 Console.WriteLine($"Template loaded: {template.Count} banks, Game={template.Game}");
 
-// Find all .tae files
-var taeFiles = Directory.GetFiles(taeDir, "*.tae", SearchOption.TopDirectoryOnly)
+// Find all .tae files. anibnd 解包目录可能包含 chr/<id>/tae 子目录，因此递归扫描。
+var taeFiles = Directory.GetFiles(taeDir, "*.tae", SearchOption.AllDirectories)
     .OrderBy(f => f)
     .ToList();
 
@@ -98,9 +98,31 @@ foreach (string taePath in taeFiles)
 
         foreach (var anim in tae.Animations)
         {
+            int animID = (int)anim.ID;
+            string referenceType = "Direct";
+            int motionSourceAnimID = animID;
+            int eventSourceAnimID = animID;
+
+            switch (anim.MiniHeader)
+            {
+                case TAE.Animation.AnimMiniHeader.Standard standard when standard.ImportsHKX:
+                    referenceType = "ImportHKX";
+                    motionSourceAnimID = standard.ImportHKXSourceAnimID;
+                    break;
+                case TAE.Animation.AnimMiniHeader.ImportOtherAnim imported:
+                    referenceType = "ImportOtherAnim";
+                    motionSourceAnimID = imported.ImportFromAnimID;
+                    eventSourceAnimID = imported.ImportFromAnimID;
+                    break;
+            }
+
             var animEntry = new AnimationEntry
             {
-                AnimID = (int)anim.ID,
+                AnimID = animID,
+                AnimFileName = anim.AnimFileName ?? "",
+                ReferenceType = referenceType,
+                MotionSourceAnimID = motionSourceAnimID,
+                EventSourceAnimID = eventSourceAnimID,
                 Events = new List<EventEntry>()
             };
 
@@ -148,12 +170,14 @@ foreach (string taePath in taeFiles)
                 }
 
                 animEntry.Events.Add(evtEntry);
-                totalEvents++;
             }
 
             taeEntry.Animations.Add(animEntry);
             totalAnims++;
         }
+
+        ResolveImportedAnimationEvents(taeEntry);
+        totalEvents += taeEntry.Animations.Sum(anim => anim.Events.Count);
 
         output.TAE_Files.Add(taeEntry);
         Console.WriteLine($"{taeEntry.AnimationCount} anims, OK");
@@ -180,6 +204,47 @@ File.WriteAllText(outputPath, json);
 FileInfo fi = new FileInfo(outputPath);
 Console.WriteLine($"Output written: {outputPath} ({fi.Length / 1024.0 / 1024.0:F1} MB)");
 
+// ImportOtherAnim 同时继承来源动画的动作与事件。展开事件后，下游无需理解 TAE MiniHeader
+// 也能获得完整事件轨；同时保留引用元数据，供动画曲线管线物化逻辑动画资产。
+static void ResolveImportedAnimationEvents(TaeFileEntry taeEntry)
+{
+    var animationsByID = taeEntry.Animations.ToDictionary(anim => anim.AnimID);
+
+    foreach (AnimationEntry anim in taeEntry.Animations)
+    {
+        if (anim.ReferenceType != "ImportOtherAnim")
+            continue;
+
+        var visited = new HashSet<int>();
+        AnimationEntry? source = ResolveEventSource(anim, animationsByID, visited);
+        if (source == null)
+        {
+            Console.WriteLine($"WARN: animation {anim.AnimID} event source could not be resolved");
+            continue;
+        }
+
+        anim.EventSourceAnimID = source.AnimID;
+        anim.Events = source.Events;
+    }
+}
+
+static AnimationEntry? ResolveEventSource(
+    AnimationEntry anim,
+    IReadOnlyDictionary<int, AnimationEntry> animationsByID,
+    HashSet<int> visited)
+{
+    if (!visited.Add(anim.AnimID))
+        return null;
+
+    if (anim.ReferenceType != "ImportOtherAnim" || anim.EventSourceAnimID == anim.AnimID)
+        return anim;
+
+    if (!animationsByID.TryGetValue(anim.EventSourceAnimID, out AnimationEntry? source))
+        return null;
+
+    return ResolveEventSource(source, animationsByID, visited);
+}
+
 // ============================================================================
 // Output model classes
 // ============================================================================
@@ -203,6 +268,10 @@ public class TaeFileEntry
 public class AnimationEntry
 {
     public int AnimID { get; set; }
+    public string AnimFileName { get; set; } = "";
+    public string ReferenceType { get; set; } = "Direct";
+    public int MotionSourceAnimID { get; set; }
+    public int EventSourceAnimID { get; set; }
     public List<EventEntry> Events { get; set; } = new();
 }
 

@@ -21,6 +21,12 @@ public:
         TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics);
 
     UFUNCTION(BlueprintCallable, Category = "Sekiro|Lua Behavior Tree")
+    static bool CompileLuaModuleFresh(
+        const FString& LuaModuleName,
+        FSekiroBehaviorTreeIR& OutIR,
+        TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics);
+
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Lua Behavior Tree")
     static bool Validate(
         const FSekiroBehaviorTreeIR& IR,
         TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics);

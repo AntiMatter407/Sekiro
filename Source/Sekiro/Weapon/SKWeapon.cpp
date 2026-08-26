@@ -5,6 +5,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/DamageEvents.h"
+#include "Engine/World.h"
 
 /**
  * 创建刀身、刀鞘和攻击碰撞组件，并建立武器内部的默认父子关系。
@@ -12,7 +13,9 @@
  */
 ASKWeapon::ASKWeapon()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = false;
+    PrimaryActorTick.TickGroup = TG_PostPhysics;
 
     BladeMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("BladeMesh"));
     SetRootComponent(BladeMesh);
@@ -27,9 +30,42 @@ ASKWeapon::ASKWeapon()
     AttackHitbox->SetCollisionObjectType(ECC_WorldDynamic);
     AttackHitbox->SetCollisionResponseToAllChannels(ECR_Ignore);
     AttackHitbox->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-    AttackHitbox->SetGenerateOverlapEvents(true);
+    AttackHitbox->SetGenerateOverlapEvents(false);
     AttackHitbox->CanCharacterStepUpOn = ECB_No;
-    AttackHitbox->OnComponentBeginOverlap.AddDynamic(this, &ASKWeapon::OnHitboxOverlap);
+}
+
+/**
+ * 在动画攻击窗口内读取当前刀刃线段，并将上一帧到当前帧的运动轨迹交给连续 Sweep。
+ * Actor 使用 PostPhysics Tick，以尽量读取角色骨架完成本帧动画更新后的武器姿态；函数只在游戏线程运行。
+ *
+ * @param DeltaSeconds 本帧时长，单位秒；当前算法不按帧时长缩放刀刃几何，仅传给父类生命周期。
+ */
+void ASKWeapon::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    if (!bBladeSweepActive) return;
+
+    FVector CurrentBladeBase;
+    FVector CurrentBladeTip;
+    if (!GetBladeSweepSegment(CurrentBladeBase, CurrentBladeTip))
+    {
+        bHasPreviousBladeSegment = false;
+        return;
+    }
+
+    if (bHasPreviousBladeSegment)
+    {
+        SweepBladeSegment(
+            PreviousBladeBase,
+            PreviousBladeTip,
+            CurrentBladeBase,
+            CurrentBladeTip);
+    }
+
+    PreviousBladeBase = CurrentBladeBase;
+    PreviousBladeTip = CurrentBladeTip;
+    bHasPreviousBladeSegment = true;
 }
 
 /**
@@ -187,23 +223,46 @@ ESKWeaponPresentation ASKWeapon::GetWeaponPresentation() const
 }
 
 /**
- * 开启刀身攻击碰撞的查询能力；不清空已命中集合，也不计算攻击伤害。
+ * 开启连续刀刃 Sweep，并立即记录当前刀刃线段作为下一帧轨迹起点。
+ * 旧胶囊碰撞始终保持关闭，仅作为蓝图中的尺寸参考；本函数不清空已命中集合，也不计算攻击伤害。
  * 必须在游戏线程调用，无参数且无返回值。
  */
 void ASKWeapon::ActivateHitbox()
 {
-    if (!AttackHitbox) return;
-    AttackHitbox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    if (AttackHitbox)
+    {
+        AttackHitbox->SetGenerateOverlapEvents(false);
+        AttackHitbox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+
+    bBladeSweepActive = true;
+    bHasPreviousBladeSegment = GetBladeSweepSegment(
+        PreviousBladeBase,
+        PreviousBladeTip);
+    if (bHasPreviousBladeSegment)
+    {
+        SweepBladeSegment(
+            PreviousBladeBase,
+            PreviousBladeTip,
+            PreviousBladeBase,
+            PreviousBladeTip);
+    }
+    SetActorTickEnabled(true);
 }
 
 /**
- * 关闭刀身攻击碰撞；不清空命中集合，也不改变武器展示状态。
- * 必须在游戏线程调用，无参数且无返回值。
+ * 关闭连续刀刃 Sweep 并丢弃上一帧轨迹，避免下一次攻击跨窗口连接两段无关动作。
+ * 本函数不清空命中集合，也不改变武器展示状态；必须在游戏线程调用。
  */
 void ASKWeapon::DeactivateHitbox()
 {
-    if (!AttackHitbox) return;
-    AttackHitbox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    bBladeSweepActive = false;
+    bHasPreviousBladeSegment = false;
+    SetActorTickEnabled(false);
+    if (AttackHitbox)
+    {
+        AttackHitbox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
 }
 
 /**
@@ -216,23 +275,110 @@ void ASKWeapon::ClearHitActors()
 }
 
 /**
- * 处理攻击碰撞开始重叠，并把角色目标交给其战斗组件裁决为命中、格挡或弹反。
- * 只有普通命中继续应用基础点伤害；格挡和弹反仍会记录去重，避免同一攻击窗口重复结算。
- * 委托由游戏线程触发；函数不负责阵营筛选、攻击窗口或具体架势数值规则。
+ * 根据 Blade00 与 Blade01 的当前世界坐标推导完整刀刃线段。
+ * 两个骨骼只覆盖刀身中段，因此分别按配置比例向刀柄和刀尖延伸；函数只读组件状态且必须在游戏线程调用。
  *
- * @param Overlapped 触发事件的碰撞组件，仅作为委托上下文，不保留引用。
- * @param OtherActor 被重叠的目标 Actor，可为空；自身拥有者和重复目标会被忽略。
- * @param OtherComp 目标参与重叠的组件，可为空且不保留引用。
- * @param OtherBodyIndex 目标组件的刚体索引，仅作为委托上下文。
- * @param bFromSweep 是否来自 Sweep，仅作为委托上下文。
- * @param SweepResult Sweep 命中信息的只读引用，本实现不保留引用。
+ * @param OutBladeBase 输出补全后的刀柄端世界坐标，仅在返回 true 时有效。
+ * @param OutBladeTip 输出补全后的刀尖端世界坐标，仅在返回 true 时有效。
+ * @return 网格、骨骼和两点间距有效时返回 true；否则返回 false 且调用方应丢弃历史轨迹。
  */
-void ASKWeapon::OnHitboxOverlap(
-    UPrimitiveComponent* Overlapped,
+bool ASKWeapon::GetBladeSweepSegment(
+    FVector& OutBladeBase,
+    FVector& OutBladeTip) const
+{
+    if (!BladeMesh
+        || BladeMesh->GetBoneIndex(BladeSweepBaseBone) == INDEX_NONE
+        || BladeMesh->GetBoneIndex(BladeSweepTipBone) == INDEX_NONE)
+    {
+        return false;
+    }
+
+    const FVector BaseAnchor = BladeMesh->GetSocketLocation(BladeSweepBaseBone);
+    const FVector TipAnchor = BladeMesh->GetSocketLocation(BladeSweepTipBone);
+    const FVector BoneSpan = TipAnchor - BaseAnchor;
+    if (BoneSpan.IsNearlyZero()) return false;
+
+    OutBladeBase = BaseAnchor - BoneSpan * BladeSweepBaseExtension;
+    OutBladeTip = TipAnchor + BoneSpan * BladeSweepTipExtension;
+    return true;
+}
+
+/**
+ * 沿完整刀刃均匀取样，并对每个采样点执行从上一帧到当前帧的球形 Sweep。
+ * 查询只包含 Pawn，忽略武器自身和持有者；同一帧同一 Actor 只裁决一次，但 Ignored 目标可在后续帧重新判定。
+ * 本函数只负责连续空间采样，不决定格挡、弹反、姿势值或具体动画，必须在游戏线程调用。
+ *
+ * @param InPreviousBladeBase 上一帧补全后的刀柄端世界坐标。
+ * @param InPreviousBladeTip 上一帧补全后的刀尖端世界坐标。
+ * @param InCurrentBladeBase 当前帧补全后的刀柄端世界坐标。
+ * @param InCurrentBladeTip 当前帧补全后的刀尖端世界坐标。
+ */
+void ASKWeapon::SweepBladeSegment(
+    const FVector& InPreviousBladeBase,
+    const FVector& InPreviousBladeTip,
+    const FVector& InCurrentBladeBase,
+    const FVector& InCurrentBladeTip)
+{
+    UWorld* World = GetWorld();
+    if (!World) return;
+
+    FCollisionObjectQueryParams ObjectQueryParams;
+    ObjectQueryParams.AddObjectTypesToQuery(ECC_Pawn);
+
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SKWeaponBladeSweep), false);
+    QueryParams.AddIgnoredActor(this);
+    QueryParams.AddIgnoredActor(GetOwner());
+
+    const int32 SampleCount = FMath::Clamp(BladeSweepSampleCount, 2, 16);
+    const FCollisionShape SweepShape = FCollisionShape::MakeSphere(
+        FMath::Max(BladeSweepRadius, 0.1f));
+    TSet<TWeakObjectPtr<AActor>> ProcessedActorsThisFrame;
+
+    for (int32 SampleIndex = 0; SampleIndex < SampleCount; ++SampleIndex)
+    {
+        const float Alpha = static_cast<float>(SampleIndex)
+            / static_cast<float>(SampleCount - 1);
+        const FVector SweepStart = FMath::Lerp(
+            InPreviousBladeBase,
+            InPreviousBladeTip,
+            Alpha);
+        const FVector SweepEnd = FMath::Lerp(
+            InCurrentBladeBase,
+            InCurrentBladeTip,
+            Alpha);
+
+        TArray<FHitResult> SweepHits;
+        World->SweepMultiByObjectType(
+            SweepHits,
+            SweepStart,
+            SweepEnd,
+            FQuat::Identity,
+            ObjectQueryParams,
+            SweepShape,
+            QueryParams);
+
+        for (const FHitResult& SweepHit : SweepHits)
+        {
+            AActor* OtherActor = SweepHit.GetActor();
+            if (!OtherActor || ProcessedActorsThisFrame.Contains(OtherActor)) continue;
+
+            ProcessedActorsThisFrame.Add(OtherActor);
+            ResolveSweepHit(OtherActor, SweepHit);
+        }
+    }
+}
+
+/**
+ * 把一个连续 Sweep 命中的 Actor 交给现有战斗组件裁决为普通命中、格挡或弹反。
+ * 非 Ignored 裁决会先向存在的攻守战斗组件发布接触事件，只有普通命中随后应用基础点伤害。
+ * 事件发布失败不改变原有裁决、伤害和攻击窗口去重结果；成功裁决的目标加入当前攻击窗口去重集合。
+ * 函数不负责攻击窗口、阵营筛选或具体姿势数值规则，必须在游戏线程调用。
+ *
+ * @param OtherActor Sweep 命中的目标 Actor，可为空；持有者和已结算目标会被忽略，不保留引用。
+ * @param SweepResult 本次 Sweep 的命中信息，只在调用期间读取，用于生成点伤害事件。
+ */
+void ASKWeapon::ResolveSweepHit(
     AActor* OtherActor,
-    UPrimitiveComponent* OtherComp,
-    int32 OtherBodyIndex,
-    bool bFromSweep,
     const FHitResult& SweepResult)
 {
     if (!OtherActor || OtherActor == GetOwner()) return;
@@ -245,18 +391,29 @@ void ASKWeapon::OnHitboxOverlap(
     USKCombatComponent* DefenderCombat =
         OtherActor->FindComponentByClass<USKCombatComponent>();
 
+    const ESKIncomingAttackType AttackType = AttackerCombat
+        ? AttackerCombat->ResolveOutgoingAttackType()
+        : ESKIncomingAttackType::Light;
     ESKWeaponContactResult ContactResult = ESKWeaponContactResult::Hit;
     if (DefenderCombat)
     {
-        const ESKIncomingAttackType AttackType = AttackerCombat
-            ? AttackerCombat->ResolveOutgoingAttackType()
-            : ESKIncomingAttackType::Light;
         ContactResult = DefenderCombat->ResolveIncomingWeaponContact(
             AttackerCombat,
             AttackType);
     }
 
     if (ContactResult == ESKWeaponContactResult::Ignored) return;
+
+    FSKAICombatEvent ContactEvent;
+    ContactEvent.EventType = ESKAICombatEventType::WeaponContact;
+    ContactEvent.SourceActor = AttackerActor;
+    ContactEvent.TargetActor = OtherActor;
+    ContactEvent.RelatedActionSerial = AttackerCombat ? AttackerCombat->GetActionSerial() : 0;
+    ContactEvent.AttackType = AttackType;
+    ContactEvent.ContactResult = ContactResult;
+    if (AttackerCombat) AttackerCombat->PublishAICombatEvent(ContactEvent);
+    if (DefenderCombat) DefenderCombat->PublishAICombatEvent(ContactEvent);
+
     if (ContactResult == ESKWeaponContactResult::Hit)
     {
         const float BaseDamage = 100.f;

@@ -96,27 +96,15 @@ function Standing.BuildIdle(Graph)
 end
 
 ---构建 Standing 原地左右转身；方向在动作进入边沿锁存，避免播放中途翻转。
----@param Graph LuaAnimStateGraph Turn 状态的原生 Pose Graph。
----@return LuaAnimNode pose_node Standing Turn 最终姿势节点。
-function Standing.BuildTurn(Graph)
+---@param Graph LuaAnimStateGraph TurnInPlace 状态的原生 Pose Graph。
+---@return LuaAnimNode pose_node Standing TurnInPlace 最终姿势节点。
+function Standing.BuildTurnInPlace(Graph)
     return PoseSelectors.LeftRight(
         Graph,
-        "StandingTurn",
+        "StandingTurnInPlace",
         Anim.Idle_Left_Turn,
         Anim.Idle_Right_Turn,
         "LatchedTurnDirection")
-end
-
----构建 Standing Stop 后的换脚回正动作；方向由输入释放时的残差符号独立锁存。
----@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
----@return LuaAnimNode pose_node Standing StopTurn 最终姿势节点。
-function Standing.BuildStopTurn(Graph)
-    return PoseSelectors.LeftRight(
-        Graph,
-        "StandingStopTurn",
-        Anim.Idle_Left_Turn,
-        Anim.Idle_Right_Turn,
-        "StopTurnDirection")
 end
 
 ---构建 Standing Walk/Run/Sprint Start，并按进入动作时锁存的朝向模式选择转向资产。

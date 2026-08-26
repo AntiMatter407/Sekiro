@@ -103,6 +103,43 @@ bool ASKAIController::SetBlackboardVectorValue(FName KeyName, FVector Value)
 }
 
 /**
+ * 将候选世界位置投影到当前世界的导航数据，供脚本在提交移动目标前验证空间位置。
+ * 本函数只执行通用导航查询，不写 Blackboard、不发起移动也不解释候选点的战术含义；只能在游戏线程调用。
+ *
+ * @param CandidateLocation 待投影的世界空间位置，单位厘米；包含非有限分量时查询失败。
+ * @param QueryExtent 以候选点为中心的查询半尺寸，单位厘米；各轴取绝对值后传给导航系统。
+ * @param OutProjectedLocation 成功时接收导航投影位置；失败时重置为 CandidateLocation，不保留内部引用。
+ * @return 世界和导航系统有效且候选点成功投影到导航数据时返回 true，否则返回 false。
+ */
+bool ASKAIController::ProjectNavigationPoint(
+    const FVector& CandidateLocation,
+    const FVector& QueryExtent,
+    FVector& OutProjectedLocation) const
+{
+    OutProjectedLocation = CandidateLocation;
+    if (CandidateLocation.ContainsNaN() || QueryExtent.ContainsNaN()) return false;
+
+    UWorld* World = GetWorld();
+    if (!World) return false;
+
+    UNavigationSystemV1* NavigationSystem = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World);
+    if (!NavigationSystem) return false;
+
+    const FVector SafeQueryExtent = QueryExtent.GetAbs();
+    FNavLocation ProjectedLocation;
+    if (!NavigationSystem->ProjectPointToNavigation(
+        CandidateLocation,
+        ProjectedLocation,
+        SafeQueryExtent))
+    {
+        return false;
+    }
+
+    OutProjectedLocation = ProjectedLocation.Location;
+    return true;
+}
+
+/**
  * 围绕本次 Possess 记录的出生点请求一个导航可达随机点，并写入配置的巡逻黑板键。
  * 本函数只允许在游戏线程调用；有感知目标时不会改变巡逻点，也不发起实际移动请求。
  *

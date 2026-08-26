@@ -264,9 +264,12 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
     return TEXT("{"
         "\"type\":\"object\","
         "\"properties\":{"
-            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"add_curve\",\"set_anim_curves\",\"batch_tae_curves\",\"remove_anim_curves\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"upsert_skeleton_slot\",\"remove_state_machine\",\"add_curve\",\"set_anim_curves\",\"batch_tae_curves\",\"remove_anim_curves\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
             "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
             "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
+            "\"slot_name\":{\"type\":\"string\",\"description\":\"Slot 名称\"},"
+            "\"slot_group_name\":{\"type\":\"string\",\"description\":\"Slot Group 名称\"},"
+            "\"state_machine_name\":{\"type\":\"string\",\"description\":\"待删除的断开状态机名称\"},"
             "\"parent_class\":{\"type\":\"string\",\"description\":\"可选：AnimInstance父类脚本路径，如/Script/ModuleName.ClassName\"},"
             "\"state_name\":{\"type\":\"string\"},"
             "\"from_state\":{\"type\":\"string\"},\"to_state\":{\"type\":\"string\"},"
@@ -341,6 +344,8 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("layout"))              return HandleLayout(ArgsObj, OutError);
     if (Action == TEXT("rename_node"))         return HandleRenameNode(ArgsObj, OutError);
     if (Action == TEXT("add_slot"))            return HandleAddSlotNode(ArgsObj, OutError);
+    if (Action == TEXT("upsert_skeleton_slot")) return HandleUpsertSkeletonSlot(ArgsObj, OutError);
+    if (Action == TEXT("remove_state_machine")) return HandleRemoveStateMachine(ArgsObj, OutError);
     if (Action == TEXT("add_curve"))           return HandleAddCurve(ArgsObj, OutError);
     if (Action == TEXT("set_anim_curves"))     return HandleSetAnimCurves(ArgsObj, OutError);
     if (Action == TEXT("batch_tae_curves"))     return HandleBatchTaeCurves(ArgsObj, OutError);
@@ -2266,6 +2271,148 @@ FString USKAnimBlueprintTool::HandleAddSlotNode(const TSharedPtr<FJsonObject>& A
     ResultObj->SetStringField(TEXT("node_pos_y"), FString::FromInt(SlotGraphNode->NodePosY));
     ResultObj->SetBoolField(TEXT("success"), true);
 
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleUpsertSkeletonSlot — 在 Skeleton 上登记或迁移 Slot 与 Slot Group
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleUpsertSkeletonSlot(
+    const TSharedPtr<FJsonObject>& Args,
+    FString& OutError)
+{
+    const FString SkeletonPath = Args->GetStringField(TEXT("path"));
+    FString SlotName;
+    if (!Args->TryGetStringField(TEXT("slot_name"), SlotName) || SlotName.IsEmpty())
+    {
+        OutError = TEXT("缺少 slot_name 参数");
+        return FString();
+    }
+
+    FString SlotGroupName = TEXT("DefaultGroup");
+    Args->TryGetStringField(TEXT("slot_group_name"), SlotGroupName);
+    if (SlotGroupName.IsEmpty())
+    {
+        OutError = TEXT("slot_group_name 不能为空");
+        return FString();
+    }
+
+    USkeleton* Skeleton = LoadAssetHelper<USkeleton>(SkeletonPath);
+    if (!Skeleton)
+    {
+        OutError = FString::Printf(TEXT("骨架未找到: %s"), *SkeletonPath);
+        return FString();
+    }
+
+    const FName SlotFName(*SlotName);
+    const FName GroupFName(*SlotGroupName);
+    const bool bAlreadyConfigured = Skeleton->ContainsSlotName(SlotFName)
+        && Skeleton->GetSlotGroupName(SlotFName) == GroupFName;
+
+    if (!bAlreadyConfigured)
+    {
+        Skeleton->Modify();
+        Skeleton->AddSlotGroupName(GroupFName);
+        Skeleton->SetSlotGroupName(SlotFName, GroupFName);
+        Skeleton->MarkPackageDirty();
+        if (!UEditorAssetLibrary::SaveAsset(SkeletonPath, false))
+        {
+            OutError = FString::Printf(TEXT("保存骨架失败: %s"), *SkeletonPath);
+            return FString();
+        }
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("skeleton"), SkeletonPath);
+    ResultObj->SetStringField(TEXT("slot_name"), SlotName);
+    ResultObj->SetStringField(TEXT("slot_group_name"), SlotGroupName);
+    ResultObj->SetStringField(TEXT("status"), bAlreadyConfigured ? TEXT("already_exists") : TEXT("updated"));
+    ResultObj->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+// ============================================================================
+// HandleRemoveStateMachine — 删除指定的未连接状态机占位节点
+// ============================================================================
+
+FString USKAnimBlueprintTool::HandleRemoveStateMachine(
+    const TSharedPtr<FJsonObject>& Args,
+    FString& OutError)
+{
+    const FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString StateMachineName;
+    if (!Args->TryGetStringField(TEXT("state_machine_name"), StateMachineName)
+        || StateMachineName.IsEmpty())
+    {
+        OutError = TEXT("缺少 state_machine_name 参数");
+        return FString();
+    }
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    if (!AnimBP) return FString();
+
+    UAnimGraphNode_StateMachine* TargetNode = nullptr;
+    TArray<UEdGraph*> AllGraphs;
+    AnimBP->GetAllGraphs(AllGraphs);
+    for (UEdGraph* Graph : AllGraphs)
+    {
+        if (!Graph) continue;
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            UAnimGraphNode_StateMachine* StateMachineNode = Cast<UAnimGraphNode_StateMachine>(Node);
+            if (StateMachineNode && StateMachineNode->GetStateMachineName() == StateMachineName)
+            {
+                TargetNode = StateMachineNode;
+                break;
+            }
+        }
+        if (TargetNode) break;
+    }
+
+    if (!TargetNode)
+    {
+        OutError = FString::Printf(TEXT("未找到状态机: %s"), *StateMachineName);
+        return FString();
+    }
+
+    bool bForce = false;
+    Args->TryGetBoolField(TEXT("force"), bForce);
+    for (const UEdGraphPin* Pin : TargetNode->Pins)
+    {
+        if (!bForce && Pin && Pin->LinkedTo.Num() > 0)
+        {
+            OutError = FString::Printf(
+                TEXT("拒绝删除仍有连接的状态机: %s"),
+                *StateMachineName);
+            return FString();
+        }
+    }
+
+    AnimBP->Modify();
+    FBlueprintEditorUtils::RemoveNode(AnimBP, TargetNode, true);
+    AnimBP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(AnimBP);
+    if (!UEditorAssetLibrary::SaveAsset(AssetPath, false))
+    {
+        OutError = FString::Printf(TEXT("保存动画蓝图失败: %s"), *AssetPath);
+        return FString();
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShareable(new FJsonObject());
+    ResultObj->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObj->SetStringField(TEXT("removed_state_machine"), StateMachineName);
+    ResultObj->SetBoolField(TEXT("forced"), bForce);
+    ResultObj->SetBoolField(TEXT("success"), true);
     FString Output;
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);

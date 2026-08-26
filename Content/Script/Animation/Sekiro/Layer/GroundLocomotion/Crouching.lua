@@ -62,27 +62,15 @@ function Crouching.BuildIdle(Graph)
 end
 
 ---构建 Crouching 原地左右转身；与 Standing 共用锁存方向和退出曲线语义。
----@param Graph LuaAnimStateGraph Turn 状态的原生 Pose Graph。
----@return LuaAnimNode pose_node Crouching Turn 最终姿势节点。
-function Crouching.BuildTurn(Graph)
+---@param Graph LuaAnimStateGraph TurnInPlace 状态的原生 Pose Graph。
+---@return LuaAnimNode pose_node Crouching TurnInPlace 最终姿势节点。
+function Crouching.BuildTurnInPlace(Graph)
     return PoseSelectors.LeftRight(
         Graph,
-        "CrouchingTurn",
+        "CrouchingTurnInPlace",
         Anim.Crouch_Idle_Left_Turn,
         Anim.Crouch_Idle_Right_Turn,
         "LatchedTurnDirection")
-end
-
----构建 Crouching Stop 后的换脚回正动作；与普通 Aim Turn 使用不同的锁存方向。
----@param Graph LuaAnimStateGraph StopTurn 状态的原生 Pose Graph。
----@return LuaAnimNode pose_node Crouching StopTurn 最终姿势节点。
-function Crouching.BuildStopTurn(Graph)
-    return PoseSelectors.LeftRight(
-        Graph,
-        "CrouchingStopTurn",
-        Anim.Crouch_Idle_Left_Turn,
-        Anim.Crouch_Idle_Right_Turn,
-        "StopTurnDirection")
 end
 
 ---构建 Crouching Walk/Run Start；Sprint 由 Movement 先退出蹲姿后在 Standing 分支表现。

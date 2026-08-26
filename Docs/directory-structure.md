@@ -30,6 +30,7 @@ Sekiro/
 │   ├── SekiroAnimBlueprintExt/     Lua 动画蓝图编译与运行时插件
 │   ├── SekiroAssetManager/         Sekiro 资产导入编辑器插件
 │   ├── SekiroAIBridge/             UE 编辑器 TCP JSON-RPC 桥接
+│   ├── SekiroGameplay/             通用 Gameplay 编辑器工具与 Lua 标签 DataTable 生成
 │   ├── UnLua/                      Lua 运行时集成
 │   └── UnLuaExtensions/            LuaSocket、Protobuf、RapidJSON 扩展
 ├── Script/

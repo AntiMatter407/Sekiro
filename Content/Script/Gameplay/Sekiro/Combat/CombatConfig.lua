@@ -1,5 +1,5 @@
--- Lua 类型：纯 Lua 配置模块。本文件不绑定 UObject，集中描述攻击、防御、弹反与玩家架势数据。
--- 碰撞和伤害来源只提交裁决结果；架势数值、恢复与打崩规则统一由战斗组件 Lua 编排。
+-- Lua 类型：纯 Lua 配置模块。本文件不绑定 UObject，只描述攻击、防御与弹反动作。
+-- 躯干数值全部由 GAS 保存，增长、恢复和崩溃流程由 Survival 编排；本模块不保留躯干参数副本。
 
 local AnimAssets = require("Animation.Sekiro.AnimAssets")
 local Attack = AnimAssets.Attack
@@ -38,38 +38,6 @@ local AttackDeflected = AnimAssets.AttackDeflected
 ---@field AttackDeflectedBySide table<string, SKDeflectSideConfig> 当前提交攻击刀侧到被弹开动作及保持刀侧的映射。
 ---@field Guard table<string, string> 地面与空中防御举刀、收刀动画路径。
 ---@field GuardImpactAnimation string 普通防御命中时播放的震刀动作路径。
----@field Posture SKPostureConfig 玩家架势增加、恢复与打崩状态配置。
-
----@class SKPostureGainConfig
----@field DeflectSuccess number 弹反成功的基础架势增加值。
----@field Guarded number 普通防御的基础架势增加值。
----@field DeflectFailed number 弹反失败的基础架势增加值。
----@field AttackSuccess number 攻击成功命中时攻击者的基础架势增加值。
----@field AttackGuarded number 攻击被普通防御时攻击者的基础架势增加值。
----@field AttackDeflected number 攻击被成功弹反时攻击者的基础架势增加值。
-
----@class SKPostureRecoveryConfig
----@field Delay number 满足恢复条件后开始恢复前的延迟，单位秒。
----@field RampDuration number 从最低恢复速率提升到最高速率所需时间，单位秒。
----@field RateMin number 刚开始恢复时每秒减少的架势值。
----@field RateMax number 连续脱离战斗后每秒最多减少的架势值。
-
----@class SKPostureBreakConfig
----@field AnimationPath string 架势条满时播放的全身打崩动画路径。
----@field MinimumLockDuration number 打崩后最短不可操作时间，单位秒。
----@field BlendInTime number 打崩动画淡入时间，单位秒。
----@field BlendOutTime number 打崩动画淡出时间，单位秒。
-
----@class SKPostureConfig
----@field MaxValue number 玩家架势最大值。
----@field SuccessCapNormalized number 弹反成功允许达到的最高归一化架势。
----@field AttackCapNormalized number 攻击行为允许达到的最高归一化架势。
----@field MinGainScale number 当前架势接近满值时仍保留的最低增加倍率。
----@field GainFalloffExponent number 当前架势对增加倍率的衰减指数。
----@field Gain SKPostureGainConfig 三种防御结果的基础架势增加值。
----@field AttackStrength table<string, number> 来袭类型对应的架势强度倍率。
----@field Recovery SKPostureRecoveryConfig 非战斗状态下的渐进恢复配置。
----@field Break SKPostureBreakConfig 架势打崩动画与输入锁配置。
 
 ---@type SKCombatConfigModule
 local CombatConfig = {
@@ -81,39 +49,6 @@ local CombatConfig = {
     DefenseSide = "Left",
     DeflectSideResetDelay = 0.75,
     DefaultIncomingWindow = 0.25,
-    Posture = {
-        MaxValue = 100.0,
-        SuccessCapNormalized = 0.98,
-        AttackCapNormalized = 0.98,
-        MinGainScale = 0.35,
-        GainFalloffExponent = 1.25,
-        Gain = {
-            DeflectSuccess = 6.0,
-            Guarded = 14.0,
-            DeflectFailed = 24.0,
-            AttackSuccess = 4.0,
-            AttackGuarded = 10.0,
-            AttackDeflected = 18.0,
-        },
-        AttackStrength = {
-            Light = 1.0,
-            Heavy = 1.35,
-            Thrust = 1.5,
-            Special = 1.75,
-        },
-        Recovery = {
-            Delay = 0.75,
-            RampDuration = 4.0,
-            RateMin = 3.0,
-            RateMax = 18.0,
-        },
-        Break = {
-            AnimationPath = AnimAssets.PostureBreak.Default,
-            MinimumLockDuration = 1.5,
-            BlendInTime = 0.04,
-            BlendOutTime = 0.12,
-        },
-    },
     Guard = {
         Raise = AnimAssets.Guard.Raise,
         Lower = AnimAssets.Guard.Lower,

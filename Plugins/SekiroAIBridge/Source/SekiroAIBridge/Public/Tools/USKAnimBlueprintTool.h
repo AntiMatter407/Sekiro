@@ -51,6 +51,8 @@ private:
     FString HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleRenameNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddSlotNode(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleUpsertSkeletonSlot(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleRemoveStateMachine(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleAddCurve(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleSetAnimCurves(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleBatchTaeCurves(const TSharedPtr<FJsonObject>& Args, FString& OutError);

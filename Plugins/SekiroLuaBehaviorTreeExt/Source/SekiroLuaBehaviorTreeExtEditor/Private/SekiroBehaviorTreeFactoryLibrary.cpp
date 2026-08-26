@@ -34,6 +34,7 @@ namespace SekiroBehaviorTreeFactory
     const FName MissingAssetConfiguration(TEXT("BT.Factory.MissingAssetConfiguration"));
     const FName LuaModuleMetaKey(TEXT("SekiroLuaBehaviorTree.LuaModuleName"));
     const FName BlackboardPathMetaKey(TEXT("SekiroLuaBehaviorTree.BlackboardPackagePath"));
+    const FName SourceModeMetaKey(TEXT("SekiroLuaBehaviorTree.SourceMode"));
 
     /**
      * 追加资产生成诊断，不记录日志。
@@ -335,6 +336,247 @@ namespace SekiroBehaviorTreeFactory
         return ParentOutput && ChildInput && Schema->TryCreateConnection(ParentOutput, ChildInput);
     }
 
+    struct FSekiroBehaviorTreeLayoutNode
+    {
+        const FSekiroBehaviorTreeIRNode* Source = nullptr; // 对应的只读 IR 主节点
+        TArray<FString> ChildIds;             // 按声明顺序排列的直接子节点 ID
+        int32 AttachedNodeCount = 0;          // 挂载的 Decorator 与 Service 总数
+        int32 Depth = 0;                      // IR 根为零的主节点深度
+        double VisualWidth = 0.0;             // 主节点及附属节点估算视觉宽度
+        double VisualHeight = 0.0;            // 主节点及附属节点估算视觉高度
+        double ChildrenWidth = 0.0;           // 直接子树轮廓与间距的总宽度
+        double SubtreeWidth = 0.0;            // 当前完整子树轮廓宽度
+        double CenterX = 0.0;                 // Graph 坐标系中的节点水平中心
+    };
+
+    /**
+     * 递归计算一个 IR 子树的确定性视觉轮廓和深度。
+     * 本函数只读取已经建立的父子表，不访问 UObject；调用方必须先保证拓扑无环且父节点存在。
+     * Decorator 与 Service 只按数量扩大通用视觉占用，不检查任何具体节点类型。
+     *
+     * @param NodeId 当前子树根的稳定 IR ID。
+     * @param Depth 当前主节点深度，IR 根必须传入零。
+     * @param LayoutNodes 输入并原地更新的布局节点表；函数不保留引用。
+     * @return 当前子树轮廓宽度；节点缺失时返回负值。
+     */
+    double ComputeLayoutMetrics(
+        const FString& NodeId,
+        const int32 Depth,
+        TMap<FString, FSekiroBehaviorTreeLayoutNode>& LayoutNodes)
+    {
+        constexpr double BaseNodeWidth = 240.0;
+        constexpr double BaseNodeHeight = 120.0;
+        constexpr double AttachedWidthIncrement = 24.0;
+        constexpr double AttachedRowHeight = 42.0;
+        constexpr double SiblingSubtreeGap = 120.0;
+
+        FSekiroBehaviorTreeLayoutNode* LayoutNode = LayoutNodes.Find(NodeId);
+        if (!LayoutNode) return -1.0;
+
+        LayoutNode->Depth = Depth;
+        LayoutNode->VisualWidth = BaseNodeWidth
+            + LayoutNode->AttachedNodeCount * AttachedWidthIncrement;
+        LayoutNode->VisualHeight = BaseNodeHeight
+            + LayoutNode->AttachedNodeCount * AttachedRowHeight;
+        LayoutNode->ChildrenWidth = 0.0;
+        for (int32 ChildIndex = 0; ChildIndex < LayoutNode->ChildIds.Num(); ++ChildIndex)
+        {
+            const double ChildWidth = ComputeLayoutMetrics(
+                LayoutNode->ChildIds[ChildIndex],
+                Depth + 1,
+                LayoutNodes);
+            if (ChildWidth < 0.0) return -1.0;
+            if (ChildIndex > 0) LayoutNode->ChildrenWidth += SiblingSubtreeGap;
+            LayoutNode->ChildrenWidth += ChildWidth;
+        }
+        LayoutNode->SubtreeWidth = FMath::Max(
+            LayoutNode->VisualWidth,
+            LayoutNode->ChildrenWidth);
+        return LayoutNode->SubtreeWidth;
+    }
+
+    /**
+     * 在已计算轮廓宽度的子树内递归分配水平中心坐标。
+     * 直接子树整体居中放入父轮廓，父节点位于该水平范围中心；兄弟轮廓之间保留固定空隙。
+     * 本函数只修改临时布局数据，可从任意线程调用。
+     *
+     * @param NodeId 当前子树根的稳定 IR ID。
+     * @param SubtreeLeft 当前子树轮廓左边界的 Graph X 坐标。
+     * @param LayoutNodes 输入并原地更新的布局节点表。
+     * @return 当前节点及全部后代完成分配时返回 true；节点缺失时返回 false。
+     */
+    bool AssignLayoutHorizontalPositions(
+        const FString& NodeId,
+        const double SubtreeLeft,
+        TMap<FString, FSekiroBehaviorTreeLayoutNode>& LayoutNodes)
+    {
+        constexpr double SiblingSubtreeGap = 120.0;
+
+        FSekiroBehaviorTreeLayoutNode* LayoutNode = LayoutNodes.Find(NodeId);
+        if (!LayoutNode) return false;
+        LayoutNode->CenterX = SubtreeLeft + LayoutNode->SubtreeWidth * 0.5;
+
+        double ChildLeft = SubtreeLeft
+            + (LayoutNode->SubtreeWidth - LayoutNode->ChildrenWidth) * 0.5;
+        for (const FString& ChildId : LayoutNode->ChildIds)
+        {
+            FSekiroBehaviorTreeLayoutNode* ChildLayout = LayoutNodes.Find(ChildId);
+            if (!ChildLayout
+                || !AssignLayoutHorizontalPositions(
+                    ChildId,
+                    ChildLeft,
+                    LayoutNodes))
+            {
+                return false;
+            }
+            ChildLeft += ChildLayout->SubtreeWidth + SiblingSubtreeGap;
+        }
+        return true;
+    }
+
+    /**
+     * 根据 IR 父子拓扑、声明顺序和附属节点数量生成确定性的 Graph 坐标。
+     * 主节点按深度分层，父节点居中于直接子树轮廓，叶节点不按运行时类型特殊处理。
+     * 本函数是纯 C++ 布局步骤，不创建或修改 UObject，可从任意线程调用。
+     *
+     * @param IR 已通过结构校验的行为树 IR。
+     * @param OutNodePositions 接收每个主节点左上角 Graph 坐标；函数开始时重置。
+     * @param OutVirtualRootPosition 接收编辑器虚拟 Root 左上角 Graph 坐标。
+     * @return 拓扑完整且全部节点完成布局时返回 true，否则清空输出并返回 false。
+     */
+    bool BuildDeterministicLayout(
+        const FSekiroBehaviorTreeIR& IR,
+        TMap<FString, FIntPoint>& OutNodePositions,
+        FIntPoint& OutVirtualRootPosition)
+    {
+        constexpr double FirstMainLayerY = 220.0;
+        constexpr double LayerGap = 140.0;
+        constexpr double VirtualRootWidth = 200.0;
+
+        OutNodePositions.Reset();
+        OutVirtualRootPosition = FIntPoint::ZeroValue;
+        TMap<FString, FSekiroBehaviorTreeLayoutNode> LayoutNodes;
+        for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
+        {
+            FSekiroBehaviorTreeLayoutNode& LayoutNode = LayoutNodes.Add(Node.Id);
+            LayoutNode.Source = &Node;
+        }
+        for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
+        {
+            if (Node.Id == IR.RootNodeId) continue;
+            FSekiroBehaviorTreeLayoutNode* ParentLayout = LayoutNodes.Find(Node.ParentId);
+            if (!ParentLayout)
+            {
+                OutNodePositions.Reset();
+                return false;
+            }
+            ParentLayout->ChildIds.Add(Node.Id);
+        }
+        for (const FSekiroBehaviorTreeIRNode& Decorator : IR.Decorators)
+        {
+            FSekiroBehaviorTreeLayoutNode* ParentLayout =
+                LayoutNodes.Find(Decorator.ParentId);
+            if (ParentLayout) ++ParentLayout->AttachedNodeCount;
+        }
+        for (const FSekiroBehaviorTreeIRNode& Service : IR.Services)
+        {
+            FSekiroBehaviorTreeLayoutNode* ParentLayout =
+                LayoutNodes.Find(Service.ParentId);
+            if (ParentLayout) ++ParentLayout->AttachedNodeCount;
+        }
+        for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
+        {
+            FSekiroBehaviorTreeLayoutNode* LayoutNode = LayoutNodes.Find(Node.Id);
+            if (!LayoutNode) continue;
+            LayoutNode->ChildIds.Sort(
+                [&LayoutNodes](const FString& LeftId, const FString& RightId)
+                {
+                    const FSekiroBehaviorTreeLayoutNode* Left =
+                        LayoutNodes.Find(LeftId);
+                    const FSekiroBehaviorTreeLayoutNode* Right =
+                        LayoutNodes.Find(RightId);
+                    if (!Left || !Left->Source) return false;
+                    if (!Right || !Right->Source) return true;
+                    if (Left->Source->DeclarationOrder
+                        != Right->Source->DeclarationOrder)
+                    {
+                        return Left->Source->DeclarationOrder
+                            < Right->Source->DeclarationOrder;
+                    }
+                    return LeftId < RightId;
+                });
+        }
+
+        const double RootSubtreeWidth = ComputeLayoutMetrics(
+            IR.RootNodeId,
+            0,
+            LayoutNodes);
+        if (RootSubtreeWidth < 0.0
+            || !AssignLayoutHorizontalPositions(
+                IR.RootNodeId,
+                RootSubtreeWidth * -0.5,
+                LayoutNodes))
+        {
+            OutNodePositions.Reset();
+            return false;
+        }
+
+        int32 MaximumDepth = 0;
+        for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
+        {
+            const FSekiroBehaviorTreeLayoutNode* LayoutNode =
+                LayoutNodes.Find(Node.Id);
+            if (LayoutNode) MaximumDepth = FMath::Max(MaximumDepth, LayoutNode->Depth);
+        }
+        TArray<double> LayerHeights;
+        LayerHeights.Init(0.0, MaximumDepth + 1);
+        for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
+        {
+            const FSekiroBehaviorTreeLayoutNode* LayoutNode =
+                LayoutNodes.Find(Node.Id);
+            if (!LayoutNode) continue;
+            LayerHeights[LayoutNode->Depth] = FMath::Max(
+                LayerHeights[LayoutNode->Depth],
+                LayoutNode->VisualHeight);
+        }
+        TArray<double> LayerY;
+        LayerY.Init(FirstMainLayerY, MaximumDepth + 1);
+        for (int32 Depth = 1; Depth <= MaximumDepth; ++Depth)
+        {
+            LayerY[Depth] = LayerY[Depth - 1]
+                + LayerHeights[Depth - 1]
+                + LayerGap;
+        }
+
+        for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
+        {
+            const FSekiroBehaviorTreeLayoutNode* LayoutNode =
+                LayoutNodes.Find(Node.Id);
+            if (!LayoutNode)
+            {
+                OutNodePositions.Reset();
+                return false;
+            }
+            OutNodePositions.Add(
+                Node.Id,
+                FIntPoint(
+                    FMath::RoundToInt(
+                        LayoutNode->CenterX - LayoutNode->VisualWidth * 0.5),
+                    FMath::RoundToInt(LayerY[LayoutNode->Depth])));
+        }
+        const FSekiroBehaviorTreeLayoutNode* RootLayout =
+            LayoutNodes.Find(IR.RootNodeId);
+        if (!RootLayout)
+        {
+            OutNodePositions.Reset();
+            return false;
+        }
+        OutVirtualRootPosition = FIntPoint(
+            FMath::RoundToInt(RootLayout->CenterX - VirtualRootWidth * 0.5),
+            0);
+        return true;
+    }
+
     /**
      * 从 IR 重建可在 BehaviorTreeEditor 打开的 Graph，并由 UBehaviorTreeGraph::UpdateAsset 生成运行时拓扑。
      *
@@ -397,6 +639,20 @@ namespace SekiroBehaviorTreeFactory
         if (BlackboardProperty)
             BlackboardProperty->SetObjectPropertyValue_InContainer(RootGraphNode, Blackboard);
 
+        TMap<FString, FIntPoint> NodePositions;
+        FIntPoint VirtualRootPosition;
+        if (!BuildDeterministicLayout(IR, NodePositions, VirtualRootPosition))
+        {
+            AddError(
+                Diagnostics,
+                ObjectCreationFailed,
+                TEXT("无法为行为树生成确定性布局。"),
+                IR.RootNodeId);
+            return false;
+        }
+        RootGraphNode->NodePosX = VirtualRootPosition.X;
+        RootGraphNode->NodePosY = VirtualRootPosition.Y;
+
         TArray<const FSekiroBehaviorTreeIRNode*> SortedNodes;
         for (const FSekiroBehaviorTreeIRNode& Node : IR.Nodes)
             SortedNodes.Add(&Node);
@@ -407,7 +663,6 @@ namespace SekiroBehaviorTreeFactory
         });
 
         TMap<FString, UAIGraphNode*> GraphNodesById;
-        int32 NodeRow = 0;
         for (const FSekiroBehaviorTreeIRNode* Node : SortedNodes)
         {
             UClass* NodeClass = Node->ClassPath.TryLoadClass<UBTNode>();
@@ -421,11 +676,12 @@ namespace SekiroBehaviorTreeFactory
             if (!FSekiroBehaviorTreeReflectionWriter::ApplyProperties(NodeInstance, Node->Properties, IR.Values, Node->SourceLocation, Diagnostics))
                 return false;
             GraphNode->NodeInstance = NodeInstance;
-            GraphNode->NodePosX = Node->Id == IR.RootNodeId ? 0 : NodeRow * 320;
-            GraphNode->NodePosY = Node->Id == IR.RootNodeId ? 180 : 420;
+            const FIntPoint* NodePosition = NodePositions.Find(Node->Id);
+            if (!NodePosition) return false;
+            GraphNode->NodePosX = NodePosition->X;
+            GraphNode->NodePosY = NodePosition->Y;
             AddGraphNode(Graph, GraphNode);
             GraphNodesById.Add(Node->Id, GraphNode);
-            ++NodeRow;
         }
 
         for (const FSekiroBehaviorTreeIRNode& Decorator : IR.Decorators)
@@ -545,7 +801,13 @@ bool USekiroBehaviorTreeFactoryLibrary::GenerateFromLua(
     TArray<FSekiroBehaviorTreeDiagnostic>& OutDiagnostics)
 {
     FSekiroBehaviorTreeIR IR;
-    if (!USekiroBehaviorTreeIRLibrary::CompileLuaModule(LuaModuleName, IR, OutDiagnostics)) return false;
+    if (!USekiroBehaviorTreeIRLibrary::CompileLuaModuleFresh(
+            LuaModuleName,
+            IR,
+            OutDiagnostics))
+    {
+        return false;
+    }
     return GenerateFromIR(
         IR,
         BlackboardPackagePath,
@@ -645,6 +907,13 @@ bool USekiroBehaviorTreeFactoryLibrary::GetLuaAssetConfiguration(
         MetaData->GetValue(BehaviorTree, LuaModuleMetaKey);
     OutConfiguration.BlackboardPackagePath =
         MetaData->GetValue(BehaviorTree, BlackboardPathMetaKey);
+    const FString SourceModeValue =
+        MetaData->GetValue(BehaviorTree, SourceModeMetaKey);
+    OutConfiguration.SourceMode = SourceModeValue.Equals(
+        TEXT("Lua"),
+        ESearchCase::IgnoreCase)
+        ? ESekiroLuaBehaviorTreeSourceMode::Lua
+        : ESekiroLuaBehaviorTreeSourceMode::BehaviorTree;
     return true;
 }
 
@@ -676,6 +945,12 @@ bool USekiroBehaviorTreeFactoryLibrary::SetLuaAssetConfiguration(
         BehaviorTree,
         BlackboardPathMetaKey,
         *Configuration.BlackboardPackagePath);
+    MetaData->SetValue(
+        BehaviorTree,
+        SourceModeMetaKey,
+        Configuration.SourceMode == ESekiroLuaBehaviorTreeSourceMode::Lua
+            ? TEXT("Lua")
+            : TEXT("BehaviorTree"));
     Package->MarkPackageDirty();
     return true;
 }
@@ -730,8 +1005,10 @@ bool USekiroBehaviorTreeFactoryLibrary::CheckConfiguredBehaviorTree(
             BehaviorTree ? BehaviorTree->GetPathName() : TEXT("None"));
         return false;
     }
-    return CheckLuaBehaviorTree(
+    FSekiroBehaviorTreeIR IR;
+    return USekiroBehaviorTreeIRLibrary::CompileLuaModuleFresh(
         Configuration.LuaModuleName,
+        IR,
         OutDiagnostics);
 }
 
@@ -794,6 +1071,7 @@ bool USekiroBehaviorTreeFactoryLibrary::GenerateConfiguredBehaviorTree(
     }
 
     Configuration.BlackboardPackagePath = BlackboardPackagePath;
+    Configuration.SourceMode = ESekiroLuaBehaviorTreeSourceMode::Lua;
     if (!SetLuaAssetConfiguration(OutGeneratedBehaviorTree, Configuration))
     {
         AddError(

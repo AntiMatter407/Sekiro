@@ -24,6 +24,18 @@ enum class ESekiroLuaAnimBlueprintSourceMode : uint8
     Lua UMETA(DisplayName = "Lua"),
 };
 
+/** AnimBlueprint Graph 与 Lua 交换模块相对最近成功同步点的状态。 */
+UENUM(BlueprintType)
+enum class ESekiroLuaAnimBlueprintSyncStatus : uint8
+{
+    NeverSynchronized,
+    InSync,
+    BlueprintChanged,
+    LuaChanged,
+    BothChanged,
+    Error,
+};
+
 /** 保存标准 UAnimBlueprint 对应的 Lua 源模块和编辑器编译元数据。 */
 UCLASS(BlueprintType)
 class SEKIROANIMBLUEPRINTEXTEDITOR_API USekiroLuaAnimBlueprintExtension : public UBlueprintExtension
@@ -31,16 +43,19 @@ class SEKIROANIMBLUEPRINTEXTEDITOR_API USekiroLuaAnimBlueprintExtension : public
     GENERATED_BODY()
 
 public:
-    /** 当前原生图生成器版本；变更时已加载旧资产会在 PIE 前重新编译。 */
-    static constexpr int32 CurrentCompilerVersion = 2;
+    /** 当前原生图生成器版本；用于显式 Lua → AnimBlueprint 同步时识别旧资产。 */
+    static constexpr int32 CurrentCompilerVersion = 3;
 
     // ── 资产身份 ──────────────────────────────────────────────────────────────
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
     FString LuaModuleName; // Lua 动画蓝图模块名，不是文件系统路径
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
+    FString GeneratedLuaModuleName; // 独立交换模块名；为空时兼容读取 LuaModuleName
+
+    UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "SourceMode is retained only for old asset serialization and no longer affects Compile/F7 or Lua synchronization."))
     ESekiroLuaAnimBlueprintSourceMode SourceMode =
-        ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint; // 普通 Compile/F7 使用的源码模式
+        ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint; // 仅供旧资产反序列化兼容，任何行为不再读取
 
     // ── 编译状态 ──────────────────────────────────────────────────────────────
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint")
@@ -77,6 +92,23 @@ public:
     UPROPERTY()
     TArray<FName> GeneratedVariableNames; // 当前 AnimGraph 中由 Lua 生成器拥有的成员变量名
 
+    UPROPERTY()
+    FSekiroAnimBlueprintIR LastGeneratedIR; // 最近一次实际写入原生 Graph 的 IR，用作增量合并所有权基线
+
+    UPROPERTY()
+    bool bHasLastGeneratedIR = false; // 是否已有可跨编辑器会话使用的 Lua 生成所有权基线
+
+    // ── 双向同步状态 ──────────────────────────────────────────────────────────
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint|Synchronization")
+    ESekiroLuaAnimBlueprintSyncStatus SyncStatus =
+        ESekiroLuaAnimBlueprintSyncStatus::NeverSynchronized; // 当前 Graph/Lua 相对最近同步点的状态
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint|Synchronization")
+    FString LastSynchronizedBlueprintHash; // 最近成功同步后的 Blueprint Canonical IR 哈希
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lua Anim Blueprint|Synchronization")
+    FString LastSynchronizedLuaHash; // 最近成功同步后的 Lua Canonical IR 哈希
+
     /** 查找资产已有的 Lua 动画蓝图扩展。 */
     static USekiroLuaAnimBlueprintExtension* Find(const UAnimBlueprint* AnimBlueprint);
 
@@ -88,11 +120,8 @@ public:
     /** 获取或创建资产唯一的 Lua 动画蓝图扩展。 */
     static USekiroLuaAnimBlueprintExtension* Request(UAnimBlueprint* AnimBlueprint);
 
-    /** 缓存一次成功的 Lua 检查结果。 */
-    void MarkCheckSucceeded(const FSekiroAnimBlueprintIR& CheckedIR);
-
-    /** 记录一次 Lua 检查失败。 */
-    void MarkCheckFailed(const FString& Message);
+    /** 返回交换模块名；旧资产没有独立字段时回退到运行时模块名。 */
+    FString GetExchangeLuaModuleName() const;
 
     /** 记录一次成功的 Lua 模式原生编译。 */
     void MarkCompileSucceeded();
@@ -102,5 +131,17 @@ public:
 
     /** 记录 Lua 源发生变化并保持现有生成类可运行。 */
     void MarkSourceDirty(const FString& Message);
+
+    /** 记录文件监听观察到 Lua 改变，不读取源码或触发导入。 */
+    void MarkLuaChanged(const FString& Message);
+
+    /** 保存一次成功双向同步的两个 Canonical IR 哈希。 */
+    void MarkSynchronized(const FString& BlueprintHash, const FString& LuaHash);
+
+    /** 缓存一次成功的 Lua 检查结果。 */
+    void MarkCheckSucceeded(const FSekiroAnimBlueprintIR& CheckedIR);
+
+    /** 记录一次 Lua 检查失败。 */
+    void MarkCheckFailed(const FString& Message);
 
 };

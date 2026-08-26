@@ -228,14 +228,14 @@ TAE JSON (28MB, 2209动画, 21148个JT事件)
   FSAAnimLogicImportResult (IR 中间表示)
         │  - CancelWindows 从 JT=25/26/115/117/118 提取
         │  - AttackHitboxes 从 Type=1 提取
-        │  - FrameFlags 从 JT=7/51/119/133/... 提取
+        │  - DisableTurning 从 JT=7 提取，AttackTurnSpeed 从 Type=224 提取
         │
         ▼  FSATAELogicBuilder::BuildDataAsset()
         │
   USKAnimationLogicData (DataAsset, .uasset)
         │  - CancelRules: AnimID → [FSKCancelRule]
         │  - AttackHitboxConfigs
-        │  - AnimFrameFlags
+        │  - 独立语义曲线（不再新增 AnimFrameFlags 位掩码）
         │  - CategoryAnimMap
         │
         ▼  运行时
@@ -249,7 +249,7 @@ TAE JSON (28MB, 2209动画, 21148个JT事件)
 ```
 每帧 Tick:
   1. UpdateFrameState()     — 更新当前动画帧/时间
-  2. ApplyFrameFlags()      — 从 DataAsset 读取帧级标志（禁用转向/弹刀等）
+  2. SampleSemanticCurves() — 按名称读取 DisableTurning、AttackTurnSpeed 等独立语义
   3. UpdateAttackHitbox()   — 从 DataAsset 读取攻击框帧数据，激活/关闭武器碰撞体
   4. ProcessIntents()       — 按 Priority 降序遍历，用 CanCancelTo 逐项判定
   5. ProcessLocomotion()    — 移动层处理

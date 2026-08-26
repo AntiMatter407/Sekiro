@@ -220,6 +220,19 @@ Native 模式保留捕获到的 UE 原生 `FUIAction`，不会运行 Lua 或修�
 
 Graph 提交前完成 Lua、IR 和资源预检；实际提交位于编辑器事务内。AnimGraph、EventGraph 或 Root 缺失时按 UE 原生 Schema 重建外壳，物化失败则撤销事务，因此失败 Lua 不会破坏当前可用 Graph。旧的 `HandlePreloadObjectsForCompilation` 隐式方案不再使用。
 
+## IR 反向写回 Lua
+
+`FSekiroAnimGraphIRLuaWriter` 将 Reader 产生的 IR 先经 `Canonicalize + Validate`，再按 USTRUCT 字段声明顺序写为可读的纯 IR table。数组顺序由 Canonical IR 确定，字符串使用 Lua 双引号转义，整数、双精度浮点、所有 `IRValue` 联合字段、Transition Gate 与 `Layout.Positions` 均完整保留。模块只公开 `CompileIR()`，并通过 `IR.SourceModule` 继承原运行时模块的 Transition Rule；因此交换模块不会取代 EventGraph `BlueprintUpdateAnimation` 桥接使用的原模块。
+
+`AnimBlueprintToLua` 固定写入 `<LuaModuleName>.generated.lua`，手写 `<LuaModuleName>.lua` 从不是写目标。模块名必须由 ASCII 字母、数字和下划线组成的点分段，拒绝绝对路径、分隔符、空分段、`..` 和 ScriptRoot 越界。安全提交流程为：
+
+1. Reader 读取当前标准 `UAnimBlueprint`，Writer 仅在内存生成文本。
+2. 写入 ScriptRoot 内同目录唯一临时模块，强制 UTF-8 无 BOM。
+3. 用现有 `CompileLuaModule` 回读临时模块，并比较两份 Canonical IR。
+4. 仅当回读完全相等时替换 `.generated.lua`；旧目标默认保留一份 `.bak`，任何失败都恢复旧文件。
+
+`USekiroLuaAnimBlueprintExtension.GeneratedLuaModuleName` 仅表示编辑器交换源。`Check Lua` 和 Lua → AnimBlueprint 优先读它，空值时回退到旧资产的 `LuaModuleName`；运行时 Bridge 始终使用 IR 内的 `SourceModule`。本阶段不增加工具栏、自动 Hash 或隐式覆盖行为。
+
 ## 后续阶段
 
 1. Lua DSL 始终只转换为 IR，不直接调用编辑器 UObject。

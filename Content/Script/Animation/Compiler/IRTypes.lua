@@ -36,9 +36,15 @@
 ---@field LayoutStyle SekiroAnimIRLayoutStyle 分区风格覆盖。
 ---@field Items SekiroAnimIRLayoutItem[] 显式放置元素。
 
+---@class SekiroAnimIRLayoutPosition
+---@field ElementId string 当前 Graph 内节点或状态的稳定 ID。
+---@field X number UE Graph 画布横向像素整数坐标。
+---@field Y number UE Graph 画布纵向像素整数坐标。
+
 ---@class SekiroAnimIRGraphLayout
 ---@field Style SekiroAnimIRLayoutStyle Graph 中未显式放置元素的自动布局风格。
 ---@field Grids SekiroAnimIRLayoutGrid[] 显式布局分区。
+---@field Positions SekiroAnimIRLayoutPosition[] 优先于 Grid 和自动布局的精确像素坐标。
 
 ---@class SekiroAnimIRSourceLocation
 ---@field LuaModule string 声明来源的 Lua 模块名。

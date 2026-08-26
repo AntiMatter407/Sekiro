@@ -75,8 +75,31 @@ public:
     /** 将全部已加载 Lua AnimBlueprint 标记为源已过期，不执行编译。 */
     static int32 MarkLoadedLuaAnimBlueprintsDirty(const FString& Reason);
 
-    /** HotReload 后原地编译全部已加载且 Dirty 的 Lua AnimBlueprint。 */
-    static bool CompileDirtyLoadedLuaAnimBlueprints(
-        bool bSavePackages,
+    /** 只读地将现有标准 AnimBlueprint 转换为完整、规范化 IR。 */
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation|Factory")
+    static bool ReadAnimBlueprintToIR(
+        const UAnimBlueprint* AnimBlueprint,
+        FSekiroAnimBlueprintIR& OutBlueprint,
         TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics);
+
+    /** 计算包含 Layout Positions 的 Canonical IR 稳定哈希。 */
+    static bool ComputeCanonicalIRHash(
+        const FSekiroAnimBlueprintIR& Blueprint,
+        FString& OutHash,
+        TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics);
+
+    /** 只读读取 Graph 与 Lua IR 并刷新同步状态，不修改 Graph 或文件。 */
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation|Factory")
+    static bool RefreshLuaAnimBlueprintSyncStatus(
+        UAnimBlueprint* AnimBlueprint,
+        TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics);
+
+    /** 将标准 AnimBlueprint 安全写为独立 generated Lua 交换模块。 */
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation|Factory")
+    static bool AnimBlueprintToLua(
+        UAnimBlueprint* AnimBlueprint,
+        FString& OutGeneratedModuleName,
+        TArray<FSekiroAnimIRDiagnostic>& OutDiagnostics,
+        bool bKeepBackup = true);
+
 };

@@ -418,6 +418,22 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRLayoutGrid
     TArray<FSekiroAnimIRLayoutItem> Items; // 显式放置元素
 };
 
+/** Graph 元素在 UE 画布上的精确像素坐标。 */
+USTRUCT(BlueprintType)
+struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRLayoutPosition
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    FString ElementId;                    // 当前 Graph 内节点或状态 ID
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 X = 0;                          // UE Graph 画布横坐标
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    int32 Y = 0;                          // UE Graph 画布纵坐标
+};
+
 /** Graph 级编辑器布局元数据。 */
 USTRUCT(BlueprintType)
 struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRGraphLayout
@@ -425,10 +441,13 @@ struct SEKIROANIMBLUEPRINTEXTEDITOR_API FSekiroAnimIRGraphLayout
     GENERATED_BODY()
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
-    ESekiroAnimIRLayoutStyle Style = ESekiroAnimIRLayoutStyle::HierarchicalBlocks; // 未显式放置元素的自动风格
+    ESekiroAnimIRLayoutStyle Style = ESekiroAnimIRLayoutStyle::Auto; // 未显式放置元素的自动风格
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
     TArray<FSekiroAnimIRLayoutGrid> Grids; // 显式布局分区
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anim Graph IR")
+    TArray<FSekiroAnimIRLayoutPosition> Positions; // 优先于 Grid 和自动布局的精确像素坐标
 };
 
 /** 单个动画 Graph。GraphType 是注册名，不绑定 UAnimGraphNode 类型。 */

@@ -4,8 +4,61 @@
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "SekiroLuaAnimBlueprintExtension.h"
+#include "UObject/Package.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroLuaAnimBlueprintSyncStatusTransitionTest,
+    "Sekiro.AnimGraphIR.Sync.StatusTransitions",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证同步基线、Lua 文件变化以及两侧冲突的纯状态迁移；不创建 Graph、文件或 PIE 世界。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成全部断言收集。
+ */
+bool FSekiroLuaAnimBlueprintSyncStatusTransitionTest::RunTest(
+    const FString& Parameters)
+{
+    USekiroLuaAnimBlueprintExtension* Extension =
+        NewObject<USekiroLuaAnimBlueprintExtension>(GetTransientPackage());
+    TestNotNull(TEXT("Transient sync extension is created"), Extension);
+    if (Extension == nullptr) return true;
+
+    TestEqual(
+        TEXT("New extension has never synchronized"),
+        Extension->SyncStatus,
+        ESekiroLuaAnimBlueprintSyncStatus::NeverSynchronized);
+    Extension->MarkSynchronized(TEXT("BlueprintHash"), TEXT("LuaHash"));
+    TestEqual(
+        TEXT("Successful synchronization records InSync"),
+        Extension->SyncStatus,
+        ESekiroLuaAnimBlueprintSyncStatus::InSync);
+    TestEqual(
+        TEXT("Blueprint baseline hash is recorded"),
+        Extension->LastSynchronizedBlueprintHash,
+        FString(TEXT("BlueprintHash")));
+    TestEqual(
+        TEXT("Lua baseline hash is recorded"),
+        Extension->LastSynchronizedLuaHash,
+        FString(TEXT("LuaHash")));
+
+    Extension->MarkLuaChanged(TEXT("Watcher observed Lua change."));
+    TestEqual(
+        TEXT("Watcher marks only Lua changed"),
+        Extension->SyncStatus,
+        ESekiroLuaAnimBlueprintSyncStatus::LuaChanged);
+    Extension->SyncStatus = ESekiroLuaAnimBlueprintSyncStatus::BlueprintChanged;
+    Extension->MarkLuaChanged(TEXT("Watcher observed a second Lua change."));
+    TestEqual(
+        TEXT("Lua change after Blueprint change becomes BothChanged"),
+        Extension->SyncStatus,
+        ESekiroLuaAnimBlueprintSyncStatus::BothChanged);
+    return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
     FSekiroLuaAnimBlueprintAutoCompileSchedulerTest,

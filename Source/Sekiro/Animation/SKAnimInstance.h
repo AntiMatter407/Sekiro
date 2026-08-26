@@ -55,6 +55,9 @@ public:
     ESKAnimMovementState MovementState = ESKAnimMovementState::Grounded; // 动画运动大状态（地面/空中/蹲姿）
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    ESKAnimMovementAction MovementAction = ESKAnimMovementAction::None; // 当前互斥移动动作（无/垫步/闪避）
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     ESKAnimRotationMode RotationMode = ESKAnimRotationMode::VelocityDirection; // 动画旋转模式（非锁定/锁定/冲刺对齐）
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
@@ -75,11 +78,23 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     FVector Velocity = FVector::ZeroVector;       // 当前世界速度
 
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    FVector SmoothedVelocity = FVector::ZeroVector; // 平滑后的世界速度，仅供动画方向和倾斜计算
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    FVector LocalVelocity = FVector::ZeroVector;  // 角色局部空间速度
+
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Jump")
     float VerticalVelocity = 0.f;                 // 当前垂直速度，供动画图判断起跳阶段和落地强度
 
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Jump")
+    float FallSpeed = 0.f;                        // 向下速度绝对值（cm/s，上升或接地时为 0）
+
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     FVector Acceleration = FVector::ZeroVector;   // 当前世界加速度
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    FVector LocalAcceleration = FVector::ZeroVector; // 角色局部空间加速度
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     float AccelerationAmount = 0.f;               // 当前水平加速度大小
@@ -97,7 +112,22 @@ public:
     float AimYawDelta = 0.f;                      // 控制器朝向相对角色朝向的 Yaw 差
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
-    float RootYawOffset = 0.f;                    // RootYawOffset 预留值（后续接 TurnInPlace/Orientation Warping）
+    float AimPitch = 0.f;                         // 归一化控制器 Pitch（-180 到 180）
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    float AimYawRate = 0.f;                       // 控制器每秒 Yaw 变化速率（度/秒）
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    float RootYawOffset = 0.f;                    // 锁定待机时由身体吸收的视角 Yaw 偏差
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    FVector2D GroundedLeanAmount = FVector2D::ZeroVector; // 地面横向/前向加速度归一化倾斜参数
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
+    FVector2D InAirLeanAmount = FVector2D::ZeroVector; // 空中横向/前向速度归一化倾斜参数
+
+    UPROPERTY(BlueprintReadOnly, Category = "Locomotion|Jump")
+    float LandPredictionAmount = 0.f;             // 预测即将接地的归一化权重（0-1）
 
     UPROPERTY(BlueprintReadOnly, Category = "Locomotion|ALS")
     float DirectionDelta = 0.f;                   // 新输入方向相对当前速度方向的角度差
@@ -185,12 +215,10 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Dodge")
     float DodgeDirectionLateral = 0.f;           // 闪避横向输入分量，负数为左、正数为右
 
-    // ── 输入意图（Blueprint 读取） ─────────────────────────────
-
-    UPROPERTY(BlueprintReadOnly, Category = "Input")
-    FName InputIntent;                           // 预留的离散输入意图名称，当前未在本类中赋值
-
     // ── Combat（Blueprint 读取） ──────────────────────────────
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|ALS")
+    ESKAnimOverlayState OverlayState = ESKAnimOverlayState::Default; // 当前 ALS V4 风格姿态覆盖层
 
     UPROPERTY(BlueprintReadOnly, Category = "Combat")
     ESKCombatActionState CombatActionState = ESKCombatActionState::Neutral; // 当前战斗动作状态
@@ -223,6 +251,24 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true"))
     float RotationModeTurnDuration = 0.22f;       // 锁定/非锁定切换转向过渡保持时间
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+    float VelocitySmoothingInterpSpeed = 8.f;     // 动画速度快照插值速度
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+    float LeanInterpSpeed = 6.f;                  // 地面与空中 Lean 参数插值速度
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0"))
+    float RootYawOffsetLimit = 180.f;             // 锁定待机允许积累的最大根骨 Yaw 偏差
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+    float RootYawOffsetInterpSpeed = 12.f;        // RootYawOffset 进入和回零插值速度
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+    float LandPredictionMinFallSpeed = 200.f;     // 开始预测落地的最小向下速度（cm/s）
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Locomotion|Tuning", meta = (AllowPrivateAccess = "true", ClampMin = "0.05"))
+    float LandPredictionMaxTime = 1.5f;           // 抛物线落地预测的最大模拟时长（秒）
+
     UPROPERTY()
     TObjectPtr<ASKCharacter> OwnerCharacter;      // 当前动画实例所属的 Sekiro 角色
 
@@ -239,4 +285,6 @@ protected:
     TObjectPtr<USKCombatComponent> OwnerCombatComponent; // 所属角色的战斗动作宿主
 
     float RotationModeTurnTimeRemaining = 0.f;    // 锁定/非锁定切换转向过渡剩余时间
+    float PreviousControlYaw = 0.f;               // 上一帧控制器世界 Yaw
+    uint32 bHasPreviousControlYaw : 1;             // 是否已经采集过可用于计算 AimYawRate 的控制器 Yaw
 };

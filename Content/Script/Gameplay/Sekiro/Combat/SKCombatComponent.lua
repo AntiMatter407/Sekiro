@@ -1,5 +1,5 @@
 -- Lua 类型：UnLua UObject 运行时类。self 是真实的 USKCombatComponent。
--- 负责攻击、防御、弹反与玩家架势编排；碰撞和伤害来源只提交裁决结果，不直接修改架势。
+-- 负责攻击、防御、弹反裁决及通用动作；躯干数值、恢复与崩溃流程由 Survival 统一处理。
 
 local CombatConfig = require("Gameplay.Sekiro.Combat.CombatConfig")
 local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
@@ -31,8 +31,6 @@ local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 ---@field DeflectSideResetRemaining number 弹反成功后的刀侧回默认倒计时，单位秒。
 ---@field LastDeflectType string|nil 上一次弹反类型。
 ---@field DeflectStage number 当前同类型弹反段数。
----@field PostureRecoveryEligibleTime number 连续满足架势恢复条件的时间，单位秒。
----@field PostureBrokenElapsedTime number 当前架势打崩输入锁已经持续的时间，单位秒。
 ---@field bWeaponHitboxActive boolean Lua 最近一次成功提交的武器攻击碰撞状态。
 
 ---@class SKCombatComponent: USKCombatComponent
@@ -40,16 +38,6 @@ local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 local SKCombatComponent = UnLua.Class()
 
 local CurveThreshold = 0.5
-local PostureBrokenInputLockReason = "PostureBroken"
-
----把数值限制在闭区间内，避免调参或异常外部输入把架势公式推离有效范围。
----@param value number 待限制的数值。
----@param minimum number 闭区间最小值。
----@param maximum number 闭区间最大值。
----@return number clamped 限制后的数值。
-local function clamp(value, minimum, maximum)
-    return math.max(minimum, math.min(value, maximum))
-end
 
 ---把 C++ 攻击侧枚举转换为 Lua 稳定名称。
 ---@param side userdata|number ESKAttackSide 枚举值。
@@ -116,8 +104,6 @@ local function create_runtime(initial_side)
         DeflectSideResetRemaining = -1.0,
         LastDeflectType = nil,
         DeflectStage = 0,
-        PostureRecoveryEligibleTime = 0.0,
-        PostureBrokenElapsedTime = 0.0,
         bWeaponHitboxActive = false,
     }
 end
@@ -199,8 +185,8 @@ function SKCombatComponent:ResetAttackRetention(clear_pending)
     self:SetCommittedAttackSide(name_to_side(default_side))
 end
 
----组件开始运行时恢复中立状态和默认右侧刀位。
----@return nil result 状态直接写入 C++ 战斗宿主。
+---组件开始运行时恢复中立动作与刀侧；属性初始化和生命周期锁由 Survival 独立管理。
+---@return nil result 仅初始化动作宿主，不写生命或躯干状态。
 function SKCombatComponent:ReceiveBeginPlay()
     if self.Runtime == nil then
         self:Initialize(nil)
@@ -209,121 +195,42 @@ function SKCombatComponent:ReceiveBeginPlay()
     self:ClearCombatPosture()
     local default_side = self:SetRestingSide(CombatConfig.DefaultSide)
     self:SetCommittedAttackSide(name_to_side(default_side))
-    self:SetMaxPosture(CombatConfig.Posture.MaxValue)
-    self:ResetPosture()
-    self:SetPostureBroken(false)
-    self:SetOwnerExternalInputLock(PostureBrokenInputLockReason, false)
     self:DeactivateOwnerWeaponHitbox()
     self.Runtime.bWeaponHitboxActive = false
 end
 
----根据当前架势计算本次增加倍率；架势越高，继续增加得越慢。
----@return number gain_scale 当前架势对应的增加倍率。
-function SKCombatComponent:GetPostureGainScale()
-    local max_posture = math.max(self:GetMaxPosture(), 0.0001)
-    local normalized = clamp(self:GetCurrentPosture() / max_posture, 0.0, 1.0)
-    local remaining = 1.0 - normalized
-    local falloff = remaining ^ CombatConfig.Posture.GainFalloffExponent
-    return CombatConfig.Posture.MinGainScale
-        + (1.0 - CombatConfig.Posture.MinGainScale) * falloff
-end
-
----进入架势打崩状态；立即中断当前战斗动作、清空遗留输入并锁住玩法输入。
----@return boolean entered 本次是否首次进入打崩状态。
-function SKCombatComponent:EnterPostureBroken()
-    if self:IsPostureBroken() == true then
-        return false
+---供外部生命周期流程中断动作；先使序列号失效，防止 StopMontage 的旧结束回调续接动作。
+---此接口只清理战斗、动画和输入意图，不计算躯干，也不修改 Survival 状态或外部输入锁。
+---@return nil result 所有旧战斗意图和碰撞窗口均被清理。
+function SKCombatComponent:InterruptForExternalTransition()
+    if self.Runtime == nil then
+        self:Initialize(nil)
     end
-
+    self:InvalidateCombatAction(0)
+    self:DeactivateOwnerWeaponHitbox()
     self:StopOwnerAIMovement()
     self:StopCombatAnimation(0.0)
-    self:InvalidateCombatAction(0)
     self:ClearCombatInputEvents()
+    self:ClearAICombatEvents()
     self:ClearOwnerGameplayInputForScript()
-    self:SetOwnerExternalInputLock(PostureBrokenInputLockReason, true)
     self:ResetAttackRetention(true)
     self:ClearCombatPosture()
-
-    self.Runtime.ActionId = "PostureBroken"
-    self.Runtime.PostureRecoveryEligibleTime = 0.0
-    self.Runtime.PostureBrokenElapsedTime = 0.0
-    self:SetPostureBroken(true)
-    self:ResetPosture()
-
-    local action_serial = self:BeginCombatAction(UE.ESKCombatActionState.PostureBroken)
-    self.Runtime.ActionSerial = action_serial
-    local break_config = CombatConfig.Posture.Break
-    self.Runtime.bWasAnimationPlaying = self:PlayCombatAnimationByPath(
-        break_config.AnimationPath,
-        break_config.BlendInTime,
-        break_config.BlendOutTime,
-        1.0,
-        1) == true
-    return true
-end
-
----结束架势打崩状态并恢复输入；动画结束和最短锁定时间必须同时满足才会调用。
----@return nil result 状态恢复到 Neutral，架势保持为零。
-function SKCombatComponent:ExitPostureBroken()
-    self:ClearOwnerGameplayInputForScript()
-    self:SetOwnerExternalInputLock(PostureBrokenInputLockReason, false)
-    self:SetPostureBroken(false)
-    self:ResetAttackRetention(true)
-    self:ClearCombatPosture()
-    self:ClearCombatInputEvents()
-    self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
     self.Runtime.ActionId = nil
-    self.Runtime.PostureRecoveryEligibleTime = 0.0
-    self.Runtime.PostureBrokenElapsedTime = 0.0
+    self.Runtime.ActionSerial = 0
     self.Runtime.bWasAnimationPlaying = false
+    self.Runtime.DeflectSideResetRemaining = -1.0
 end
 
----应用一次已经裁决完成的防御结果；伤害来源无需知道架势公式。
----@param result_name string 防御结果或 AttackSuccess、AttackGuarded、AttackDeflected。
----@param attack_type userdata|number ESKIncomingAttackType 枚举值。
----@return boolean posture_broken 本次处理后是否处于架势打崩状态。
-function SKCombatComponent:ApplyPostureImpact(result_name, attack_type)
-    if self:IsPostureBroken() == true then
-        return true
-    end
-
-    local base_gain = CombatConfig.Posture.Gain[result_name]
-    if base_gain == nil then
+---外部状态转换成功后恢复普通动作；只在 Survival 已允许行动时执行，不负责解锁其他系统。
+---@return boolean reset 是否已恢复到中立动作状态。
+function SKCombatComponent:ResetAfterExternalTransition()
+    local survival = self:GetOwner():GetSurvivalComponent()
+    if survival == nil or survival:CanAct() ~= true then
         return false
     end
-
-    self.Runtime.PostureRecoveryEligibleTime = 0.0
-    local type_name = incoming_type_to_name(attack_type)
-    local strength = CombatConfig.Posture.AttackStrength[type_name] or 1.0
-    local gain = base_gain * strength * self:GetPostureGainScale()
-    local current_posture = self:GetCurrentPosture()
-    local max_posture = math.max(self:GetMaxPosture(), 0.0001)
-
-    local non_breaking_cap = nil
-    if result_name == "DeflectSuccess" then
-        non_breaking_cap =
-            max_posture * CombatConfig.Posture.SuccessCapNormalized
-    elseif result_name == "AttackSuccess"
-        or result_name == "AttackGuarded"
-        or result_name == "AttackDeflected" then
-        non_breaking_cap =
-            max_posture * CombatConfig.Posture.AttackCapNormalized
-    end
-    if non_breaking_cap ~= nil then
-        if current_posture < non_breaking_cap then
-            self:SetCurrentPosture(
-                math.min(current_posture + gain, non_breaking_cap))
-        end
-        return false
-    end
-
-    local next_posture = math.min(current_posture + gain, max_posture)
-    self:SetCurrentPosture(next_posture)
-    if next_posture >= max_posture then
-        self:EnterPostureBroken()
-        return true
-    end
-    return false
+    self:InterruptForExternalTransition()
+    self:SetCombatActionState(UE.ESKCombatActionState.Neutral)
+    return true
 end
 
 ---根据当前防御阶段收敛外部裁决，确保弹反成功只可能发生在 Guard Raise。
@@ -345,19 +252,26 @@ function SKCombatComponent:ResolvePostureImpactResult(result_name)
     return "DeflectFailed"
 end
 
----处理一条拼刀结果；攻击结果增加攻击者架势，被弹反时再播放独立反应。
----@param result_name string AttackSuccess、AttackGuarded、AttackDeflected 或防御结果。
+---把攻防结果交给 Survival，并根据状态结果选择对应战斗反应；本函数不计算任何躯干数值。
+---@param result_name string 攻击方反馈或防御结果语义，由接触裁决提供。
 ---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
----@return boolean handled 是否成功接收并执行了该防御结果。
+---@return boolean handled 是否成功接收结果并处理所需反应。
 function SKCombatComponent:ProcessPostureImpact(result_name, attack_type)
-    if result_name == "AttackDeflected" then
-        if self:ApplyPostureImpact(result_name, attack_type) == true then
+    local survival = self:GetOwner():GetSurvivalComponent()
+    if survival == nil or survival:IsAlive() ~= true then
+        return false
+    end
+    if result_name == "AttackDeflected"
+        or result_name == "AttackSuccess"
+        or result_name == "AttackGuarded" then
+        if survival:ApplyPostureImpact(result_name, attack_type, nil) ~= true
+            or survival:IsPostureBroken() == true then
             return false
         end
-        return self:StartAttackDeflected()
-    end
-    if result_name == "AttackSuccess" or result_name == "AttackGuarded" then
-        return self:ApplyPostureImpact(result_name, attack_type) ~= true
+        if result_name == "AttackDeflected" then
+            return self:StartAttackDeflected()
+        end
+        return true
     end
 
     local resolved_result = self:ResolvePostureImpactResult(result_name)
@@ -365,15 +279,15 @@ function SKCombatComponent:ProcessPostureImpact(result_name, attack_type)
         if self:StartDeflect() ~= true then
             return false
         end
-        self:ApplyPostureImpact(resolved_result, attack_type)
-        return true
+        return survival:ApplyPostureImpact(resolved_result, attack_type, nil)
     end
-
-    local posture_broken = self:ApplyPostureImpact(resolved_result, attack_type)
-    if posture_broken ~= true and resolved_result == "Guarded" then
+    if survival:ApplyPostureImpact(resolved_result, attack_type, nil) ~= true then
+        return false
+    end
+    if survival:IsPostureBroken() ~= true and resolved_result == "Guarded" then
         self:StartGuardImpact()
     end
-    if posture_broken ~= true and resolved_result == "DeflectFailed" then
+    if survival:IsPostureBroken() ~= true and resolved_result == "DeflectFailed" then
         self:StartDeflectFailed(attack_type)
     end
     return true
@@ -402,7 +316,8 @@ end
 ---@param attack_type userdata|number ESKIncomingAttackType 枚举值。
 ---@return userdata|number contact_result ESKWeaponContactResult 枚举值。
 function SKCombatComponent:ResolveIncomingWeaponContact(attacker_combat, attack_type)
-    if attacker_combat == self then
+    local survival = self:GetOwner():GetSurvivalComponent()
+    if attacker_combat == self or survival == nil or survival:IsAlive() ~= true then
         return UE.ESKWeaponContactResult.Ignored
     end
 
@@ -449,8 +364,9 @@ end
 ---@param attack_request string|userdata 行为树提交的稳定请求名，当前只支持 AutoLight。
 ---@return boolean started 是否成功开始了一次 AI 攻击。
 function SKCombatComponent:RequestAIAttack(attack_request)
+    local survival = self:GetOwner():GetSurvivalComponent()
     if tostring(attack_request) ~= "AutoLight"
-        or self:IsPostureBroken() == true
+        or survival == nil or survival:CanAct() ~= true
         or self:GetCombatActionState() ~= UE.ESKCombatActionState.Neutral
         or self:IsCombatAnimationPlaying() == true then
         return false
@@ -470,54 +386,6 @@ function SKCombatComponent:RequestAIAttack(attack_request)
 
     self:StopOwnerAIMovement()
     return self:StartLightAttack(attack_side, "Ground")
-end
-
----每帧更新架势恢复和打崩解锁；只有完全中立且未 Sprint、未 Step 时才累计恢复速度。
----@param delta_seconds number 本帧时长，单位秒。
----@return nil result 必要时降低架势或结束打崩状态。
-function SKCombatComponent:UpdatePosture(delta_seconds)
-    local safe_delta_seconds = math.max(delta_seconds or 0.0, 0.0)
-    if self:IsPostureBroken() == true then
-        self.Runtime.PostureBrokenElapsedTime =
-            self.Runtime.PostureBrokenElapsedTime + safe_delta_seconds
-        local minimum_duration = CombatConfig.Posture.Break.MinimumLockDuration
-        if self.Runtime.PostureBrokenElapsedTime >= minimum_duration
-            and self:IsCombatAnimationPlaying() ~= true then
-            self:ExitPostureBroken()
-        end
-        return
-    end
-
-    local current_posture = self:GetCurrentPosture()
-    if current_posture <= 0.0 then
-        self.Runtime.PostureRecoveryEligibleTime = 0.0
-        return
-    end
-
-    local can_recover = self:GetCombatActionState() == UE.ESKCombatActionState.Neutral
-        and self:IsCombatAnimationPlaying() ~= true
-        and self:IsOwnerSprinting() ~= true
-        and self:IsOwnerDodgingOrStepActive() ~= true
-    if can_recover ~= true then
-        self.Runtime.PostureRecoveryEligibleTime = 0.0
-        return
-    end
-
-    local recovery_config = CombatConfig.Posture.Recovery
-    self.Runtime.PostureRecoveryEligibleTime =
-        self.Runtime.PostureRecoveryEligibleTime + safe_delta_seconds
-    if self.Runtime.PostureRecoveryEligibleTime <= recovery_config.Delay then
-        return
-    end
-
-    local ramp_duration = math.max(recovery_config.RampDuration, 0.0001)
-    local recovery_alpha = clamp(
-        (self.Runtime.PostureRecoveryEligibleTime - recovery_config.Delay) / ramp_duration,
-        0.0,
-        1.0)
-    local recovery_rate = recovery_config.RateMin
-        + (recovery_config.RateMax - recovery_config.RateMin) * recovery_alpha
-    self:SetCurrentPosture(current_posture - recovery_rate * safe_delta_seconds)
 end
 
 ---更新成功弹反后的现有刀侧保留时间，并只在安全的 Neutral 状态恢复默认刀侧。
@@ -1232,7 +1100,7 @@ end
 function SKCombatComponent:HandleAnimationFinished()
     local state = self:GetCombatActionState()
     if state == UE.ESKCombatActionState.PostureBroken then
-        -- 打崩状态必须同时满足最短锁定时间，统一交给 UpdatePosture 收尾。
+        -- 躯干崩溃流程由 Survival 收尾；Combat 不因动画结束擅自恢复行动。
         return
     end
     if state == UE.ESKCombatActionState.PendingAttack then
@@ -1352,7 +1220,7 @@ function SKCombatComponent:UpdateWeaponHitboxCurve()
     self:SetWeaponHitboxActive(curve_value >= CurveThreshold)
 end
 
----每帧按确定顺序更新架势、消费输入、提交攻击曲线状态并检测自有 Montage 结束。
+---每帧先检查 Survival 行动许可，再消费输入、提交攻击曲线状态并检测自有 Montage 结束。
 ---该入口由原生组件显式 require 后调用，不依赖纯原生组件的 Blueprint ReceiveTick 分发。
 ---@param delta_seconds number 本帧时长，单位秒。
 ---@return boolean handled 始终返回 true，表示本帧战斗动画逻辑已执行。
@@ -1360,9 +1228,11 @@ function SKCombatComponent:HandleCombatTick(delta_seconds)
     if self.Runtime == nil then
         self.Runtime = create_runtime(side_to_name(self:GetNextAttackSide()))
     end
-    if self:IsPostureBroken() == true then
+    local survival = self:GetOwner():GetSurvivalComponent()
+    if survival == nil or survival:CanAct() ~= true then
+        -- 未就绪、死亡、回生或崩溃期间丢弃输入；演出和恢复由 Survival 独立推进。
         self:SetWeaponHitboxActive(false)
-        self:UpdatePosture(delta_seconds)
+        self:ClearCombatInputEvents()
         self.Runtime.bWasAnimationPlaying = self:IsCombatAnimationPlaying() == true
         return true
     end
@@ -1385,7 +1255,6 @@ function SKCombatComponent:HandleCombatTick(delta_seconds)
         is_playing = self:IsCombatAnimationPlaying() == true
     end
     self.Runtime.bWasAnimationPlaying = is_playing
-    self:UpdatePosture(delta_seconds)
     self:UpdateDeflectSideReset(delta_seconds)
     return true
 end

@@ -65,7 +65,11 @@ def required_curves(alias):
             "Crouch_Jump_Start",
             "Jump_Unlock_Forward_Start"):
         required.add("CanEnterLoop")
-    elif alias.startswith("Jump_Land_") or alias == "Jump_Light_Stand":
+    elif alias.startswith("Jump_Land_") or alias in {
+        "Jump_Light_Stand",
+        "Jump_Heavy_Stand",
+        "Jump_Heavy_Crouch",
+    }:
         required.update(("CanResumeMovement", "CanExitLand"))
 
     return required

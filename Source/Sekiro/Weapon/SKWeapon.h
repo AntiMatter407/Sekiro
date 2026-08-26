@@ -25,6 +25,10 @@ class SEKIRO_API ASKWeapon : public AActor
 public:
     ASKWeapon();
 
+    // ── Actor 生命周期 ────────────────────────────────────────────────────────
+
+    virtual void Tick(float DeltaSeconds) override;
+
     // ── 挂载与展示 ────────────────────────────────────────────────────────────
 
     /** 初始化刀身与刀鞘在角色骨架上的挂载信息。 */
@@ -70,17 +74,6 @@ public:
     void ClearHitActors();
 
 protected:
-    // ── 碰撞回调 ──────────────────────────────────────────────────────────────
-
-    UFUNCTION()
-    void OnHitboxOverlap(
-        UPrimitiveComponent* Overlapped,
-        AActor* OtherActor,
-        UPrimitiveComponent* OtherComp,
-        int32 OtherBodyIndex,
-        bool bFromSweep,
-        const FHitResult& SweepResult);
-
     // ── 组件 ──────────────────────────────────────────────────────────────────
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
@@ -90,7 +83,7 @@ protected:
     TObjectPtr<USkeletalMeshComponent> SheathMesh;            // 刀鞘网格，资源由武器蓝图配置
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
-    TObjectPtr<UCapsuleComponent> AttackHitbox;               // 跟随刀身 Blade01 骨骼的攻击碰撞体
+    TObjectPtr<UCapsuleComponent> AttackHitbox;               // 仅保留给蓝图调试显示，攻击判定改由连续刀刃 Sweep 完成
 
     // ── 配置 ──────────────────────────────────────────────────────────────────
 
@@ -115,7 +108,40 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
     float HitboxHalfHeight = 30.f;                            // 攻击碰撞体半高
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Blade Sweep")
+    FName BladeSweepBaseBone = TEXT("Blade00");              // 用于推导刀柄端点的刀身骨骼
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Blade Sweep")
+    FName BladeSweepTipBone = TEXT("Blade01");               // 用于推导刀尖端点的刀身骨骼
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Blade Sweep", meta = (ClampMin = "0.0"))
+    float BladeSweepBaseExtension = 0.8f;                    // 沿 Blade01 反方向补足 Blade00 到刀柄的比例
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Blade Sweep", meta = (ClampMin = "0.0"))
+    float BladeSweepTipExtension = 0.9f;                     // 沿 Blade00 到 Blade01 方向补足刀尖的比例
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Blade Sweep", meta = (ClampMin = "0.1"))
+    float BladeSweepRadius = 8.f;                            // 每个轨迹采样点的球形 Sweep 半径，单位厘米
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat|Blade Sweep", meta = (ClampMin = "2", ClampMax = "16"))
+    int32 BladeSweepSampleCount = 9;                         // 沿完整刀刃均匀采样的轨迹数量
+
 private:
+    // ── Sweep 实现 ────────────────────────────────────────────────────────────
+
+    /** 根据刀身两个骨骼计算补全后的刀柄与刀尖世界坐标。 */
+    bool GetBladeSweepSegment(FVector& OutBladeBase, FVector& OutBladeTip) const;
+
+    /** 对相邻两帧刀刃上的均匀采样点执行连续球形 Sweep。 */
+    void SweepBladeSegment(
+        const FVector& InPreviousBladeBase,
+        const FVector& InPreviousBladeTip,
+        const FVector& InCurrentBladeBase,
+        const FVector& InCurrentBladeTip);
+
+    /** 将一个 Sweep 目标交给战斗组件裁决并应用普通命中伤害。 */
+    void ResolveSweepHit(AActor* OtherActor, const FHitResult& SweepResult);
+
     // ── 运行时状态 ────────────────────────────────────────────────────────────
 
     UPROPERTY(Transient)
@@ -126,4 +152,8 @@ private:
     FName SheathSocket = TEXT("SheathSocket");               // 角色腰部刀鞘挂点
     ESKWeaponPresentation Presentation = ESKWeaponPresentation::Drawn; // 当前展示状态
     TSet<TWeakObjectPtr<AActor>> AlreadyHitActors;             // 单次攻击已命中的目标集合
+    FVector PreviousBladeBase = FVector::ZeroVector;          // 上一帧补全后的刀柄端世界坐标
+    FVector PreviousBladeTip = FVector::ZeroVector;           // 上一帧补全后的刀尖端世界坐标
+    bool bBladeSweepActive = false;                            // 当前动画曲线是否已开启刀刃 Sweep
+    bool bHasPreviousBladeSegment = false;                     // 是否已有可用于连续轨迹的上一帧刀刃线段
 };

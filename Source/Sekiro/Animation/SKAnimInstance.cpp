@@ -2,14 +2,18 @@
 #include "Animation/AnimNodeBase.h"
 #include "Character/SKCharacter.h"
 #include "Combat/SKCombatComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Engine/Canvas.h"
 #include "Input/SKInputManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "Animation/AnimEnums.h"
 #include "KismetAnimationLibrary.h"
+#include "Kismet/GameplayStatics.h"
 #include "UnLua.h"
 #include "UnLuaModule.h"
+#include "Weapon/SKWeapon.h"
+#include "Weapon/SKWeaponManagerComponent.h"
 
 namespace
 {
@@ -253,6 +257,70 @@ bool SKTryResolveLuaAnimationAssetName(UObject* ContextObject, const FString& Na
     return !OutLuaAssetName.IsEmpty();
 }
 
+/**
+ * 使用角色当前速度执行短时抛物线路径预测，并将预计接地时间转换为动画混合权重。
+ * 本函数只能在游戏线程调用，会执行世界碰撞查询；它不修改角色位置、速度或移动模式。
+ *
+ * @param Character 待预测角色，不可为空；角色胶囊用于确定脚底起点和扫掠半径。
+ * @param CurrentVelocity 当前世界速度，单位为 cm/s。
+ * @param CurrentFallSpeed 当前向下速度绝对值，单位为 cm/s；上升阶段应传入 0。
+ * @param MinFallSpeed 允许开始预测的最小向下速度，单位为 cm/s，非负。
+ * @param MaxPredictionTime 最大抛物线模拟时长，单位为秒，必须大于 0。
+ * @return 范围为 [0, 1] 的接地临近权重；未发现可落地表面时返回 0。
+ */
+float SKCalculateLandPredictionAmount(
+    ACharacter* Character,
+    const FVector& CurrentVelocity,
+    float CurrentFallSpeed,
+    float MinFallSpeed,
+    float MaxPredictionTime)
+{
+    if (!Character
+        || CurrentFallSpeed < MinFallSpeed
+        || MaxPredictionTime <= UE_KINDA_SMALL_NUMBER)
+    {
+        return 0.f;
+    }
+
+    const UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+    if (!Capsule) return 0.f;
+
+    const float CapsuleRadius = Capsule->GetScaledCapsuleRadius();
+    const float CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+    const FVector FootTraceStart = Character->GetActorLocation()
+        - FVector::UpVector * FMath::Max(0.f, CapsuleHalfHeight - CapsuleRadius);
+    const float PredictionTime = FMath::GetMappedRangeValueClamped(
+        FVector2D(MinFallSpeed, 2000.f),
+        FVector2D(0.35f, MaxPredictionTime),
+        CurrentFallSpeed);
+
+    FPredictProjectilePathParams PredictParams(
+        CapsuleRadius,
+        FootTraceStart,
+        CurrentVelocity,
+        PredictionTime,
+        ECC_Visibility,
+        Character);
+    PredictParams.SimFrequency = 15.f;
+    PredictParams.bTraceComplex = false;
+
+    FPredictProjectilePathResult PredictResult;
+    if (!UGameplayStatics::PredictProjectilePath(Character, PredictParams, PredictResult)
+        || !PredictResult.HitResult.bBlockingHit
+        || PredictResult.PathData.IsEmpty())
+    {
+        return 0.f;
+    }
+
+    const float HitTime = PredictResult.PathData.Last().Time;
+    const float TimeAlpha = 1.f - FMath::Clamp(HitTime / PredictionTime, 0.f, 1.f);
+    const float SpeedAlpha = FMath::GetMappedRangeValueClamped(
+        FVector2D(MinFallSpeed, 1600.f),
+        FVector2D(0.f, 1.f),
+        CurrentFallSpeed);
+    return FMath::Clamp(TimeAlpha * FMath::Lerp(0.35f, 1.f, SpeedAlpha), 0.f, 1.f);
+}
+
 }
 
 /**
@@ -307,6 +375,7 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 
     Velocity = OwnerCharacter->GetVelocity();
     VerticalVelocity = Velocity.Z;
+    FallSpeed = bIsInAir ? FMath::Max(0.f, -VerticalVelocity) : 0.f;
     Speed = Velocity.Size2D();
     Acceleration = CharacterMovement ? CharacterMovement->GetCurrentAcceleration() : FVector::ZeroVector;
     AccelerationAmount = Acceleration.Size2D();
@@ -319,6 +388,12 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     bIsAccelerating = AccelerationAmount > 3.f;
 
     const FRotator ActorRotation = OwnerCharacter->GetActorRotation();
+    const FRotator YawRotation(0.f, ActorRotation.Yaw, 0.f);
+    SmoothedVelocity = DeltaSeconds > 0.f
+        ? FMath::VInterpTo(SmoothedVelocity, Velocity, DeltaSeconds, VelocitySmoothingInterpSpeed)
+        : Velocity;
+    LocalVelocity = YawRotation.UnrotateVector(SmoothedVelocity);
+    LocalAcceleration = YawRotation.UnrotateVector(Acceleration);
     Angle = UKismetAnimationLibrary::CalculateDirection(Velocity, ActorRotation);
     Direction = SKConvertAngleToDirection(Angle);
 
@@ -361,8 +436,14 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     }
 
     DirectionDelta = FMath::FindDeltaAngleDegrees(Angle, MoveDirectionAngle);
-    AimYawDelta = FMath::FindDeltaAngleDegrees(ActorYaw, OwnerCharacter->GetControlRotation().Yaw);
-    RootYawOffset = 0.f;
+    const FRotator ControlRotation = OwnerCharacter->GetControlRotation();
+    AimYawDelta = FMath::FindDeltaAngleDegrees(ActorYaw, ControlRotation.Yaw);
+    AimPitch = FRotator::NormalizeAxis(ControlRotation.Pitch);
+    AimYawRate = DeltaSeconds > UE_KINDA_SMALL_NUMBER && bHasPreviousControlYaw
+        ? FMath::Abs(FMath::FindDeltaAngleDegrees(PreviousControlYaw, ControlRotation.Yaw)) / DeltaSeconds
+        : 0.f;
+    PreviousControlYaw = ControlRotation.Yaw;
+    bHasPreviousControlYaw = true;
 
     if (bIsInAir)
     {
@@ -396,6 +477,49 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     {
         RotationMode = ESKAnimRotationMode::VelocityDirection;
     }
+
+    const float RootYawTarget = !bIsMoving
+        && !bHasMovementInput
+        && !bIsInAir
+        && RotationMode == ESKAnimRotationMode::LookingDirection
+        ? FMath::Clamp(AimYawDelta, -RootYawOffsetLimit, RootYawOffsetLimit)
+        : 0.f;
+    RootYawOffset = DeltaSeconds > 0.f
+        ? FMath::FInterpTo(RootYawOffset, RootYawTarget, DeltaSeconds, RootYawOffsetInterpSpeed)
+        : RootYawTarget;
+
+    const float MaxAcceleration = CharacterMovement
+        ? FMath::Max(CharacterMovement->GetMaxAcceleration(), 1.f)
+        : 1.f;
+    const FVector2D GroundedLeanTarget(
+        FMath::Clamp(LocalAcceleration.Y / MaxAcceleration, -1.f, 1.f),
+        FMath::Clamp(LocalAcceleration.X / MaxAcceleration, -1.f, 1.f));
+    const float AirLeanReferenceSpeed = FMath::Max(SKGetGaitReferenceSpeed(ESKAnimGait::Sprint, OwnerMovement), 1.f);
+    const FVector2D InAirLeanTarget(
+        FMath::Clamp(LocalVelocity.Y / AirLeanReferenceSpeed, -1.f, 1.f),
+        FMath::Clamp(LocalVelocity.X / AirLeanReferenceSpeed, -1.f, 1.f));
+    GroundedLeanAmount = DeltaSeconds > 0.f
+        ? FMath::Vector2DInterpTo(
+            GroundedLeanAmount,
+            bIsInAir ? FVector2D::ZeroVector : GroundedLeanTarget,
+            DeltaSeconds,
+            LeanInterpSpeed)
+        : GroundedLeanTarget;
+    InAirLeanAmount = DeltaSeconds > 0.f
+        ? FMath::Vector2DInterpTo(
+            InAirLeanAmount,
+            bIsInAir ? InAirLeanTarget : FVector2D::ZeroVector,
+            DeltaSeconds,
+            LeanInterpSpeed)
+        : InAirLeanTarget;
+    LandPredictionAmount = bIsInAir
+        ? SKCalculateLandPredictionAmount(
+            OwnerCharacter,
+            Velocity,
+            FallSpeed,
+            LandPredictionMinFallSpeed,
+            LandPredictionMaxTime)
+        : 0.f;
 
     DesiredGait = bIsCrouching || MovementTier == ESKMovementTier::Crouch
         ? SKResolveCrouchGait(bHasMovementInput, MovementInputAmount, Gait, OwnerInputManager)
@@ -432,6 +556,9 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
     bIsDodging = OwnerInputManager ? OwnerInputManager->IsDodgeActive() : OwnerCharacter->bIsDodging;
     DodgeDirection = OwnerCharacter->DodgeDirection;
     DodgeDirectionLateral = OwnerCharacter->DodgeDirectionLateral;
+    MovementAction = bIsDodging
+        ? (bIsInAir ? ESKAnimMovementAction::Dodge : ESKAnimMovementAction::Step)
+        : ESKAnimMovementAction::None;
 
     // ── Combat ────────────────────────────────────────────────
     if (OwnerCombatComponent)
@@ -453,6 +580,29 @@ void USKAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
         bIsCombatGuardAirPosture = false;
         bIsCombatGuardPoseActive = false;
         bIsCombatFullBodyActionActive = false;
+    }
+
+    const USKWeaponManagerComponent* WeaponManager = OwnerCharacter->GetWeaponManager();
+    const ASKWeapon* CurrentWeapon = WeaponManager ? WeaponManager->GetCurrentWeapon() : nullptr;
+    const bool bSwordDrawn = CurrentWeapon
+        && CurrentWeapon->GetWeaponPresentation() == ESKWeaponPresentation::Drawn;
+
+    // Overlay 只发布持续姿态语义；全身动作和 Guard 始终高于武器展示状态。
+    if (bIsCombatFullBodyActionActive)
+    {
+        OverlayState = ESKAnimOverlayState::Combat;
+    }
+    else if (bIsCombatGuardPoseActive)
+    {
+        OverlayState = ESKAnimOverlayState::Guard;
+    }
+    else if (bSwordDrawn)
+    {
+        OverlayState = ESKAnimOverlayState::Sword;
+    }
+    else
+    {
+        OverlayState = ESKAnimOverlayState::Default;
     }
 
     const float TurnEnterAngle = 60.f;

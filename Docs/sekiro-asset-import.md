@@ -66,6 +66,10 @@ python .codex/skills/aibridge/bridge.py blueprint create \
 | `*_model.json` | FlverToJson | 模型 JSON（顶点/骨骼/材质） |
 | `*_anims_*.json` | SekiroAnimExtractor | 动画曲线 JSON |
 
+动画导入会同时读取同一 `anibnd` 内的 TAE MiniHeader。`ImportHKX` 会复用来源动作曲线并保留
+逻辑动画自身事件；`ImportOtherAnim` 会继承来源动作与事件。管线在动画 JSON 阶段物化逻辑别名，
+因此原包没有独立 HKX 的动画编号仍可生成对应 UE `UAnimSequence`。
+
 ## 配置
 
 `pipeline_config.py` 从以下来源合并配置（优先级递减）：

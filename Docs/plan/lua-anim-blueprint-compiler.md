@@ -175,3 +175,16 @@ Animation Lua 文件新增、修改或删除后只更新已加载 Lua AnimBluepr
 | 14.5 | UE5.2 完整链接与新增 Automation 回归 | 源码编译 0 错误；当前被编辑器 Live Coding 锁定 DLL 阻塞，待关闭编辑器后执行 |
 
 本阶段只迁移现有布尔属性、曲线和组合条件；`BlueprintUpdateAnimation`、运行时 Lua 更新与多线程策略均保持不变。当前业务规则不需要 Enum 或数值属性比较，因此不扩展对应 AST 节点。
+
+## IR → Lua Writer
+
+| 编号 | 任务 | 状态 |
+|------|------|------|
+| 15.1 | Canonical IR 确定性写为纯 Lua table + `CompileIR()` | 已完成 |
+| 15.2 | 保留全部 IRValue、Rule AST 和精确 Layout Positions，并正确转义 UTF-8 文本 | 已完成 |
+| 15.3 | 独立 `.generated.lua` 交换模块，不覆盖手写运行时模块 | 已完成 |
+| 15.4 | ScriptRoot 路径防逃逸、临时回读等价校验、原子替换与默认 `.bak` | 已完成 |
+| 15.5 | Extension 分离 Generated 交换模块和运行时 SourceModule，旧资产回退兼容 | 已完成 |
+| 15.6 | Writer 确定性、转义、坐标、Importer 回读、失败不覆盖与路径逃逸测试 | 已完成，全插件翻译单元已通过 `-NoLink` 编译 |
+
+交换文件仍以 `IR.SourceModule` 作为 Transition Rule 和 `BlueprintUpdateAnimation` 的运行时行为源。`Check Lua` 与 Lua → AnimBlueprint 只优先消费 `GeneratedLuaModuleName`；本阶段不新增工具栏和 Hash 机制。

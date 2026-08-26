@@ -120,6 +120,9 @@ namespace SekiroAnimGraphIRValidation
     const FName InvalidLayoutItem(TEXT("IR.InvalidLayoutItem"));
     const FName DuplicateLayoutElement(TEXT("IR.DuplicateLayoutElement"));
     const FName OccupiedLayoutCell(TEXT("IR.OccupiedLayoutCell"));
+    const FName InvalidLayoutPosition(TEXT("IR.InvalidLayoutPosition"));
+    const FName DuplicateLayoutPosition(TEXT("IR.DuplicateLayoutPosition"));
+    constexpr int32 MaximumLayoutCoordinate = 1000000;
 
     /**
      * 向验证结果追加一条错误诊断，不执行日志输出或资产加载。
@@ -578,6 +581,17 @@ void USekiroAnimGraphIRLibrary::Canonicalize(FSekiroAnimBlueprintIR& Blueprint)
                     return Left.ElementId.Compare(Right.ElementId, ESearchCase::CaseSensitive) < 0;
                 });
             }
+            Graph.Layout.Positions.Sort([](
+                const FSekiroAnimIRLayoutPosition& Left,
+                const FSekiroAnimIRLayoutPosition& Right)
+            {
+                const int32 IdComparison = Left.ElementId.Compare(
+                    Right.ElementId,
+                    ESearchCase::CaseSensitive);
+                if (IdComparison != 0) return IdComparison < 0;
+                if (Left.X != Right.X) return Left.X < Right.X;
+                return Left.Y < Right.Y;
+            });
 
             Graph.StateMachine.States.Sort([](const FSekiroAnimIRState& Left, const FSekiroAnimIRState& Right)
             {
@@ -830,6 +844,37 @@ bool USekiroAnimGraphIRLibrary::Validate(
                         }
                     }
                 }
+            }
+
+            TSet<FString> ExactPositionElementIds;
+            for (const FSekiroAnimIRLayoutPosition& Position : Graph.Layout.Positions)
+            {
+                if (!LayoutElementIds.Contains(Position.ElementId)
+                    || FMath::Abs(static_cast<int64>(Position.X)) > MaximumLayoutCoordinate
+                    || FMath::Abs(static_cast<int64>(Position.Y)) > MaximumLayoutCoordinate)
+                {
+                    AddError(
+                        OutDiagnostics,
+                        InvalidLayoutPosition,
+                        FString::Printf(
+                            TEXT("Graph '%s' contains invalid exact layout position for element '%s'."),
+                            *Graph.Id,
+                            *Position.ElementId),
+                        Position.ElementId,
+                        Graph.SourceLocation);
+                }
+                if (ExactPositionElementIds.Contains(Position.ElementId))
+                {
+                    AddError(
+                        OutDiagnostics,
+                        DuplicateLayoutPosition,
+                        FString::Printf(
+                            TEXT("Layout element '%s' has more than one exact position."),
+                            *Position.ElementId),
+                        Position.ElementId,
+                        Graph.SourceLocation);
+                }
+                ExactPositionElementIds.Add(Position.ElementId);
             }
 
             for (const FSekiroAnimIRNode& Node : Graph.Nodes)

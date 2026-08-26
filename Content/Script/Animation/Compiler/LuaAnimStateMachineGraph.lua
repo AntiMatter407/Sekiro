@@ -38,6 +38,8 @@ local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 ---@field Transitions LuaAnimTransition[] 有向过渡声明。
 ---@field StateNames table<string, LuaAnimState> 按语义名称索引的状态。
 ---@field TransitionKeys table<string, boolean> 状态机作用域内已声明的 Transition Key 集合。
+---@field LayoutPositions SekiroAnimIRLayoutPosition[] 精确像素坐标声明。
+---@field LayoutPositionIds table<string, boolean> 已声明精确坐标的状态 ID 集合。
 local LuaAnimStateMachineGraph = CompilerClass:Extend("LuaAnimStateMachineGraph")
 
 ---初始化 StateMachine Node 的内部 Graph 和空拓扑。
@@ -56,10 +58,12 @@ function LuaAnimStateMachineGraph:Initialize(config)
     self.EntryStateId = ""
     self.States = {}
     self.Transitions = {}
-    self.LayoutStyle = LayoutStyle.HierarchicalBlocks
+    self.LayoutStyle = LayoutStyle.CompactGrid
     self.LayoutGrids = {}
     self.LayoutGridNames = {}
     self.LayoutElementIds = {}
+    self.LayoutPositions = {}
+    self.LayoutPositionIds = {}
     self.StateNames = {}
     self.TransitionKeys = {}
 end
@@ -82,6 +86,27 @@ function LuaAnimStateMachineGraph:Grid(name, settings)
     self.LayoutGridNames[valid_name] = grid
     table.insert(self.LayoutGrids, grid)
     return grid
+end
+
+---把当前状态机的 State 固定到 UE 画布精确像素坐标。
+---精确坐标可与 Grid 声明并存且优先级更高；同一 State 不允许重复设置。
+---@param element LuaAnimState 当前 StateMachine Graph 直接拥有的状态。
+---@param x number UE Graph 画布横向像素整数坐标。
+---@param y number UE Graph 画布纵向像素整数坐标。
+---@return LuaAnimState element 原样返回已定位状态，便于继续声明。
+function LuaAnimStateMachineGraph:SetPosition(element, x, y)
+    assert(element ~= nil and type(element.Id) == "string", "StateMachine:SetPosition requires LuaAnimState")
+    assert(element.MachineGraph == self, "Positioned State must belong to the same StateMachine Graph")
+    assert(self.LayoutPositionIds[element.Id] == nil, "State may only have one exact position")
+    local position_x = IRSchema.RequireLayoutCoordinate(x, "X")
+    local position_y = IRSchema.RequireLayoutCoordinate(y, "Y")
+    self.LayoutPositionIds[element.Id] = true
+    table.insert(self.LayoutPositions, {
+        ElementId = element.Id,
+        X = position_x,
+        Y = position_y,
+    })
+    return element
 end
 
 ---声明 State 顶点，并立即创建由该 State 独占的 StatePose Graph。
@@ -208,6 +233,7 @@ function LuaAnimStateMachineGraph:ToIR()
         Layout = {
             Style = self.LayoutStyle,
             Grids = layout_grids,
+            Positions = self.LayoutPositions,
         },
         DeclarationOrder = self.DeclarationOrder,
         SourceLocation = self.SourceLocation,

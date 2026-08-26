@@ -3,6 +3,7 @@
 -- Lua 选择速度档位对应速度、角色朝向目标和插值参数；UE CharacterMovement 继续负责物理、碰撞、Root Motion 与网络预测。
 
 local LuaLog = require("Gameplay.Base.LuaLog")
+local CurveNames = require("Animation.Sekiro.Shared.CurveNames")
 local Direction = require("Animation.Sekiro.Shared.Direction")
 local Tuning = require("Animation.Sekiro.Shared.Tuning")
 
@@ -20,8 +21,8 @@ function SKMovementComponent:Initialize(_initializer)
     self.LockOnActorInterpSpeed = 14.0
     self.TurnInPlaceActorInterpSpeed = 5.0
     self.AirActorTurnSpeedMultiplier = 0.2
-    self.TurnInPlaceEnterAngle = 25.0
-    self.TurnInPlaceExitAngle = 3.0
+    self.TurnInPlaceEnterAngle = Tuning.IdleTurnEnterAngle
+    self.TurnInPlaceExitAngle = Tuning.IdleTurnExitAngle
     self.MoveInputFacingThreshold = 0.1
     self.bTurningInPlace = false
     self.LockedCycleDirection = Direction.Cardinal.Forward
@@ -80,7 +81,7 @@ function SKMovementComponent:PublishMoveFacingSnapshot()
 end
 
 ---根据 Sprint、锁定和自由移动优先级选择本帧角色朝向。
----Sprint 即使仍保留锁定目标也朝移动输入；普通锁定移动始终面向目标；自由移动朝输入方向。
+---Sprint 即使仍保留锁定目标也朝移动输入；锁定移动面向目标；锁定待机转身由 Movement 独占 ActorYaw。
 ---@param has_desired_yaw boolean 当前是否存在有效移动目标。
 ---@param desired_move_yaw number 输入对应的目标世界 Yaw。
 ---@return boolean has_facing_target 是否需要更新 ActorYaw。
@@ -105,15 +106,16 @@ function SKMovementComponent:ResolveActorFacing(has_desired_yaw, desired_move_ya
             if absolute_turn_angle <= self.TurnInPlaceExitAngle then
                 self.bTurningInPlace = false
             else
+                -- Turn 资产的根骨起止变换相同，只负责脚步姿势；Movement 是唯一 ActorYaw 权威。
                 return true, target_yaw, self.TurnInPlaceActorInterpSpeed
             end
         elseif absolute_turn_angle >= self.TurnInPlaceEnterAngle then
             self.bTurningInPlace = true
-            -- 首帧只锁存 Turn 请求，让 AnimInstance 在 ActorYaw 改变前取得完整偏航角并选定左右资产。
+            -- 首帧保持 ActorYaw，令 AnimInstance 锁存完整 RootYawOffset 并稳定选择左右转身资产。
             return false, owner_yaw, self.TurnInPlaceActorInterpSpeed
         end
 
-        -- 小角度锁定偏差由待机上半身承担，避免没有 Turn 动画时脚底持续滑动。
+        -- 小角度锁定偏差由待机姿势承担，不触发 ActorYaw 插值。
         return false, owner_yaw, self.TurnInPlaceActorInterpSpeed
     end
 
@@ -158,12 +160,47 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:SetMovementRotationSettingsForScript(false, false)
 
     local has_desired_yaw, desired_move_yaw = self:PublishMoveFacingSnapshot()
+    local combat_full_body_active =
+        self:IsOwnerCombatFullBodyActionActiveForScript() == true
     -- 锁定普通移动由 Actor 平滑追向目标；四向素材只负责提供最近的基础步态。
     -- AnimGraph 的 Graph Orientation Warping 负责下半身与脊柱姿势，
     -- Movement 原生回调把 CharacterMovement 最终消费的 Root Motion 水平平移转到输入世界方向。
     -- 全身战斗动作拥有自己的 Root Motion，期间必须退出锁定移动方向修正，防止按住方向键时误转攻击位移。
-    local can_warp_locomotion_root_motion =
-        self:IsOwnerCombatFullBodyActionActiveForScript() ~= true
+    local can_warp_locomotion_root_motion = not combat_full_body_active
+
+    if combat_full_body_active then
+        self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward)
+        self:SetRootMotionDirectionWarpingForScript(false, 0.0)
+        self.bHasLastLockOnRootMotionWorldYaw = false
+
+        -- 攻击只在原版 TAE 允许的窗口按确定角速度转向。受击、防御等其他全身动作不复用普通移动旋转，
+        -- 避免胶囊体在动画脚掌承重阶段持续旋转而产生滑步。
+        if self:IsOwnerAttackActionActiveForScript() == true then
+            local turning_disabled = self:SampleOwnerCombatSequenceCurveForScript(
+                CurveNames.DisableTurning)
+            local attack_turn_speed = self:SampleOwnerCombatSequenceCurveForScript(
+                CurveNames.AttackTurnSpeed)
+            if turning_disabled < 0.5 and attack_turn_speed > 0.0 then
+                local has_attack_target = false
+                local attack_target_yaw = self:GetOwnerYaw()
+                if self:IsLockedOn() and self:HasLockTargetYaw() then
+                    has_attack_target = true
+                    attack_target_yaw = self:GetLockTargetYawOrFallback(attack_target_yaw)
+                elseif has_desired_yaw then
+                    has_attack_target = true
+                    attack_target_yaw = desired_move_yaw
+                end
+
+                if has_attack_target then
+                    self:ApplyActorYawRateForScript(
+                        attack_target_yaw,
+                        attack_turn_speed,
+                        delta_seconds or 0)
+                end
+            end
+        end
+        return true
+    end
     local locked_locomotion = self:IsLockedOn()
         and self:HasLockTargetYaw()
         and has_desired_yaw

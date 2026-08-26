@@ -86,6 +86,10 @@ class ModelJsonBuilder:
               original_asset_name=None, auxiliary_bones=None):
         from sekiro_asset_manager.flver_parser import FlverParser, fk_accumulate
         from sekiro_asset_manager.mtd_parser import MtdParser
+        from sekiro_asset_manager.bone_name_normalizer import (
+            normalize_internal_root_bone_names,
+            normalize_model_bone_references,
+        )
 
         if auxiliary_bones is None:
             auxiliary_bones = _ASSET_AUXILIARY_BONES.get(asset_name, [])
@@ -98,6 +102,7 @@ class ModelJsonBuilder:
                 print(f"  [Warning] Skel FLVER parse failed: {e}")
 
         skeleton_bones = None
+        source_bone_renames = {}
         if skeleton_source and os.path.exists(skeleton_source):
             try:
                 ext = os.path.splitext(skeleton_source)[1].lower()
@@ -117,6 +122,9 @@ class ModelJsonBuilder:
                 bn = anim_data.get("BoneNames", [])
                 bp = anim_data.get("BoneParents", [])
                 bl = anim_data.get("BoneLocalTransforms", [])
+                source_bone_renames = normalize_internal_root_bone_names(bn, bp)
+                if source_bone_renames:
+                    print("  Normalized internal source bone: Root -> RootPos")
                 if not bn and anim_data.get("Bones"):
                     skeleton_bones = anim_data["Bones"]
                 elif bn and bp and bl:
@@ -165,6 +173,10 @@ class ModelJsonBuilder:
 
         if not body_flvers:
             raise ValueError("No valid FLVER files to parse")
+
+        if source_bone_renames:
+            for body_flver in body_flvers:
+                normalize_model_bone_references(body_flver, source_bone_renames)
 
         if skeleton_bones is not None:
             merged = list(skeleton_bones)

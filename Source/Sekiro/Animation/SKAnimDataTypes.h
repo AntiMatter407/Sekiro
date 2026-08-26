@@ -31,6 +31,14 @@ enum class ESKAnimMovementState : uint8
 };
 
 UENUM(BlueprintType)
+enum class ESKAnimMovementAction : uint8
+{
+    None,                                                    // 无互斥移动动作
+    Step,                                                    // 地面垫步
+    Dodge                                                    // 空中或后续扩展的完整闪避动作
+};
+
+UENUM(BlueprintType)
 enum class ESKAnimRotationMode : uint8
 {
 	VelocityDirection,                                       // 非锁定：朝运动方向
@@ -73,6 +81,15 @@ enum class ESKAnimTurnDirection : uint8
 	None,                                                    // 不转向
 	Left,                                                    // 播放左转动画
 	Right                                                    // 播放右转动画
+};
+
+UENUM(BlueprintType)
+enum class ESKAnimOverlayState : uint8
+{
+    Default,                                                 // 普通移动基础姿态
+    Sword,                                                   // 持刀移动姿态
+    Guard,                                                   // 持续防御姿态
+    Combat                                                   // 攻击、弹反等全身战斗动作
 };
 
 // ============================================================

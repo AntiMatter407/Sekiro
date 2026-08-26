@@ -79,4 +79,14 @@ function LuaStateMachineNode:Grid(name, settings)
     return self.OwnedGraph:Grid(name, settings)
 end
 
+---把本节点内部状态机的 State 固定到 UE 画布精确像素坐标。
+---该便捷入口与 OwnedGraph:SetPosition 共用完全相同的归属和数值校验。
+---@param element LuaAnimState 本状态机直接拥有的 State。
+---@param x number UE Graph 画布横向像素整数坐标。
+---@param y number UE Graph 画布纵向像素整数坐标。
+---@return LuaAnimState element 原样返回已定位状态。
+function LuaStateMachineNode:SetPosition(element, x, y)
+    return self.OwnedGraph:SetPosition(element, x, y)
+end
+
 return LuaStateMachineNode

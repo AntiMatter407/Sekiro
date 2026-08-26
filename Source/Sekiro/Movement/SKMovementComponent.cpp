@@ -212,6 +212,30 @@ void USKMovementComponent::ApplyActorYawForScript(float TargetYaw, float InterpS
 }
 
 /**
+ * 按固定最大角速度沿最短路径写入角色世界 Yaw，供动画曲线表达确定的每秒转角。
+ * 只能在游戏线程且应在 Super::TickComponent 前调用，使同帧 Root Motion 平移沿更新后的角色朝向转换；
+ * 本函数不修改控制器、相机、移动输入或 Root Motion 曲线。
+ *
+ * @param TargetYaw 目标世界 Yaw，单位为度。
+ * @param MaxDegreesPerSecond 最大转向速度，单位为度/秒；非正值不旋转。
+ * @param DeltaTime 当前帧时长，单位为秒；非正值不旋转。
+ */
+void USKMovementComponent::ApplyActorYawRateForScript(
+    float TargetYaw,
+    float MaxDegreesPerSecond,
+    float DeltaTime)
+{
+    if (!OwnerCharacter || MaxDegreesPerSecond <= 0.f || DeltaTime <= 0.f) return;
+
+    const FRotator CurrentRotation = OwnerCharacter->GetActorRotation();
+    const float DeltaYaw = FMath::FindDeltaAngleDegrees(CurrentRotation.Yaw, TargetYaw);
+    const float MaxDeltaYaw = MaxDegreesPerSecond * DeltaTime;
+    const float NewYaw = FMath::UnwindDegrees(
+        CurrentRotation.Yaw + FMath::Clamp(DeltaYaw, -MaxDeltaYaw, MaxDeltaYaw));
+    OwnerCharacter->SetActorRotation(FRotator(0.f, NewYaw, 0.f));
+}
+
+/**
  * 保存 Lua 在角色旋转前计算的移动输入方向快照，供同帧 AnimInstance 选择起步/转身动画。
  * 只能在游戏线程调用；不改变角色旋转，也不执行动画选择。
  *
@@ -276,11 +300,35 @@ void USKMovementComponent::SetRootMotionDirectionWarpingForScript(bool bEnabled,
  */
 bool USKMovementComponent::IsOwnerCombatFullBodyActionActiveForScript() const
 {
-    const AActor* OwnerActor = GetOwner();
-    const USKCombatComponent* CombatComponent = OwnerActor
-        ? OwnerActor->FindComponentByClass<USKCombatComponent>()
-        : nullptr;
     return CombatComponent && CombatComponent->IsCombatFullBodyActionActive();
+}
+
+/**
+ * 查询缓存战斗组件是否处于轻攻击或重攻击状态。
+ * 该接口只读取游戏线程状态，不判断动画曲线、输入意图或是否允许转向。
+ *
+ * @return 当前状态为 LightAttack 或 HeavyAttack 时返回 true；组件无效或其他状态返回 false。
+ */
+bool USKMovementComponent::IsOwnerAttackActionActiveForScript() const
+{
+    if (!CombatComponent) return false;
+
+    const ESKCombatActionState ActionState = CombatComponent->GetCombatActionState();
+    return ActionState == ESKCombatActionState::LightAttack
+        || ActionState == ESKCombatActionState::HeavyAttack;
+}
+
+/**
+ * 采样当前战斗动作源 UAnimSequence 在当前播放位置的语义曲线。
+ * 本函数只提供通用跨组件读取桥梁；曲线名称和数值含义由 Lua 决定。
+ * 只能在游戏线程调用，不推进动画时间，也不缓存返回值。
+ *
+ * @param CurveName Skeleton 中登记的稳定曲线名；None 视为无曲线。
+ * @return 战斗组件和曲线有效时返回当前值，否则返回 0。
+ */
+float USKMovementComponent::SampleOwnerCombatSequenceCurveForScript(FName CurveName) const
+{
+    return CombatComponent ? CombatComponent->SampleActiveSequenceCurve(CurveName) : 0.f;
 }
 
 /** 返回所属角色当前世界速度的水平长度；只能在游戏线程读取，角色无效时返回 0。 */
@@ -371,7 +419,7 @@ void USKMovementComponent::UpdateMovementLogic_Implementation(float DeltaTime)
     static_cast<void>(DeltaTime);
 }
 
-/** 刷新角色、输入和相机组件缓存；发现输入组件时建立一次 Tick 前置关系。 */
+/** 刷新角色、输入、相机和战斗组件缓存；发现输入组件时建立一次 Tick 前置关系。 */
 void USKMovementComponent::RefreshCachedComponents()
 {
     if (!OwnerCharacter) OwnerCharacter = Cast<ACharacter>(GetOwner());
@@ -385,6 +433,10 @@ void USKMovementComponent::RefreshCachedComponents()
     if (!CameraManager)
     {
         CameraManager = OwnerCharacter->FindComponentByClass<USKCameraManagerComponent>();
+    }
+    if (!CombatComponent)
+    {
+        CombatComponent = OwnerCharacter->FindComponentByClass<USKCombatComponent>();
     }
 }
 

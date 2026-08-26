@@ -17,7 +17,8 @@ enum class ESKCombatActionState : uint8
     GuardLower,
     DeflectReaction,
     Dodging,
-    PostureBroken
+    PostureBroken,
+    AIReaction
 };
 
 UENUM(BlueprintType)
@@ -66,6 +67,56 @@ enum class ESKWeaponContactResult : uint8
     Hit,
     Guarded,
     Deflected
+};
+
+UENUM(BlueprintType)
+enum class ESKAICombatEventType : uint8
+{
+    None,
+    AttackThreat,
+    WeaponContact,
+    DamageReceived,
+    ProjectileImpact,
+    TargetAction,
+    ReactionRequested,
+    ForceReplan,
+    SemanticSignal
+};
+
+USTRUCT(BlueprintType)
+struct SEKIRO_API FSKAICombatEvent
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|AI Event")
+    int32 EventSerial = 0; // 组件分配的事件顺序号
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    ESKAICombatEventType EventType = ESKAICombatEventType::None; // 通用事件类型
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    TObjectPtr<AActor> SourceActor = nullptr; // 事件发起者
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    TObjectPtr<AActor> TargetActor = nullptr; // 事件直接作用对象
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    int32 RelatedActionSerial = 0; // 关联战斗动作序列号
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    ESKIncomingAttackType AttackType = ESKIncomingAttackType::Light; // 可选来袭攻击类型
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    ESKWeaponContactResult ContactResult = ESKWeaponContactResult::Ignored; // 可选武器接触结果
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    FName EventTag = NAME_None; // 可选中性语义标签
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    float Magnitude = 0.f; // 可选事件强度
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|AI Event")
+    double EventTimeSeconds = 0.0; // 组件记录的游戏世界绝对时间
 };
 
 USTRUCT(BlueprintType)

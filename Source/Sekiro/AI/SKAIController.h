@@ -32,6 +32,15 @@ public:
     UFUNCTION(BlueprintCallable, Category = "AI|Blackboard")
     bool SetBlackboardVectorValue(FName KeyName, FVector Value);
 
+    // ── 导航查询 ────────────────────────────────────────
+
+    /** 将候选世界位置投影到当前导航数据。 */
+    UFUNCTION(BlueprintCallable, Category = "AI|Navigation")
+    bool ProjectNavigationPoint(
+        const FVector& CandidateLocation,
+        const FVector& QueryExtent,
+        FVector& OutProjectedLocation) const;
+
     /** 立即生成并写入一个可达巡逻位置。 */
     UFUNCTION(BlueprintCallable, Category = "AI|Patrol")
     bool RefreshPatrolLocation();

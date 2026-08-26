@@ -1,5 +1,7 @@
 ﻿#include "SekiroAnimGraphIRLibrary.h"
 
+#include "SekiroAnimGraphIRLuaWriter.h"
+
 #include "LuaEnv.h"
 #include "Misc/AutomationTest.h"
 #include "UnLuaModule.h"
@@ -53,13 +55,22 @@ package.preload["__MODULE__"] = function()
 
         return {
             SchemaVersion = 2,
+            BlueprintKind = "AnimBlueprint",
             SourceModule = "__MODULE__",
             ParentAnimInstanceClass = "/Script/Engine.AnimInstance",
             TargetSkeleton = "/Engine/EngineMeshes/SkeletalCube_Skeleton.SkeletalCube_Skeleton",
+            ImplementedInterfaces = {
+                "/Script/Engine.AnimInstance",
+                "/Script/Engine.AnimSingleNodeInstance",
+            },
             Layers = {
                 {
                     Id = "Layer.Main",
                     Name = "Main",
+                    FunctionName = "AnimGraph",
+                    InterfaceClass = "",
+                    bOverride = false,
+                    Parameters = {},
                     RootGraphId = "Graph.Main",
                     Graphs = {
                         {
@@ -118,6 +129,14 @@ package.preload["__MODULE__"] = function()
                                 EntryStateId = "",
                                 States = {},
                                 Transitions = {},
+                            },
+                            Layout = {
+                                Style = "LeftToRight",
+                                Grids = {},
+                                Positions = {
+                                    { ElementId = "Node.Main.Output", X = 720, Y = -80 },
+                                    { ElementId = "Node.Main.StateMachine", X = -320, Y = 140 },
+                                },
                             },
                             DeclarationOrder = 1,
                             SourceLocation = Location,
@@ -280,6 +299,169 @@ end
     }
 
     /**
+     * 创建一个精确布局 X 坐标为无穷大的内存模块，验证 Importer 在写入 int32 IR 前拒绝非有限数值。
+     * 函数只替换合法模块中唯一的测试坐标，不访问 Lua VM 或文件系统。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return Positions[2].X 为正无穷大的 Lua chunk。
+     */
+    FString BuildNonFiniteLayoutPositionModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = BuildValidModuleChunk(ModuleName);
+        Chunk.ReplaceInline(
+            TEXT("X = -320"),
+            TEXT("X = 1 / 0"),
+            ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
+     * 创建一个通过真实 LuaAnimGraph/LuaAnimStateMachineGraph SetPosition API 声明精确布局的内存模块。
+     * 模块同时覆盖 Pose Graph、StateMachine Graph 和 StatePose Graph，不引用项目业务 ABP 或动画资产。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return 可注入 package.preload 并由 CompileLuaModule 调用的 Lua chunk。
+     */
+    FString BuildCompilerSetPositionModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = TEXT(R"LUA(
+package.loaded["__MODULE__"] = nil
+package.preload["__MODULE__"] = function()
+    local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
+
+    local PositionBlueprint = LuaAnimBlueprint:Extend("PositionBlueprint", {
+        SourceModule = "__MODULE__",
+        ParentAnimInstanceClass = "/Script/Engine.AnimInstance",
+        TargetSkeleton = "/Engine/EngineMeshes/SkeletalCube_Skeleton.SkeletalCube_Skeleton",
+    })
+
+    function PositionBlueprint:AnimGraph(graph)
+        local machine = graph:StateMachine("Machine")
+        graph.Result:Connect(machine.Pose)
+        graph:SetPosition(machine, -320.0, 140)
+        graph:SetPosition(graph.OutputNode, 720, -80)
+    end
+
+    function PositionBlueprint.StateMachine_Machine(machine)
+        local idle = machine:State("Idle")
+        machine:Entry("Idle")
+        machine:SetPosition(idle, 111, 222)
+    end
+
+    function PositionBlueprint.StateGraph_Machine_Idle(graph)
+        graph:SetPosition(graph.OutputNode, 333, 444)
+    end
+
+    return PositionBlueprint:Export()
+end
+)LUA");
+        Chunk.ReplaceInline(TEXT("__MODULE__"), *ModuleName, ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
+     * 创建一个合法 Animation Layer Interface 内存模块，用于验证资产种类分支及空父类、空骨架契约。
+     * 函数基于完整合法模块替换 Blueprint 根字段，不访问文件系统、Asset Registry 或 Lua VM。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return BlueprintKind 为 AnimationLayerInterface 且不声明具体父类和骨架的 Lua chunk。
+     */
+    FString BuildValidAnimationLayerInterfaceModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = BuildValidModuleChunk(ModuleName);
+        Chunk.ReplaceInline(
+            TEXT("BlueprintKind = \"AnimBlueprint\","),
+            TEXT("BlueprintKind = \"AnimationLayerInterface\","),
+            ESearchCase::CaseSensitive);
+        Chunk.ReplaceInline(
+            TEXT("ParentAnimInstanceClass = \"/Script/Engine.AnimInstance\","),
+            TEXT("ParentAnimInstanceClass = \"\","),
+            ESearchCase::CaseSensitive);
+        Chunk.ReplaceInline(
+            TEXT("TargetSkeleton = \"/Engine/EngineMeshes/SkeletalCube_Skeleton.SkeletalCube_Skeleton\","),
+            TEXT("TargetSkeleton = \"\","),
+            ESearchCase::CaseSensitive);
+        Chunk.ReplaceInline(
+            TEXT(R"LUA(ImplementedInterfaces = {
+                "/Script/Engine.AnimInstance",
+                "/Script/Engine.AnimSingleNodeInstance",
+            },)LUA"),
+            TEXT("ImplementedInterfaces = {},"),
+            ESearchCase::CaseSensitive);
+        Chunk.ReplaceInline(
+            TEXT(R"LUA(                    FunctionName = "AnimGraph",
+                    InterfaceClass = "",
+                    bOverride = false,
+                    Parameters = {},)LUA"),
+            TEXT(R"LUA(                    FunctionName = "Main",
+                    InterfaceClass = "",
+                    bOverride = false,
+                    Parameters = {
+                        {
+                            Name = "SourcePose",
+                            DataType = "Pose",
+                            TypeObjectPath = "",
+                            bIsPose = true,
+                            DeclarationOrder = 1,
+                            SourceLocation = Location,
+                        },
+                    },)LUA"),
+            ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
+     * 创建一个动画层 Pose 参数标记类型非法的内存模块，用于验证函数签名字段的严格导入。
+     * 函数基于合法 Animation Layer Interface 模块替换字段值，不访问文件系统、类加载器或 Lua VM。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return SourcePose.bIsPose 为字符串而非 boolean 的 Lua chunk。
+     */
+    FString BuildInvalidLayerParameterTypeModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = BuildValidAnimationLayerInterfaceModuleChunk(ModuleName);
+        Chunk.ReplaceInline(
+            TEXT("bIsPose = true,"),
+            TEXT("bIsPose = \"true\","),
+            ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
+     * 创建 BlueprintKind 含未知字面量的内存模块，用于验证枚举值诊断。
+     * 函数只替换合法模块的根字段，不访问文件系统或 Lua VM。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return BlueprintKind 为不受支持值的 Lua chunk。
+     */
+    FString BuildInvalidBlueprintKindModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = BuildValidModuleChunk(ModuleName);
+        Chunk.ReplaceInline(
+            TEXT("BlueprintKind = \"AnimBlueprint\","),
+            TEXT("BlueprintKind = \"LinkedAnimGraph\","),
+            ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
+     * 创建 ImplementedInterfaces 含非字符串元素的内存模块，用于验证数组元素类型诊断。
+     * 函数只替换合法模块的接口数组，不访问文件系统、类加载器或 Lua VM。
+     *
+     * @param ModuleName 测试使用的唯一 require 模块名。
+     * @return 第二个接口元素为 number 的 Lua chunk。
+     */
+    FString BuildInvalidImplementedInterfaceElementModuleChunk(const FString& ModuleName)
+    {
+        FString Chunk = BuildValidModuleChunk(ModuleName);
+        Chunk.ReplaceInline(
+            TEXT("\"/Script/Engine.AnimSingleNodeInstance\","),
+            TEXT("17,"),
+            ESearchCase::CaseSensitive);
+        return Chunk;
+    }
+
+    /**
      * 创建 IR 引用了未导出 Transition Rule 的内存模块。
      * 函数仅替换基类函数名，不访问文件系统或 Lua VM；CompileIR 仍声明原始 RuleFunctionName。
      *
@@ -354,8 +536,11 @@ package.preload["__MODULE__"] = function()
         CompileIR = function()
             return {
                 SchemaVersion = "2",
+                BlueprintKind = "AnimBlueprint",
                 SourceModule = "__MODULE__",
                 ParentAnimInstanceClass = "/Script/Engine.AnimInstance",
+                TargetSkeleton = "/Engine/EngineMeshes/SkeletalCube_Skeleton.SkeletalCube_Skeleton",
+                ImplementedInterfaces = {},
                 Layers = {},
                 SourceLocation = {
                     LuaModule = "__MODULE__",
@@ -418,6 +603,17 @@ bool FSekiroAnimGraphIRLuaValidImportTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Valid import has no diagnostics"), Diagnostics.Num(), 0);
     TestEqual(TEXT("Layer count is imported"), Blueprint.Layers.Num(), 1);
     TestEqual(TEXT("Schema version 2 is imported"), Blueprint.SchemaVersion, 2);
+    TestTrue(
+        TEXT("AnimBlueprint kind is imported"),
+        Blueprint.BlueprintKind == ESekiroAnimIRBlueprintKind::AnimBlueprint);
+    TestEqual(
+        TEXT("Implemented interface count is imported"),
+        Blueprint.ImplementedInterfaces.Num(),
+        2);
+    TestTrue(
+        TEXT("Implemented interface class paths are preserved"),
+        Blueprint.ImplementedInterfaces.Contains(
+            FSoftClassPath(TEXT("/Script/Engine.AnimSingleNodeInstance"))));
     TestEqual(
         TEXT("TargetSkeleton path is preserved exactly"),
         Blueprint.TargetSkeleton.ToString(),
@@ -439,6 +635,409 @@ bool FSekiroAnimGraphIRLuaValidImportTest::RunTest(const FString& Parameters)
         TEXT("Soft object path remains unresolved value data"),
         Blueprint.Layers[0].Graphs[0].Nodes[0].Properties[0].Value.SoftObjectPathValue.ToString(),
         FString(TEXT("/Game/Test/Fake.Fake")));
+    const FSekiroAnimIRGraph* ImportedMainGraph = nullptr;
+    for (const FSekiroAnimIRGraph& Graph : Blueprint.Layers[0].Graphs)
+    {
+        if (Graph.Id == TEXT("Graph.Main"))
+        {
+            ImportedMainGraph = &Graph;
+            break;
+        }
+    }
+    TestNotNull(TEXT("Main Graph with exact positions is imported"), ImportedMainGraph);
+    if (ImportedMainGraph != nullptr)
+    {
+        TestEqual(
+            TEXT("Exact positions are imported and canonicalized"),
+            ImportedMainGraph->Layout.Positions.Num(),
+            2);
+        TestEqual(
+            TEXT("Canonical first exact position uses stable ElementId order"),
+            ImportedMainGraph->Layout.Positions[0].ElementId,
+            FString(TEXT("Node.Main.Output")));
+        TestEqual(
+            TEXT("Imported exact X coordinate is preserved"),
+            ImportedMainGraph->Layout.Positions[0].X,
+            720);
+        TestEqual(
+            TEXT("Imported exact Y coordinate is preserved"),
+            ImportedMainGraph->Layout.Positions[0].Y,
+            -80);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaNonFiniteLayoutPositionTest,
+    "Sekiro.AnimGraphIR.Lua.NonFiniteLayoutPosition",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Importer 在精确布局坐标写入 int32 IR 前拒绝 Lua 无穷大。
+ * 测试只修改 package.preload 内存模块，不读取 Content 资产或创建 UObject。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaNonFiniteLayoutPositionTest::RunTest(
+    const FString& Parameters)
+{
+    const FString ModuleName(TEXT("SekiroAnimGraphIRTests.NonFiniteLayoutPosition"));
+    UnLua::FLuaEnv* Environment =
+        SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Non-finite layout module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::
+                BuildNonFiniteLayoutPositionModuleChunk(ModuleName),
+            TEXT("SekiroAnimGraphIRTests.NonFiniteLayoutPosition.Inject")));
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestFalse(
+        TEXT("Non-finite exact layout coordinate is rejected"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            ModuleName,
+            Blueprint,
+            Diagnostics));
+    TestTrue(
+        TEXT("Non-finite exact layout coordinate emits numeric diagnostic"),
+        SekiroAnimGraphIRLuaImporterTests::HasLuaDiagnosticCode(
+            Diagnostics,
+            TEXT("IR.LuaInvalidNumber")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaCompilerSetPositionTest,
+    "Sekiro.AnimGraphIR.Lua.CompilerSetPosition",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证编译器的统一 SetPosition API 会从 Pose、StateMachine 和 StatePose Graph 完整导出精确坐标。
+ * 测试只使用 package.preload 内存模块和编译器 Lua，不读取或生成业务 ABP 资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaCompilerSetPositionTest::RunTest(
+    const FString& Parameters)
+{
+    const FString ModuleName(TEXT("SekiroAnimGraphIRTests.CompilerSetPosition"));
+    UnLua::FLuaEnv* Environment =
+        SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Compiler SetPosition module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::
+                BuildCompilerSetPositionModuleChunk(ModuleName),
+            TEXT("SekiroAnimGraphIRTests.CompilerSetPosition.Inject")));
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestTrue(
+        TEXT("Compiler SetPosition module imports"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            ModuleName,
+            Blueprint,
+            Diagnostics));
+    TestEqual(TEXT("Compiler SetPosition import has no diagnostics"), Diagnostics.Num(), 0);
+
+    const FSekiroAnimIRGraph* MainGraph = nullptr;
+    const FSekiroAnimIRGraph* StateMachineGraph = nullptr;
+    const FSekiroAnimIRGraph* IdleGraph = nullptr;
+    if (!Blueprint.Layers.IsEmpty())
+    {
+        for (const FSekiroAnimIRGraph& Graph : Blueprint.Layers[0].Graphs)
+        {
+            if (Graph.GraphType == SekiroAnimGraphIRNames::PoseGraph) MainGraph = &Graph;
+            else if (Graph.GraphType == SekiroAnimGraphIRNames::StateMachineGraph)
+                StateMachineGraph = &Graph;
+            else if (Graph.GraphType == SekiroAnimGraphIRNames::StatePoseGraph)
+                IdleGraph = &Graph;
+        }
+    }
+    TestNotNull(TEXT("SetPosition test exports Pose Graph"), MainGraph);
+    TestNotNull(TEXT("SetPosition test exports StateMachine Graph"), StateMachineGraph);
+    TestNotNull(TEXT("SetPosition test exports StatePose Graph"), IdleGraph);
+    if (MainGraph != nullptr)
+    {
+        TestEqual(TEXT("Pose Graph exports two exact positions"), MainGraph->Layout.Positions.Num(), 2);
+    }
+    if (StateMachineGraph != nullptr)
+    {
+        TestEqual(
+            TEXT("StateMachine defaults to CompactGrid"),
+            StateMachineGraph->Layout.Style,
+            ESekiroAnimIRLayoutStyle::CompactGrid);
+        TestEqual(
+            TEXT("StateMachine exports one exact State position"),
+            StateMachineGraph->Layout.Positions.Num(),
+            1);
+        if (!StateMachineGraph->Layout.Positions.IsEmpty())
+        {
+            TestEqual(
+                TEXT("State exact X survives compiler and importer"),
+                StateMachineGraph->Layout.Positions[0].X,
+                111);
+            TestEqual(
+                TEXT("State exact Y survives compiler and importer"),
+                StateMachineGraph->Layout.Positions[0].Y,
+                222);
+        }
+    }
+    if (IdleGraph != nullptr)
+    {
+        TestEqual(TEXT("StatePose exports one exact position"), IdleGraph->Layout.Positions.Num(), 1);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaAnimationLayerInterfaceImportTest,
+    "Sekiro.AnimGraphIR.Lua.AnimationLayerInterfaceImport",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Lua 根字段可选择 Animation Layer Interface，且空父类和空骨架不会误走普通 AnimBlueprint 校验。
+ * 测试只修改当前 Lua Env 的内存 module cache，不读取或生成项目资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaAnimationLayerInterfaceImportTest::RunTest(
+    const FString& Parameters)
+{
+    const FString ModuleName(
+        TEXT("SekiroAnimGraphIRTests.AnimationLayerInterfaceImport"));
+    UnLua::FLuaEnv* Environment =
+        SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Animation Layer Interface memory module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::
+                BuildValidAnimationLayerInterfaceModuleChunk(ModuleName),
+            TEXT("SekiroAnimGraphIRTests.AnimationLayerInterfaceImport.Inject")));
+
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestTrue(
+        TEXT("Animation Layer Interface Lua IR imports"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            ModuleName,
+            Blueprint,
+            Diagnostics));
+    TestEqual(
+        TEXT("Animation Layer Interface import has no diagnostics"),
+        Diagnostics.Num(),
+        0);
+    TestTrue(
+        TEXT("Animation Layer Interface kind is preserved"),
+        Blueprint.BlueprintKind
+            == ESekiroAnimIRBlueprintKind::AnimationLayerInterface);
+    TestTrue(
+        TEXT("Animation Layer Interface parent class remains empty"),
+        Blueprint.ParentAnimInstanceClass.IsNull());
+    TestTrue(
+        TEXT("Animation Layer Interface skeleton remains empty"),
+        Blueprint.TargetSkeleton.IsNull());
+    TestEqual(
+        TEXT("Animation Layer Interface implements no interfaces"),
+        Blueprint.ImplementedInterfaces.Num(),
+        0);
+    TestEqual(
+        TEXT("Animation Layer Interface function name is imported"),
+        Blueprint.Layers[0].FunctionName,
+        FName(TEXT("Main")));
+    TestTrue(
+        TEXT("Animation Layer Interface class remains empty"),
+        Blueprint.Layers[0].InterfaceClass.IsNull());
+    TestFalse(
+        TEXT("Animation Layer Interface declaration is not an override"),
+        Blueprint.Layers[0].bOverride);
+    TestEqual(
+        TEXT("Animation Layer Interface imports one function parameter"),
+        Blueprint.Layers[0].Parameters.Num(),
+        1);
+    if (Blueprint.Layers[0].Parameters.Num() == 1)
+    {
+        const FSekiroAnimIRFunctionParameter& Parameter =
+            Blueprint.Layers[0].Parameters[0];
+        TestEqual(
+            TEXT("Animation Layer Interface parameter name is imported"),
+            Parameter.Name,
+            FName(TEXT("SourcePose")));
+        TestEqual(
+            TEXT("Animation Layer Interface parameter data type is imported"),
+            Parameter.DataType,
+            FName(TEXT("Pose")));
+        TestTrue(
+            TEXT("Animation Layer Interface parameter pose flag is imported"),
+            Parameter.bIsPose);
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaInvalidLayerParameterTypeTest,
+    "Sekiro.AnimGraphIR.Lua.InvalidLayerParameterType",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证动画层函数参数只接受严格字段类型，并为非法 bIsPose 返回精确路径诊断。
+ * 测试只使用 package.preload 内存模块，不读取或生成项目资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaInvalidLayerParameterTypeTest::RunTest(
+    const FString& Parameters)
+{
+    const FString ModuleName(
+        TEXT("SekiroAnimGraphIRTests.InvalidLayerParameterType"));
+    UnLua::FLuaEnv* Environment =
+        SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Invalid Layer parameter module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::
+                BuildInvalidLayerParameterTypeModuleChunk(ModuleName),
+            TEXT("SekiroAnimGraphIRTests.InvalidLayerParameterType.Inject")));
+
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestFalse(
+        TEXT("String Layer parameter bIsPose is rejected"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            ModuleName,
+            Blueprint,
+            Diagnostics));
+    TestTrue(
+        TEXT("Invalid Layer parameter emits stable type diagnostic"),
+        SekiroAnimGraphIRLuaImporterTests::HasLuaDiagnosticCode(
+            Diagnostics,
+            TEXT("IR.LuaInvalidFieldType")));
+    if (!Diagnostics.IsEmpty())
+    {
+        TestEqual(
+            TEXT("Layer parameter diagnostic identifies exact field"),
+            Diagnostics[0].SubjectId,
+            FString(TEXT("Blueprint.Layers[1].Parameters[1].bIsPose")));
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaInvalidBlueprintKindTest,
+    "Sekiro.AnimGraphIR.Lua.InvalidBlueprintKind",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证未知 BlueprintKind 在导入阶段被拒绝，并返回精确字段路径和稳定枚举诊断。
+ * 测试只使用 package.preload 内存模块，不加载任何类或项目资产。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaInvalidBlueprintKindTest::RunTest(
+    const FString& Parameters)
+{
+    const FString ModuleName(TEXT("SekiroAnimGraphIRTests.InvalidBlueprintKind"));
+    UnLua::FLuaEnv* Environment =
+        SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Invalid BlueprintKind memory module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::
+                BuildInvalidBlueprintKindModuleChunk(ModuleName),
+            TEXT("SekiroAnimGraphIRTests.InvalidBlueprintKind.Inject")));
+
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestFalse(
+        TEXT("Unknown BlueprintKind is rejected"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            ModuleName,
+            Blueprint,
+            Diagnostics));
+    TestTrue(
+        TEXT("Unknown BlueprintKind emits stable enum diagnostic"),
+        SekiroAnimGraphIRLuaImporterTests::HasLuaDiagnosticCode(
+            Diagnostics,
+            TEXT("IR.LuaInvalidEnumValue")));
+    if (!Diagnostics.IsEmpty())
+    {
+        TestEqual(
+            TEXT("BlueprintKind diagnostic identifies exact field"),
+            Diagnostics[0].SubjectId,
+            FString(TEXT("Blueprint.BlueprintKind")));
+    }
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaInvalidImplementedInterfaceElementTest,
+    "Sekiro.AnimGraphIR.Lua.InvalidImplementedInterfaceElement",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 ImplementedInterfaces 只接受连续字符串数组，非字符串元素返回精确元素路径诊断。
+ * 测试只使用 package.preload 内存模块，不解析或加载接口类。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaInvalidImplementedInterfaceElementTest::RunTest(
+    const FString& Parameters)
+{
+    const FString ModuleName(
+        TEXT("SekiroAnimGraphIRTests.InvalidImplementedInterfaceElement"));
+    UnLua::FLuaEnv* Environment =
+        SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Invalid interface element memory module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::
+                BuildInvalidImplementedInterfaceElementModuleChunk(ModuleName),
+            TEXT(
+                "SekiroAnimGraphIRTests.InvalidImplementedInterfaceElement.Inject")));
+
+    FSekiroAnimBlueprintIR Blueprint;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestFalse(
+        TEXT("Non-string implemented interface is rejected"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            ModuleName,
+            Blueprint,
+            Diagnostics));
+    TestTrue(
+        TEXT("Non-string implemented interface emits stable type diagnostic"),
+        SekiroAnimGraphIRLuaImporterTests::HasLuaDiagnosticCode(
+            Diagnostics,
+            TEXT("IR.LuaInvalidFieldType")));
+    if (!Diagnostics.IsEmpty())
+    {
+        TestEqual(
+            TEXT("Implemented interface diagnostic identifies exact element"),
+            Diagnostics[0].SubjectId,
+            FString(TEXT("Blueprint.ImplementedInterfaces[2]")));
+    }
     return true;
 }
 
@@ -742,6 +1341,115 @@ bool FSekiroAnimGraphIRLuaDeterminismTest::RunTest(const FString& Parameters)
     TestTrue(
         TEXT("Repeated compile produces identical reflected IR"),
         FSekiroAnimBlueprintIR::StaticStruct()->CompareScriptStruct(&FirstBlueprint, &SecondBlueprint, 0));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRLuaWriterRoundTripTest,
+    "Sekiro.AnimGraphIR.Lua.WriterRoundTrip",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证 Writer 对同一 Canonical IR 产生字节稳定文本，正确转义字符串并保留精确布局坐标。
+ * 生成模块通过 package.preload 注入当前 UnLua Env，再由现有 Importer 回读；测试不写文件、
+ * 不创建 UObject，并确认 RuleFunctionName 仍从 IR.SourceModule 的运行时模块解析。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRLuaWriterRoundTripTest::RunTest(const FString& Parameters)
+{
+    const FString SourceModule(TEXT("SekiroAnimGraphIRTests.WriterSource"));
+    const FString GeneratedModule(TEXT("SekiroAnimGraphIRTests.WriterSource.generated"));
+    UnLua::FLuaEnv* Environment = SekiroAnimGraphIRLuaImporterTests::GetOrActivateTestEnvironment();
+    TestNotNull(TEXT("Writer test UnLua environment is available"), Environment);
+    if (Environment == nullptr) return true;
+
+    TestTrue(
+        TEXT("Writer source module is injected"),
+        Environment->DoString(
+            SekiroAnimGraphIRLuaImporterTests::BuildValidModuleChunk(SourceModule),
+            TEXT("SekiroAnimGraphIRTests.WriterSource.Inject")));
+
+    FSekiroAnimBlueprintIR SourceIR;
+    TArray<FSekiroAnimIRDiagnostic> SourceDiagnostics;
+    TestTrue(
+        TEXT("Writer source module imports"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            SourceModule,
+            SourceIR,
+            SourceDiagnostics));
+    if (!SourceIR.Layers.IsEmpty() && !SourceIR.Layers[0].Graphs.IsEmpty())
+    {
+        SourceIR.Layers[0].Graphs[0].Name = TEXT("Main \"line\"\n\t\\中文");
+    }
+    if (SourceIR.Layers.IsEmpty()) return true;
+    for (FSekiroAnimIRGraph& Graph : SourceIR.Layers[0].Graphs)
+    {
+        if (Graph.StateMachine.Transitions.IsEmpty()) continue;
+        FSekiroAnimIRTransition& Transition = Graph.StateMachine.Transitions[0];
+        Transition.Gate.RootIndex = 0;
+        FSekiroAnimIRTransitionGateNode& GateNode =
+            Transition.Gate.Nodes.AddDefaulted_GetRef();
+        GateNode.Type = TEXT("LuaBool");
+        break;
+    }
+
+    FString FirstText;
+    FString SecondText;
+    TArray<FSekiroAnimIRDiagnostic> FirstDiagnostics;
+    TArray<FSekiroAnimIRDiagnostic> SecondDiagnostics;
+    TestTrue(
+        TEXT("First deterministic write succeeds"),
+        FSekiroAnimGraphIRLuaWriter::WriteModule(
+            SourceIR,
+            FirstText,
+            FirstDiagnostics));
+    TestTrue(
+        TEXT("Second deterministic write succeeds"),
+        FSekiroAnimGraphIRLuaWriter::WriteModule(
+            SourceIR,
+            SecondText,
+            SecondDiagnostics));
+    TestEqual(TEXT("Repeated writes are byte-stable"), FirstText, SecondText);
+    TestTrue(TEXT("Writer escapes quote"), FirstText.Contains(TEXT("\\\"line\\\"")));
+    TestTrue(TEXT("Writer escapes newline"), FirstText.Contains(TEXT("\\n")));
+    TestTrue(TEXT("Writer escapes tab"), FirstText.Contains(TEXT("\\t")));
+    TestTrue(TEXT("Writer preserves negative layout Y"), FirstText.Contains(TEXT("Y = -80")));
+    TestTrue(TEXT("Writer preserves Rule AST root"), FirstText.Contains(TEXT("RootIndex = 0")));
+    TestTrue(TEXT("Writer preserves Rule AST node type"), FirstText.Contains(TEXT("Type = \"LuaBool\"")));
+    TestTrue(TEXT("Writer emits Integer IR value storage"), FirstText.Contains(TEXT("IntegerValue = 0")));
+    TestTrue(TEXT("Writer emits Name IR value storage"), FirstText.Contains(TEXT("NameValue = \"\"")));
+    TestTrue(TEXT("Writer emits String IR value storage"), FirstText.Contains(TEXT("StringValue = \"\"")));
+    TestTrue(TEXT("Writer emits SoftClass IR value storage"), FirstText.Contains(TEXT("SoftClassPathValue = \"\"")));
+    TestTrue(
+        TEXT("Writer delegates runtime rules to SourceModule"),
+        FirstText.Contains(TEXT("local RuntimeModule = require(IR.SourceModule)")));
+
+    const FString GeneratedChunk = TEXT("package.loaded[\"") + GeneratedModule
+        + TEXT("\"] = nil\npackage.preload[\"") + GeneratedModule
+        + TEXT("\"] = function()\n") + FirstText + TEXT("\nend\n");
+    TestTrue(
+        TEXT("Generated writer module is injected"),
+        Environment->DoString(
+            GeneratedChunk,
+            TEXT("SekiroAnimGraphIRTests.WriterGenerated.Inject")));
+
+    FSekiroAnimBlueprintIR RoundTripIR;
+    TArray<FSekiroAnimIRDiagnostic> RoundTripDiagnostics;
+    TestTrue(
+        TEXT("Generated module imports through existing CompileLuaModule"),
+        USekiroAnimGraphIRLibrary::CompileLuaModule(
+            GeneratedModule,
+            RoundTripIR,
+            RoundTripDiagnostics));
+    USekiroAnimGraphIRLibrary::Canonicalize(SourceIR);
+    TestTrue(
+        TEXT("Writer and Importer preserve complete Canonical IR"),
+        FSekiroAnimBlueprintIR::StaticStruct()->CompareScriptStruct(
+            &SourceIR,
+            &RoundTripIR,
+            0));
     return true;
 }
 

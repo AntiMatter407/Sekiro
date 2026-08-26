@@ -2,11 +2,11 @@
 
 #include "Animation/AnimBlueprint.h"
 #include "Editor.h"
-#include "Framework/Commands/InputBindingManager.h"
 #include "Framework/Commands/UICommandList.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "IAnimationBlueprintEditor.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/MessageDialog.h"
 #include "Modules/ModuleManager.h"
 #include "SekiroAnimBlueprintFactoryLibrary.h"
 #include "SekiroLuaAnimBlueprintExtension.h"
@@ -24,8 +24,9 @@ namespace
 {
     const FName CheckLuaToolbarBlockName(TEXT("Sekiro.CheckLua"));
     const FName GenerateFromLuaToolbarBlockName(TEXT("Sekiro.GenerateFromLua"));
+    const FName ExportToLuaToolbarBlockName(TEXT("Sekiro.ExportToLua"));
+    const FName SyncStatusToolbarBlockName(TEXT("Sekiro.SyncStatus"));
     const FName EditorLuaDebugToolbarBlockName(TEXT("Sekiro.EditorLuaDebug"));
-    const FName SourceModeToolbarBlockName(TEXT("Sekiro.SourceMode"));
     const FName LuaModuleToolbarBlockName(TEXT("Sekiro.LuaModule"));
     const TCHAR* EditorLuaDebugConfigSection = TEXT("SekiroAnimBlueprintExtEditor.LuaDebug");
     const TCHAR* EditorLuaDebugConfigKey = TEXT("EnableEditorDebug");
@@ -189,7 +190,7 @@ bool FSekiroLuaAnimBlueprintEditorBinding::IsEditorLuaDebugEnabled()
 }
 
 /**
- * 创建生产环境编辑器绑定并立即捕获、包装该编辑器已经注册的两个原生 Compile 动作。
+ * 创建生产环境编辑器绑定，只添加 Lua 手动操作，不查询或重绑定原生 Compile/F7。
  * 必须由官方动画蓝图工具栏扩展回调在游戏线程调用；返回对象不拥有 Editor 或 CommandList。
  *
  * @param CommandList 动画蓝图编辑器的有效 Toolkit 命令列表。
@@ -201,52 +202,29 @@ FSekiroLuaAnimBlueprintEditorBinding::Create(
     const TSharedRef<FUICommandList>& CommandList,
     const TSharedRef<IAnimationBlueprintEditor>& Editor)
 {
-    const TSharedPtr<FUICommandInfo> ToolbarCompileCommand =
-        FInputBindingManager::Get().FindCommandInContext(
-            TEXT("FullBlueprintEditor"),
-            TEXT("Compile"));
-    TSharedRef<FSekiroLuaAnimBlueprintEditorBinding> Binding =
-        MakeShareable(new FSekiroLuaAnimBlueprintEditorBinding(
-            CommandList,
-            Editor,
-            nullptr,
-            ToolbarCompileCommand));
-    Binding->Initialize();
-    return Binding;
+    return MakeShareable(new FSekiroLuaAnimBlueprintEditorBinding(
+        CommandList,
+        Editor,
+        nullptr));
 }
 
 /**
- * 创建不依赖实际编辑器窗口的测试绑定，仍在传入 FUICommandList 上执行真实 ExecuteAction 路径。
+ * 创建不依赖实际编辑器窗口的测试绑定，不触碰传入命令列表的任何原生动作。
  * 只能在游戏线程测试中调用；绑定不拥有 AnimBlueprint。
  *
- * @param CommandList 已预先映射原生 Compile 动作的测试命令列表。
+ * @param CommandList 测试命令列表；已映射命令必须保持原样。
  * @param AnimBlueprint 测试目标动画蓝图，可为空以验证禁用行为。
- * @param CompileCommand 测试命令列表中代表 Compile 的命令信息，不要求使用编辑器私有命令类型。
- * @return 已包装命令的测试绑定对象。
+ * @return 只提供 Lua 工具栏的测试绑定对象。
  */
 TSharedRef<FSekiroLuaAnimBlueprintEditorBinding>
 FSekiroLuaAnimBlueprintEditorBinding::CreateForTest(
     const TSharedRef<FUICommandList>& CommandList,
-    UAnimBlueprint* AnimBlueprint,
-    const TSharedPtr<const FUICommandInfo>& CompileCommand)
+    UAnimBlueprint* AnimBlueprint)
 {
-    TSharedRef<FSekiroLuaAnimBlueprintEditorBinding> Binding =
-        MakeShareable(new FSekiroLuaAnimBlueprintEditorBinding(
-            CommandList,
-            nullptr,
-            AnimBlueprint,
-            CompileCommand));
-    Binding->Initialize();
-    return Binding;
-}
-
-/**
- * 析构绑定时恢复捕获的 UE 原生 Compile 动作，避免模块卸载后命令列表保留插件委托。
- * 析构应发生在游戏线程；命令列表已销毁时安全跳过。
- */
-FSekiroLuaAnimBlueprintEditorBinding::~FSekiroLuaAnimBlueprintEditorBinding()
-{
-    RestoreOriginalCompileActions();
+    return MakeShareable(new FSekiroLuaAnimBlueprintEditorBinding(
+        CommandList,
+        nullptr,
+        AnimBlueprint));
 }
 
 /**
@@ -273,7 +251,7 @@ TSharedRef<FExtender> FSekiroLuaAnimBlueprintEditorBinding::GetToolbarExtender()
 }
 
 /**
- * 在原生 Compile 区段后添加 Check Lua、Generate From Lua 与持久化 Source Mode 下拉控件。
+ * 在原生 Compile 区段后添加 Check Lua、双向同步、同步状态、模块配置与调试控件。
  * 只能在工具栏构建阶段于游戏线程调用；首次收到的有效 MultiBox 会立即填充，不依赖构建顺序。
  * 绑定通过弱引用记录每个已填充 MultiBox；同一实例重复回调时跳过，失效实例会被及时清理。
  *
@@ -306,9 +284,25 @@ void FSekiroLuaAnimBlueprintEditorBinding::FillToolbar(FToolBarBuilder& ToolbarB
             FExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::ExecuteGenerateFromLua),
             FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction)),
         GenerateFromLuaToolbarBlockName,
-        LOCTEXT("GenerateFromLuaLabel", "Generate From Lua"),
-        LOCTEXT("GenerateFromLuaTooltip", "Transactionally rebuild this Animation Blueprint Graph from the latest valid Lua IR."),
+        LOCTEXT("GenerateFromLuaLabel", "Lua → AnimBlueprint"),
+        LOCTEXT("GenerateFromLuaTooltip", "Explicitly import Lua IR, rebuild the Graph, and run one native compile without saving. Compile/F7 and PIE never run this action automatically."),
         FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh"));
+    ToolbarBuilder.AddToolBarButton(
+        FUIAction(
+            FExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::ExecuteExportToLua),
+            FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction)),
+        ExportToLuaToolbarBlockName,
+        LOCTEXT("ExportToLuaLabel", "AnimBlueprint → Lua"),
+        LOCTEXT("ExportToLuaTooltip", "Explicitly export the current Graph to the generated Lua exchange module without changing the Graph."),
+        FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Save"));
+    ToolbarBuilder.AddToolBarButton(
+        FUIAction(
+            FExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::ExecuteRefreshSyncStatus),
+            FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction)),
+        SyncStatusToolbarBlockName,
+        TAttribute<FText>::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::GetSyncStatusText),
+        LOCTEXT("SyncStatusTooltip", "Read both Canonical IR sources and refresh synchronization status without changing the Graph or Lua file."),
+        FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search"));
     ToolbarBuilder.AddWidget(
         SNew(SEditableTextBox)
         .MinDesiredWidth(240.0f)
@@ -332,16 +326,6 @@ void FSekiroLuaAnimBlueprintEditorBinding::FillToolbar(FToolBarBuilder& ToolbarB
             "When enabled, listen on Lua debug port 9966 before PIE so Check Lua and CompileIR breakpoints can be hit. When disabled, Main.lua starts debugging after PIE begins."),
         FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Visible"),
         EUserInterfaceActionType::ToggleButton);
-    ToolbarBuilder.AddComboButton(
-        FUIAction(
-            FExecuteAction(),
-            FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction)),
-        FOnGetContent::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::MakeSourceModeMenu),
-        TAttribute<FText>::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::GetSourceModeLabel),
-        LOCTEXT("SourceModeTooltip", "Choose whether Compile and F7 use the native Blueprint Graph or Lua as the source."),
-        FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.SwitchToScriptingMode"),
-        false,
-        SourceModeToolbarBlockName);
 }
 
 /**
@@ -368,104 +352,20 @@ bool FSekiroLuaAnimBlueprintEditorBinding::UsesCommandList(
 }
 
 /**
- * 将 FullBlueprintEditor 工具栏 Compile 与 BlueprintEditor F7 命令恢复为绑定创建时捕获的原动作。
- * 可重复调用；必须在游戏线程执行，命令列表已销毁时安全跳过。
- */
-void FSekiroLuaAnimBlueprintEditorBinding::RestoreOriginalCompileActions()
-{
-    if (bActionsRestored) return;
-    bActionsRestored = true;
-    const TSharedPtr<FUICommandList> PinnedCommands = CommandList.Pin();
-    if (!PinnedCommands.IsValid()) return;
-
-    if (ToolbarCompileCommand.IsValid())
-    {
-        PinnedCommands->MapAction(
-            ToolbarCompileCommand,
-            OriginalToolbarCompileAction);
-    }
-    if (KeyboardCompileCommand.IsValid())
-    {
-        PinnedCommands->MapAction(
-            KeyboardCompileCommand,
-            OriginalKeyboardCompileAction);
-    }
-}
-
-/**
- * 保存生产或测试上下文的弱引用；命令捕获延迟到 Initialize，确保 SharedThis 已经可用。
+ * 保存生产或测试上下文的弱引用，不查询、捕获或重绑定命令列表中的 Compile/F7。
  *
  * @param InCommandList 有效 Toolkit 或测试命令列表。
  * @param InEditor 生产环境编辑器，可为空。
  * @param AnimBlueprint 测试环境资产；生产环境应为空。
- * @param CompileCommand 要包装的工具栏 Compile 命令；测试可传任意已映射命令。
  */
 FSekiroLuaAnimBlueprintEditorBinding::FSekiroLuaAnimBlueprintEditorBinding(
     const TSharedRef<FUICommandList>& InCommandList,
     const TSharedPtr<IAnimationBlueprintEditor>& InEditor,
-    UAnimBlueprint* AnimBlueprint,
-    const TSharedPtr<const FUICommandInfo>& CompileCommand)
+    UAnimBlueprint* AnimBlueprint)
     : CommandList(InCommandList)
     , Editor(InEditor)
     , TestAnimBlueprint(AnimBlueprint)
-    , ToolbarCompileCommand(CompileCommand)
 {
-}
-
-/**
- * 捕获当前命令列表中的原生 Compile 动作，再用模式化代理分别覆盖工具栏 Compile 和 F7。
- * 必须恰好调用一次且在游戏线程执行；缺失原动作时保留空动作并让对应命令不可执行。
- */
-void FSekiroLuaAnimBlueprintEditorBinding::Initialize()
-{
-    const TSharedPtr<FUICommandList> PinnedCommands = CommandList.Pin();
-    if (!PinnedCommands.IsValid()) return;
-
-    const FUIAction* ToolbarAction =
-        ToolbarCompileCommand.IsValid()
-            ? PinnedCommands->GetActionForCommand(ToolbarCompileCommand)
-            : nullptr;
-    KeyboardCompileCommand = FInputBindingManager::Get().FindCommandInContext(
-        TEXT("BlueprintEditor"),
-        TEXT("CompileBlueprint"));
-    const FUIAction* KeyboardAction = KeyboardCompileCommand.IsValid()
-        ? PinnedCommands->GetActionForCommand(KeyboardCompileCommand)
-        : nullptr;
-    if (ToolbarAction != nullptr) OriginalToolbarCompileAction = *ToolbarAction;
-    if (KeyboardAction != nullptr) OriginalKeyboardCompileAction = *KeyboardAction;
-
-    if (ToolbarCompileCommand.IsValid())
-    {
-        PinnedCommands->MapAction(
-            ToolbarCompileCommand,
-            FUIAction(
-                FExecuteAction::CreateSP(
-                    this,
-                    &FSekiroLuaAnimBlueprintEditorBinding::ExecuteModeAwareCompile,
-                    OriginalToolbarCompileAction),
-                FCanExecuteAction::CreateSP(
-                    this,
-                    &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteModeAwareCompile,
-                    OriginalToolbarCompileAction)));
-    }
-    if (KeyboardCompileCommand.IsValid())
-    {
-        PinnedCommands->MapAction(
-            KeyboardCompileCommand,
-            FUIAction(
-                FExecuteAction::CreateSP(
-                    this,
-                    &FSekiroLuaAnimBlueprintEditorBinding::ExecuteModeAwareCompile,
-                    OriginalKeyboardCompileAction),
-                FCanExecuteAction::CreateSP(
-                    this,
-                    &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteModeAwareCompile,
-                    OriginalKeyboardCompileAction)));
-    }
-    UE_LOG(
-        LogSekiroLuaAnimBlueprintEditorBinding,
-        Verbose,
-        TEXT("Bound Check Lua, Generate From Lua and mode-aware Compile commands."));
 }
 
 /**
@@ -479,81 +379,6 @@ UAnimBlueprint* FSekiroLuaAnimBlueprintEditorBinding::GetAnimBlueprint() const
     const TSharedPtr<IAnimationBlueprintEditor> PinnedEditor = Editor.Pin();
     if (PinnedEditor.IsValid()) return Cast<UAnimBlueprint>(PinnedEditor->GetBlueprintObj());
     return TestAnimBlueprint.Get();
-}
-
-/**
- * 根据持久化 SourceMode 执行普通 Compile：Native 直接委托原动作；Lua 源过期时先 Check 和 Generate，
- * 源未变化时直接执行原生编译，避免设置修改触发整图重建。Lua 前置阶段失败时绝不调用原动作；
- * 原生动作返回后根据 Blueprint 状态提交成功或失败元数据。
- *
- * @param OriginalAction 本次命令在包装前捕获的 UE 原生动作副本。
- */
-void FSekiroLuaAnimBlueprintEditorBinding::ExecuteModeAwareCompile(FUIAction OriginalAction)
-{
-    UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    USekiroLuaAnimBlueprintExtension* Extension = EnsureLocalLuaExtension();
-    if (Extension == nullptr
-        || Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint)
-    {
-        OriginalAction.Execute();
-        return;
-    }
-
-    const bool bRequiresLuaGraphGeneration =
-        Extension->bSourceDirty
-        || Extension->CompilerVersion
-            != USekiroLuaAnimBlueprintExtension::CurrentCompilerVersion;
-    if (bRequiresLuaGraphGeneration)
-    {
-        TArray<FSekiroAnimIRDiagnostic> Diagnostics;
-        if (!USekiroAnimBlueprintFactoryLibrary::CheckLuaAnimBlueprint(
-                AnimBlueprint,
-                Diagnostics))
-        {
-            LogDiagnostics(TEXT("Check Lua"), AnimBlueprint, Diagnostics);
-            return;
-        }
-        if (!USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
-                AnimBlueprint,
-                Diagnostics))
-        {
-            LogDiagnostics(TEXT("Generate From Lua"), AnimBlueprint, Diagnostics);
-            return;
-        }
-    }
-
-    OriginalAction.Execute();
-    Extension = USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
-    if (Extension == nullptr) return;
-    Extension->Modify();
-    if (AnimBlueprint->Status != BS_Error && AnimBlueprint->GeneratedClass != nullptr)
-    {
-        Extension->MarkCompileSucceeded();
-    }
-    else
-    {
-        Extension->MarkCompileFailed(
-            TEXT("UE native AnimBlueprint compilation failed after Generate From Lua."));
-    }
-    AnimBlueprint->GetOutermost()->MarkPackageDirty();
-}
-
-/**
- * 保留原生 Compile 的 CanExecute 约束；Lua 模式还要求目标存在有效 Lua 扩展。
- *
- * @param OriginalAction 包装前的 UE 原生动作。
- * @return 原动作允许执行且当前模式所需元数据有效时返回 true。
- */
-bool FSekiroLuaAnimBlueprintEditorBinding::CanExecuteModeAwareCompile(
-    FUIAction OriginalAction) const
-{
-    if (!OriginalAction.CanExecute()) return false;
-    UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
-    return Extension == nullptr
-        || Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint
-        || !Extension->LuaModuleName.IsEmpty();
 }
 
 /**
@@ -577,22 +402,107 @@ void FSekiroLuaAnimBlueprintEditorBinding::ExecuteCheckLua()
 }
 
 /**
- * 使用有效缓存或自动 Check 的结果事务性重建 Graph，并输出定位诊断；不调用原生编译或保存资产。
+ * 显式导入 Lua IR、事务性重建 Graph 并执行一次原生编译；不自动保存资产。
+ * 若当前 Blueprint 侧相对同步点已改变，会在任何结构修改前要求用户确认。
  */
 void FSekiroLuaAnimBlueprintEditorBinding::ExecuteGenerateFromLua()
+{
+    UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
+    USekiroLuaAnimBlueprintExtension* Extension = EnsureLocalLuaExtension();
+    if (Extension == nullptr) return;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    if (!USekiroAnimBlueprintFactoryLibrary::RefreshLuaAnimBlueprintSyncStatus(
+        AnimBlueprint,
+        Diagnostics))
+    {
+        LogDiagnostics(TEXT("Refresh Sync Status"), AnimBlueprint, Diagnostics);
+        return;
+    }
+    if ((Extension->SyncStatus == ESekiroLuaAnimBlueprintSyncStatus::BlueprintChanged
+            || Extension->SyncStatus == ESekiroLuaAnimBlueprintSyncStatus::BothChanged)
+        && FMessageDialog::Open(
+            EAppMsgType::YesNo,
+            LOCTEXT(
+                "ConfirmLuaImportOverwrite",
+                "The Animation Blueprint Graph changed after the last synchronization. Importing Lua will overwrite those Blueprint-side changes. Continue?"))
+            != EAppReturnType::Yes)
+    {
+        return;
+    }
+
+    const bool bSucceeded = USekiroAnimBlueprintFactoryLibrary::CompileLuaAnimBlueprintInPlace(
+        AnimBlueprint,
+        false,
+        Diagnostics);
+    LogDiagnostics(TEXT("Lua → AnimBlueprint"), AnimBlueprint, Diagnostics);
+    UE_LOG(
+        LogSekiroLuaAnimBlueprintEditorBinding,
+        Display,
+        TEXT("Lua → AnimBlueprint %s for '%s'."),
+        bSucceeded ? TEXT("succeeded") : TEXT("failed"),
+        AnimBlueprint != nullptr ? *AnimBlueprint->GetPathName() : TEXT("None"));
+}
+
+/**
+ * 显式把当前 Graph 安全导出到 generated Lua 交换模块；Lua 侧相对同步点改变时先确认覆盖。
+ * 取消发生在 Writer 或文件操作之前，因此不会修改 Graph、文件、同步基线或 package。
+ */
+void FSekiroLuaAnimBlueprintEditorBinding::ExecuteExportToLua()
+{
+    UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
+    USekiroLuaAnimBlueprintExtension* Extension = EnsureLocalLuaExtension();
+    if (Extension == nullptr) return;
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    if (!USekiroAnimBlueprintFactoryLibrary::RefreshLuaAnimBlueprintSyncStatus(
+        AnimBlueprint,
+        Diagnostics))
+    {
+        LogDiagnostics(TEXT("Refresh Sync Status"), AnimBlueprint, Diagnostics);
+        return;
+    }
+    if ((Extension->SyncStatus == ESekiroLuaAnimBlueprintSyncStatus::LuaChanged
+            || Extension->SyncStatus == ESekiroLuaAnimBlueprintSyncStatus::BothChanged)
+        && FMessageDialog::Open(
+            EAppMsgType::YesNo,
+            LOCTEXT(
+                "ConfirmLuaExportOverwrite",
+                "The generated Lua exchange module changed after the last synchronization. Exporting the Animation Blueprint will overwrite those Lua-side changes. Continue?"))
+            != EAppReturnType::Yes)
+    {
+        return;
+    }
+
+    FString GeneratedModuleName;
+    const bool bSucceeded = USekiroAnimBlueprintFactoryLibrary::AnimBlueprintToLua(
+        AnimBlueprint,
+        GeneratedModuleName,
+        Diagnostics,
+        true);
+    LogDiagnostics(TEXT("AnimBlueprint → Lua"), AnimBlueprint, Diagnostics);
+    UE_LOG(
+        LogSekiroLuaAnimBlueprintEditorBinding,
+        Display,
+        TEXT("AnimBlueprint → Lua %s for '%s'%s."),
+        bSucceeded ? TEXT("succeeded") : TEXT("failed"),
+        AnimBlueprint != nullptr ? *AnimBlueprint->GetPathName() : TEXT("None"),
+        GeneratedModuleName.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" as '%s'"), *GeneratedModuleName));
+}
+
+/** 只读刷新并记录当前 Graph/Lua 同步状态，不触发导入、导出、编译或保存。 */
+void FSekiroLuaAnimBlueprintEditorBinding::ExecuteRefreshSyncStatus()
 {
     UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
     if (EnsureLocalLuaExtension() == nullptr) return;
     TArray<FSekiroAnimIRDiagnostic> Diagnostics;
     const bool bSucceeded =
-        USekiroAnimBlueprintFactoryLibrary::GenerateLuaAnimBlueprintGraph(
+        USekiroAnimBlueprintFactoryLibrary::RefreshLuaAnimBlueprintSyncStatus(
             AnimBlueprint,
             Diagnostics);
-    LogDiagnostics(TEXT("Generate From Lua"), AnimBlueprint, Diagnostics);
+    LogDiagnostics(TEXT("Refresh Sync Status"), AnimBlueprint, Diagnostics);
     UE_LOG(
         LogSekiroLuaAnimBlueprintEditorBinding,
         Display,
-        TEXT("Generate From Lua %s for '%s'."),
+        TEXT("Sync status refresh %s for '%s'."),
         bSucceeded ? TEXT("succeeded") : TEXT("failed"),
         AnimBlueprint != nullptr ? *AnimBlueprint->GetPathName() : TEXT("None"));
 }
@@ -653,8 +563,6 @@ FSekiroLuaAnimBlueprintEditorBinding::EnsureLocalLuaExtension()
     }
 
     const FString InheritedModuleName = EffectiveExtension->LuaModuleName;
-    const ESekiroLuaAnimBlueprintSourceMode InheritedSourceMode =
-        EffectiveExtension->SourceMode;
     if (!USekiroAnimBlueprintFactoryLibrary::ConfigureLuaAnimBlueprintSource(
             AnimBlueprint,
             InheritedModuleName))
@@ -662,12 +570,7 @@ FSekiroLuaAnimBlueprintEditorBinding::EnsureLocalLuaExtension()
         return nullptr;
     }
 
-    LocalExtension = USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
-    if (LocalExtension != nullptr)
-    {
-        LocalExtension->SourceMode = InheritedSourceMode;
-    }
-    return LocalExtension;
+    return USekiroLuaAnimBlueprintExtension::Find(AnimBlueprint);
 }
 
 /**
@@ -683,6 +586,35 @@ FText FSekiroLuaAnimBlueprintEditorBinding::GetLuaModuleNameText() const
     return Extension != nullptr
         ? FText::FromString(Extension->LuaModuleName)
         : FText::GetEmpty();
+}
+
+/**
+ * 将扩展同步枚举转换为紧凑、统一的英文工具栏标签；函数只读扩展内存状态。
+ *
+ * @return 当前状态标签；没有本地扩展时返回 Never Synchronized。
+ */
+FText FSekiroLuaAnimBlueprintEditorBinding::GetSyncStatusText() const
+{
+    const USekiroLuaAnimBlueprintExtension* Extension =
+        USekiroLuaAnimBlueprintExtension::Find(GetAnimBlueprint());
+    const ESekiroLuaAnimBlueprintSyncStatus Status = Extension != nullptr
+        ? Extension->SyncStatus
+        : ESekiroLuaAnimBlueprintSyncStatus::NeverSynchronized;
+    switch (Status)
+    {
+    case ESekiroLuaAnimBlueprintSyncStatus::InSync:
+        return LOCTEXT("SyncStatusInSync", "Sync: In Sync");
+    case ESekiroLuaAnimBlueprintSyncStatus::BlueprintChanged:
+        return LOCTEXT("SyncStatusBlueprintChanged", "Sync: Blueprint Changed");
+    case ESekiroLuaAnimBlueprintSyncStatus::LuaChanged:
+        return LOCTEXT("SyncStatusLuaChanged", "Sync: Lua Changed");
+    case ESekiroLuaAnimBlueprintSyncStatus::BothChanged:
+        return LOCTEXT("SyncStatusBothChanged", "Sync: Both Changed");
+    case ESekiroLuaAnimBlueprintSyncStatus::Error:
+        return LOCTEXT("SyncStatusError", "Sync: Error");
+    default:
+        return LOCTEXT("SyncStatusNever", "Sync: Never Synchronized");
+    }
 }
 
 /**
@@ -764,104 +696,6 @@ FText FSekiroLuaAnimBlueprintEditorBinding::GetEditorLuaDebugLabel() const
     return IsEditorLuaDebugEnabled()
         ? LOCTEXT("EditorLuaDebugOnLabel", "Editor Debug: On")
         : LOCTEXT("EditorLuaDebugOffLabel", "Editor Debug: Off");
-}
-
-/**
- * 构建 Source Mode 单选菜单；菜单项通过扩展 UPROPERTY 持久化到当前动画蓝图资产。
- *
- * @return 新建的 Slate 菜单控件。
- */
-TSharedRef<SWidget> FSekiroLuaAnimBlueprintEditorBinding::MakeSourceModeMenu()
-{
-    FMenuBuilder MenuBuilder(true, nullptr);
-    MenuBuilder.AddMenuEntry(
-        LOCTEXT("NativeModeLabel", "Native Blueprint"),
-        LOCTEXT("NativeModeTooltip", "Compile and F7 use the current Blueprint Graph without running Lua."),
-        FSlateIcon(),
-        FUIAction(
-            FExecuteAction::CreateSP(
-                this,
-                &FSekiroLuaAnimBlueprintEditorBinding::SetSourceMode,
-                static_cast<uint8>(ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint)),
-            FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction),
-            FIsActionChecked::CreateSP(
-                this,
-                &FSekiroLuaAnimBlueprintEditorBinding::IsSourceMode,
-                static_cast<uint8>(ESekiroLuaAnimBlueprintSourceMode::NativeBlueprint))),
-        NAME_None,
-        EUserInterfaceActionType::RadioButton);
-    MenuBuilder.AddMenuEntry(
-        LOCTEXT("LuaModeLabel", "Lua"),
-        LOCTEXT("LuaModeTooltip", "Compile and F7 run Check Lua, Generate From Lua, then one native compile."),
-        FSlateIcon(),
-        FUIAction(
-            FExecuteAction::CreateSP(
-                this,
-                &FSekiroLuaAnimBlueprintEditorBinding::SetSourceMode,
-                static_cast<uint8>(ESekiroLuaAnimBlueprintSourceMode::Lua)),
-            FCanExecuteAction::CreateSP(this, &FSekiroLuaAnimBlueprintEditorBinding::CanExecuteLuaAction),
-            FIsActionChecked::CreateSP(
-                this,
-                &FSekiroLuaAnimBlueprintEditorBinding::IsSourceMode,
-                static_cast<uint8>(ESekiroLuaAnimBlueprintSourceMode::Lua))),
-        NAME_None,
-        EUserInterfaceActionType::RadioButton);
-    return MenuBuilder.MakeWidget();
-}
-
-/**
- * 返回工具栏 Source Mode 控件的当前短标签。
- *
- * @return Lua 模式返回“Source: Lua”，否则返回“Source: Native”。
- */
-FText FSekiroLuaAnimBlueprintEditorBinding::GetSourceModeLabel() const
-{
-    const UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
-    return Extension != nullptr
-        && Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::Lua
-        ? LOCTEXT("SourceLuaLabel", "Source: Lua")
-        : LOCTEXT("SourceNativeLabel", "Source: Native");
-}
-
-/**
- * 在编辑器事务中更新持久化 SourceMode，并标记动画蓝图 package 待保存。
- * 切换到 Lua 时同步关闭多线程动画更新；函数不检查 Lua 或修改 Graph。
- *
- * @param SourceModeValue ESekiroLuaAnimBlueprintSourceMode 的 uint8 值，非法值被忽略。
- */
-void FSekiroLuaAnimBlueprintEditorBinding::SetSourceMode(const uint8 SourceModeValue)
-{
-    if (SourceModeValue > static_cast<uint8>(ESekiroLuaAnimBlueprintSourceMode::Lua)) return;
-    UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    USekiroLuaAnimBlueprintExtension* Extension = EnsureLocalLuaExtension();
-    if (AnimBlueprint == nullptr || Extension == nullptr) return;
-
-    AnimBlueprint->Modify();
-    Extension->Modify();
-    Extension->SourceMode =
-        static_cast<ESekiroLuaAnimBlueprintSourceMode>(SourceModeValue);
-    if (Extension->SourceMode == ESekiroLuaAnimBlueprintSourceMode::Lua)
-    {
-        AnimBlueprint->bUseMultiThreadedAnimationUpdate = false;
-    }
-    AnimBlueprint->GetOutermost()->MarkPackageDirty();
-}
-
-/**
- * 判断当前持久化模式是否与单选菜单项一致。
- *
- * @param SourceModeValue ESekiroLuaAnimBlueprintSourceMode 的 uint8 值。
- * @return 当前扩展模式等于参数时返回 true。
- */
-bool FSekiroLuaAnimBlueprintEditorBinding::IsSourceMode(const uint8 SourceModeValue) const
-{
-    const UAnimBlueprint* AnimBlueprint = GetAnimBlueprint();
-    const USekiroLuaAnimBlueprintExtension* Extension =
-        USekiroLuaAnimBlueprintExtension::FindEffective(AnimBlueprint);
-    return Extension != nullptr
-        && static_cast<uint8>(Extension->SourceMode) == SourceModeValue;
 }
 
 #undef LOCTEXT_NAMESPACE

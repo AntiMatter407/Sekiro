@@ -4,6 +4,8 @@
 ---@class IRSchema
 local IRSchema = {}
 
+IRSchema.MaxLayoutCoordinate = 1000000 -- 限制画布坐标规模，避免意外数值使编辑器视图失去精度。
+
 local lua_reserved_words = {
     ["and"] = true,
     ["break"] = true,
@@ -94,6 +96,23 @@ end
 ---@return string valid_path 已规范化验证、可写入 FSoftClassPath 的对象路径。
 function IRSchema.RequireClassObjectPath(path, kind)
     return IRSchema.RequireAssetObjectPath(path, kind or "Class")
+end
+
+---校验并规范化 UE Graph 画布的精确像素坐标。
+---允许 Lua 以 120 或 120.0 表达整数，但拒绝 NaN、无穷大、小数和超出合理画布范围的值。
+---@param value number 待校验的 X 或 Y 像素坐标。
+---@param axis_name string 错误消息中显示的坐标轴名称。
+---@return number coordinate 可稳定导出为 C++ int32 的有限整数坐标。
+function IRSchema.RequireLayoutCoordinate(value, axis_name)
+    assert(type(value) == "number", string.format("Layout %s must be a number", axis_name))
+    local coordinate = math.tointeger(value)
+    assert(coordinate ~= nil, string.format("Layout %s must be a finite integer", axis_name))
+    assert(math.abs(coordinate) <= IRSchema.MaxLayoutCoordinate, string.format(
+        "Layout %s must be between -%d and %d",
+        axis_name,
+        IRSchema.MaxLayoutCoordinate,
+        IRSchema.MaxLayoutCoordinate))
+    return coordinate
 end
 
 ---在父级稳定 ID 下追加实体类别和语义名。

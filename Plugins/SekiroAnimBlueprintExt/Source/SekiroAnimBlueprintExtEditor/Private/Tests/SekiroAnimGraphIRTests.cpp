@@ -928,6 +928,15 @@ bool FSekiroAnimGraphIRCanonicalizeTest::RunTest(const FString& Parameters)
     FSekiroAnimIRNode& NodeA = GraphZ.Nodes.AddDefaulted_GetRef();
     NodeA.Id = TEXT("Node.A");
 
+    FSekiroAnimIRLayoutPosition& PositionZ =
+        GraphZ.Layout.Positions.AddDefaulted_GetRef();
+    PositionZ.ElementId = TEXT("Node.Z");
+    PositionZ.X = 500;
+    FSekiroAnimIRLayoutPosition& PositionA =
+        GraphZ.Layout.Positions.AddDefaulted_GetRef();
+    PositionA.ElementId = TEXT("Node.A");
+    PositionA.X = -500;
+
     FSekiroAnimIRPin& PinLate = NodeA.Pins.AddDefaulted_GetRef();
     PinLate.Name = TEXT("Late");
     PinLate.DeclarationOrder = 20;
@@ -970,6 +979,10 @@ bool FSekiroAnimGraphIRCanonicalizeTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("Graphs sort by stable ID"), Blueprint.Layers[0].Graphs[0].Id, FString(TEXT("Graph.A")));
     const FSekiroAnimIRGraph& CanonicalGraphZ = Blueprint.Layers[0].Graphs[1];
     TestEqual(TEXT("Nodes sort by stable ID"), CanonicalGraphZ.Nodes[0].Id, FString(TEXT("Node.A")));
+    TestEqual(
+        TEXT("Exact positions sort by stable element ID"),
+        CanonicalGraphZ.Layout.Positions[0].ElementId,
+        FString(TEXT("Node.A")));
     TestEqual(TEXT("Pins sort by declaration order"), CanonicalGraphZ.Nodes[0].Pins[0].Name, FString(TEXT("Early")));
     TestEqual(
         TEXT("Properties sort by declaration order"),
@@ -1805,6 +1818,57 @@ bool FSekiroAnimGraphIRUnknownNodeTypeTest::RunTest(const FString& Parameters)
     TestTrue(
         TEXT("Unknown NodeType emits stable code"),
         SekiroAnimGraphIRTests::HasDiagnosticCode(Diagnostics, TEXT("IR.UnknownNodeType")));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FSekiroAnimGraphIRExactLayoutValidationTest,
+    "Sekiro.AnimGraphIR.ExactLayoutValidation",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 验证精确坐标只接受当前 Graph 元素、合理像素范围，且每个元素只能声明一次。
+ * 测试仅构造值类型 IR，不读取 Lua 或创建 UObject。
+ *
+ * @param Parameters Automation Framework 参数，本测试不使用。
+ * @return 始终返回 true 以完成断言收集。
+ */
+bool FSekiroAnimGraphIRExactLayoutValidationTest::RunTest(const FString& Parameters)
+{
+    FSekiroAnimBlueprintIR Blueprint = SekiroAnimGraphIRTests::MakeMinimalIR();
+    FSekiroAnimIRGraph& MainGraph = Blueprint.Layers[0].Graphs[0];
+    FSekiroAnimIRLayoutPosition& FirstPosition =
+        MainGraph.Layout.Positions.AddDefaulted_GetRef();
+    FirstPosition.ElementId = TEXT("Node.Output");
+    FirstPosition.X = 120;
+    FirstPosition.Y = -80;
+    FSekiroAnimIRLayoutPosition& DuplicatePosition =
+        MainGraph.Layout.Positions.AddDefaulted_GetRef();
+    DuplicatePosition.ElementId = TEXT("Node.Output");
+    DuplicatePosition.X = 240;
+    DuplicatePosition.Y = 160;
+    FSekiroAnimIRLayoutPosition& UnknownPosition =
+        MainGraph.Layout.Positions.AddDefaulted_GetRef();
+    UnknownPosition.ElementId = TEXT("Node.Unknown");
+    FSekiroAnimIRLayoutPosition& UnreasonablePosition =
+        MainGraph.Layout.Positions.AddDefaulted_GetRef();
+    UnreasonablePosition.ElementId = TEXT("Node.StateMachine");
+    UnreasonablePosition.X = 1000001;
+
+    TArray<FSekiroAnimIRDiagnostic> Diagnostics;
+    TestFalse(
+        TEXT("Invalid exact positions are rejected"),
+        USekiroAnimGraphIRLibrary::Validate(Blueprint, Diagnostics));
+    TestTrue(
+        TEXT("Duplicate exact position emits stable code"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(
+            Diagnostics,
+            TEXT("IR.DuplicateLayoutPosition")));
+    TestTrue(
+        TEXT("Unknown or unreasonable exact position emits stable code"),
+        SekiroAnimGraphIRTests::HasDiagnosticCode(
+            Diagnostics,
+            TEXT("IR.InvalidLayoutPosition")));
     return true;
 }
 

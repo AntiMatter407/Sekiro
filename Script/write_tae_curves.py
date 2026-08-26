@@ -16,7 +16,7 @@
 流程：
   1. 读取 Sekiro_TAE_Logic.json
   2. 提取指定 AnimID 的事件列表
-  3. 生成三条 Integer Curve 的关键帧
+  3. 生成 DisableTurning、AttackTurnSpeed、CancelActions 和 AttackHitbox 曲线
   4. 调用 bridge.py anim_blueprint add_curve 写入 UAnimSequence
 """
 import argparse
@@ -28,25 +28,8 @@ import time
 
 # ── 映射表 ──────────────────────────────────────────────────────
 
-# FrameFlags: JT ID → 位掩码
-JT_FRAME_FLAGS = {
-    7:   1 << 0,   # DisableTurning
-    89:  1 << 1,   # DisableMovement
-    19:  1 << 2,   # DisableMapHit
-    119: 1 << 3,   # EnableParry
-    137: 1 << 4,   # DisableParry
-    133: 1 << 5,   # DisableSpecial
-    134: 1 << 6,   # DisableItem
-    51:  1 << 7,   # Invincible
-    27:  1 << 8,   # SetNoGravity
-    8:   1 << 9,   # FlagAsDodging
-    12:  1 << 10,  # InvokeDeath
-    90:  1 << 11,  # LimitMoveSpeedWalk
-    91:  1 << 12,  # LimitMoveSpeedDash
-    32:  1 << 13,  # EnterMovement
-    31:  1 << 14,  # ExitMovement
-    55:  1 << 15,  # Staggered
-}
+# 未被 Type=224 覆盖时使用的原版常规攻击转向速度，单位为度/秒。
+DEFAULT_ATTACK_TURN_SPEED = 360.0
 
 # CancelActions: JT ID → ESKCancelAction 值
 JT_CANCEL_ACTIONS = {
@@ -120,49 +103,62 @@ def derive_anim_prefix(tae_filename):
     return "a" + num_part
 
 
-def build_frame_flags_keys(events, total_frames):
-    """从事件列表构建 FrameFlags 关键帧
-
-    FrameFlags 是位掩码，每一帧 OR 累积所有活跃 JT 标志。
-    为了节约关键帧数量，只在值发生变化时写入关键帧。
-    """
+def build_disable_turning_keys(events, total_frames):
+    """从 JT=7 事件构建独立的 DisableTurning 阶跃曲线。"""
     if total_frames <= 0:
-        # 从最大事件帧推断
         for evt in events:
             end = evt.get("EndFrame", 0)
-            if end > total_frames:
-                total_frames = end
+            start = evt.get("StartFrame", 0)
+            total_frames = max(total_frames, end, start)
         total_frames = max(total_frames, 1)
 
-    # 每帧计算位掩码
     frame_values = [0] * (total_frames + 1)
     for evt in events:
         if evt.get("Type") != 0:
             continue
-        params = evt.get("Parameters", {})
-        jt_id = params.get("JumpTableID")
-        if jt_id is None:
-            continue
-        bit = JT_FRAME_FLAGS.get(jt_id)
-        if bit is None:
+        if evt.get("Parameters", {}).get("JumpTableID") != 7:
             continue
         start = evt.get("StartFrame", 0)
         end = evt.get("EndFrame", 0)
-        for f in range(start, min(end + 1, total_frames + 1)):
-            frame_values[f] |= bit
+        for frame in range(start, min(end, total_frames + 1)):
+            frame_values[frame] = 1
 
-    # 压缩：只写值发生变化的帧
-    keys = []
-    prev_val = 0
-    for f in range(0, total_frames + 1):
-        val = frame_values[f]
-        if val != prev_val:
-            time_sec = f / 30.0  # 假设 30fps
-            keys.append({"time": round(time_sec, 4), "value": int(val)})
-            prev_val = val
-    # 确保曲线至少有一个关键帧（值为 0 的起始帧）
-    if not keys:
-        keys.append({"time": 0.0, "value": 0})
+    keys = [{"time": 0.0, "value": int(frame_values[0])}]
+    previous_value = frame_values[0]
+    for frame in range(1, total_frames + 1):
+        value = frame_values[frame]
+        if value != previous_value:
+            keys.append({"time": round(frame / 30.0, 4), "value": int(value)})
+            previous_value = value
+    return keys
+
+
+def build_attack_turn_speed_keys(events, total_frames):
+    """从 Type=224 事件构建攻击转向速度曲线，未覆盖帧使用常规转向速度。"""
+    if total_frames <= 0:
+        for evt in events:
+            end = evt.get("EndFrame", 0)
+            start = evt.get("StartFrame", 0)
+            total_frames = max(total_frames, end, start)
+        total_frames = max(total_frames, 1)
+
+    frame_values = [DEFAULT_ATTACK_TURN_SPEED] * (total_frames + 1)
+    for evt in events:
+        if evt.get("Type") != 224:
+            continue
+        turn_speed = max(float(evt.get("Parameters", {}).get("TurnSpeed", 0.0)), 0.0)
+        start = evt.get("StartFrame", 0)
+        end = evt.get("EndFrame", 0)
+        for frame in range(start, min(end, total_frames + 1)):
+            frame_values[frame] = turn_speed
+
+    keys = [{"time": 0.0, "value": float(frame_values[0])}]
+    previous_value = frame_values[0]
+    for frame in range(1, total_frames + 1):
+        value = frame_values[frame]
+        if value != previous_value:
+            keys.append({"time": round(frame / 30.0, 4), "value": float(value)})
+            previous_value = value
     return keys
 
 
@@ -257,7 +253,7 @@ def write_curve(bridge_py, asset_path, curve_name, keys, overwrite=False, curve_
     """调用 bridge add_curve 写入曲线（通过 CLI 参数传递）
     
     Args:
-        curve_type: "int" 用于整数曲线（FrameFlags/CancelActions/AttackHitbox），"float" 用于其他
+        curve_type: "int" 使用常量插值，适用于离散值和阶跃速度；"float" 使用线性插值
     """
     keys_json = json.dumps(keys)
     args = [
@@ -280,7 +276,14 @@ def write_curve(bridge_py, asset_path, curve_name, keys, overwrite=False, curve_
         return False
 
 
-def process_single_anim(tae_path, anim_id, anim_prefix=None, base_path=None, asset_prefix=None):
+def process_single_anim(
+    tae_path,
+    anim_id,
+    anim_prefix=None,
+    base_path=None,
+    asset_prefix=None,
+    turning_only=False,
+):
     """处理单个动画的曲线写入"""
     base_path = base_path or "/Game/Characters/Sekiro/Animations"
     asset_prefix = asset_prefix or "Anim_Sekiro"
@@ -319,24 +322,53 @@ def process_single_anim(tae_path, anim_id, anim_prefix=None, base_path=None, ass
         print(f"错误: {e}")
         return False
 
-    # 写入三条曲线
-    # 写入三条整数曲线（FrameFlags / CancelActions / AttackHitbox 均为阶跃型整数曲线）
+    # 写入独立语义曲线；不再生成需要运行时位运算解码的 FrameFlags。
     all_ok = True
 
-    print("  写入 FrameFlags...")
-    ff_keys = build_frame_flags_keys(events, total_frames)
-    if not write_curve(bridge_py, asset_path, "FrameFlags", ff_keys, overwrite=True, curve_type="int"):
+    print("  写入 DisableTurning...")
+    disable_turning_keys = build_disable_turning_keys(events, total_frames)
+    if not write_curve(
+        bridge_py,
+        asset_path,
+        "DisableTurning",
+        disable_turning_keys,
+        overwrite=True,
+        curve_type="int"):
         all_ok = False
 
-    print("  写入 CancelActions...")
-    ca_keys = build_cancel_actions_keys(events, total_frames)
-    if not write_curve(bridge_py, asset_path, "CancelActions", ca_keys, overwrite=True, curve_type="int"):
+    print("  写入 AttackTurnSpeed...")
+    attack_turn_speed_keys = build_attack_turn_speed_keys(events, total_frames)
+    if not write_curve(
+        bridge_py,
+        asset_path,
+        "AttackTurnSpeed",
+        attack_turn_speed_keys,
+        overwrite=True,
+        curve_type="int"):
         all_ok = False
 
-    print("  写入 AttackHitbox...")
-    ah_keys = build_attack_hitbox_keys(events, total_frames)
-    if not write_curve(bridge_py, asset_path, "AttackHitbox", ah_keys, overwrite=True, curve_type="int"):
-        all_ok = False
+    if not turning_only:
+        print("  写入 CancelActions...")
+        ca_keys = build_cancel_actions_keys(events, total_frames)
+        if not write_curve(
+            bridge_py,
+            asset_path,
+            "CancelActions",
+            ca_keys,
+            overwrite=True,
+            curve_type="int"):
+            all_ok = False
+
+        print("  写入 AttackHitbox...")
+        ah_keys = build_attack_hitbox_keys(events, total_frames)
+        if not write_curve(
+            bridge_py,
+            asset_path,
+            "AttackHitbox",
+            ah_keys,
+            overwrite=True,
+            curve_type="int"):
+            all_ok = False
 
     if all_ok:
         print("  完成!")
@@ -352,6 +384,10 @@ def main():
     parser.add_argument("--anim_prefix", default=None, help="动画资产前缀（如 a200），不传则从 TAE 文件名推导")
     parser.add_argument("--base_path", default="/Game/Characters/Sekiro/Animations", help="动画资产基础路径")
     parser.add_argument("--asset_prefix", default="Anim_Sekiro", help="资产名前缀")
+    parser.add_argument(
+        "--turning_only",
+        action="store_true",
+        help="只更新 DisableTurning 与 AttackTurnSpeed，保留其他曲线和事件")
     args = parser.parse_args()
 
     process_single_anim(
@@ -360,6 +396,7 @@ def main():
         anim_prefix=args.anim_prefix,
         base_path=args.base_path,
         asset_prefix=args.asset_prefix,
+        turning_only=args.turning_only,
     )
 
 

@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "SekiroLuaAnimSnapshotModel.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Widgets/Views/SListView.h"
+#include "Widgets/Views/STreeView.h"
 
 class SMultiLineEditableTextBox;
 class SSekiroLuaAnimSnapshotTimeline;

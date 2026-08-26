@@ -8,13 +8,19 @@ local ABP_Sekiro = require("Animation.Sekiro.ABP_Sekiro")
 local RootMotionMode = {
     Ignore = 1,
 }
+local AnimationLayerInterface =
+    "/Game/Characters/Sekiro/ALI_Sekiro.ALI_Sekiro_C"
 
 ---@class ABP_SKAICharacter: LuaAnimBlueprint
 local ABP_SKAICharacter = LuaAnimBlueprint:Extend("ABP_SKAICharacter", {
     SourceModule = "Animation.Sekiro.ABP_SKAICharacter",
-    ParentAnimInstanceClass = "/Game/Characters/Sekiro/ABP_Sekiro.ABP_Sekiro_C",
+    ParentAnimInstanceClass = "/Script/Sekiro.SKAnimInstance",
     TargetSkeleton = "/Game/Characters/Sekiro/Sekiro_Skeleton.Sekiro_Skeleton",
+    ImplementedInterfaces = {
+        AnimationLayerInterface,
+    },
     AnimGraph = ABP_Sekiro.AnimGraph,
+    DeclareAnimationLayers = ABP_Sekiro.DeclareAnimationLayers,
     ResolveDebugAnimationName = ABP_Sekiro.ResolveDebugAnimationName,
 })
 
