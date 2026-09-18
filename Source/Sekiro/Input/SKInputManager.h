@@ -7,6 +7,7 @@
 #include "InputActionValue.h"
 #include "Combat/SKCombatTypes.h"
 #include "Movement/SKMovementComponent.h"
+#include "Weapon/SKWeapon.h"
 #include "UnLuaInterface.h"
 #include "SKInputManager.generated.h"
 
@@ -79,6 +80,9 @@ public:
     bool IsOwnerWeaponSlotAnimationPlaying() const;   // 查询所属角色的武器 Slot 动画
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction")
+    ESKWeaponPresentation GetOwnerWeaponPresentation() const; // 查询所属角色武器展示枚举
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Restriction", meta = (DeprecatedFunction, DeprecationMessage = "Use GetOwnerWeaponPresentation and compare ESKWeaponPresentation directly."))
     FName GetOwnerWeaponPresentationName() const;     // 查询所属角色武器展示状态
 
     // ── 外部输入锁 ────────────────────────────────────────────
@@ -262,7 +266,7 @@ public:
 	void SetLookIntentForScript(float InputX, float InputY); // 写入视角意图
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	bool AddMovementInputFromScreen(float InputX, float InputY); // 按控制器朝向添加屏幕空间移动
+	bool AddMovementInputFromScreen(float InputX, float InputY); // Classic 添加 CMC 输入；Motion Matching 仅写查询意图
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	bool AddMovementImpulseFromScreen(float InputX, float InputY, float VelocityChange); // 按控制器朝向给角色添加水平速度冲量
@@ -306,10 +310,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
 	void SetOwnerDodgeDirection(float ForwardAmount, float LateralAmount); // 设置所属角色闪避方向
 
-	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
-	FName GetMovementTierName() const;               // 获取移动档位名
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Lua")
+	ESKMovementTier GetMovementTier() const;          // 获取原生移动档位枚举
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")
+	void SetMovementTier(ESKMovementTier NewTier);    // 设置原生移动档位枚举
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Input|Lua", meta = (DeprecatedFunction, DeprecationMessage = "Use GetMovementTier and compare ESKMovementTier directly."))
+	FName GetMovementTierName() const;               // 兼容旧蓝图的移动档位名
+
+	UFUNCTION(BlueprintCallable, Category = "Input|Lua", meta = (DeprecatedFunction, DeprecationMessage = "Use SetMovementTier with ESKMovementTier."))
 	void SetMovementTierByName(FName TierName);      // 通过名称设置移动档位
 
 	UFUNCTION(BlueprintCallable, Category = "Input|Lua")

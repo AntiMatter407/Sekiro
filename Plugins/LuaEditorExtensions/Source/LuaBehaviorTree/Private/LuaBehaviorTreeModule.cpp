@@ -1,0 +1,5 @@
+﻿#include "LuaBehaviorTreeModule.h"
+
+#include "Modules/ModuleManager.h"
+
+IMPLEMENT_MODULE(FLuaBehaviorTreeModule, LuaBehaviorTree)

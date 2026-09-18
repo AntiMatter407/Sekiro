@@ -1,9 +1,11 @@
 ﻿#include "UI/SKLockOnIndicatorComponent.h"
 
 #include "Camera/SKCameraManagerComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "UI/SKLockOnIndicatorWidget.h"
+#include "Engine/Texture2D.h"
 USKLockOnIndicatorComponent::USKLockOnIndicatorComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
@@ -89,12 +91,19 @@ float USKLockOnIndicatorComponent::GetLockTargetDistance() const
     return FVector::Dist(OwnerCharacter->GetActorLocation(), LockTarget->GetActorLocation());
 }
 
-bool USKLockOnIndicatorComponent::UpdateLockTargetScreenPositionForScript(float TargetHeightOffset)
+/**
+ * 游戏线程读取当前锁定目标的动画骨骼位置并投影，不更改相机锁定或动画姿态。
+ * @param TargetBoneName Lua 配置的现有骨骼名；None 或目标缺少该骨骼时失败，不使用包围盒或 Actor 原点兜底。
+ * @return 骨骼有效且投影位于视口允许范围内时返回 true 并更新缓存；失败时由 Lua 隐藏锁定标记。
+ */
+bool USKLockOnIndicatorComponent::UpdateLockTargetScreenPositionForScript(FName TargetBoneName)
 {
+    if (!IsInGameThread()) return false;
     RefreshCachedComponents();
     if (!PlayerController || !IsLockedOn()) return false;
 
-    const FVector AnchorLocation = GetLockTargetAnchorLocation(TargetHeightOffset);
+    FVector AnchorLocation = FVector::ZeroVector;
+    if (!GetLockTargetAnchorLocation(TargetBoneName, AnchorLocation)) return false;
     FVector2D ScreenPosition = FVector2D::ZeroVector;
     const bool bProjected = PlayerController->ProjectWorldLocationToScreen(AnchorLocation, ScreenPosition, true);
     if (!bProjected) return false;
@@ -135,6 +144,8 @@ bool USKLockOnIndicatorComponent::EnsureLockOnIndicatorWidget()
     if (!IndicatorWidget) return false;
 
     IndicatorWidget->SetIndicatorStyle(IndicatorSize, IndicatorThickness, IndicatorColor);
+    IndicatorWidget->SetIndicatorTexture(IndicatorTexture.Get(), IndicatorUVMin, IndicatorUVMax);
+    IndicatorWidget->SetDebugDrawingEnabled(bIndicatorDebugDrawing);
     IndicatorWidget->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
     IndicatorWidget->SetDesiredSizeInViewport(FVector2D(IndicatorSize, IndicatorSize));
     IndicatorWidget->SetVisibility(ESlateVisibility::Hidden);
@@ -208,6 +219,37 @@ void USKLockOnIndicatorComponent::SetLockOnIndicatorColorRGBA(float Red, float G
     SetLockOnIndicatorColor(FLinearColor(Red, Green, Blue, Alpha));
 }
 
+/**
+ * 游戏线程注入正式锁定纹理，不选择资源路径、不修改目标或投影算法。
+ * @param Texture 可空已导入纹理；无效时清除旧图，交由Lua隐藏并诊断。
+ * @param UVMin 图集左上归一化坐标。
+ * @param UVMax 图集右下归一化坐标，必须构成有效正面积。
+ * @return 纹理与UV合法返回 true；可以在Widget创建前配置。
+ */
+bool USKLockOnIndicatorComponent::SetLockOnIndicatorTexture(UTexture2D* Texture, FVector2D UVMin, FVector2D UVMax)
+{
+    if (!IsInGameThread()) return false;
+    const bool bValid = IsValid(Texture) && FMath::IsFinite(UVMin.X) && FMath::IsFinite(UVMin.Y)
+        && FMath::IsFinite(UVMax.X) && FMath::IsFinite(UVMax.Y) && UVMin.X >= 0.0 && UVMin.Y >= 0.0
+        && UVMax.X <= 1.0 && UVMax.Y <= 1.0 && UVMax.X > UVMin.X && UVMax.Y > UVMin.Y;
+    IndicatorTexture = bValid ? Texture : nullptr;
+    IndicatorUVMin = UVMin;
+    IndicatorUVMax = UVMax;
+    if (IndicatorWidget) IndicatorWidget->SetIndicatorTexture(IndicatorTexture.Get(), UVMin, UVMax);
+    return bValid;
+}
+
+/**
+ * 游戏线程开启或关闭显式调试圆环，正式样式保持关闭。
+ * @param bEnabled true 为人工请求的调试显示；不会覆盖已配置原纹理。
+ */
+void USKLockOnIndicatorComponent::SetLockOnIndicatorDebugDrawing(bool bEnabled)
+{
+    if (!IsInGameThread()) return;
+    bIndicatorDebugDrawing = bEnabled;
+    if (IndicatorWidget) IndicatorWidget->SetDebugDrawingEnabled(bEnabled);
+}
+
 void USKLockOnIndicatorComponent::RemoveLockOnIndicatorWidget()
 {
     if (!IndicatorWidget) return;
@@ -270,15 +312,25 @@ void USKLockOnIndicatorComponent::RefreshCachedComponents()
     }
 }
 
-FVector USKLockOnIndicatorComponent::GetLockTargetAnchorLocation(float TargetHeightOffset) const
+/**
+ * 游戏线程从 Character 主网格读取已更新的骨骼世界位置，不创建 Socket，不猜测不同网格的腰部高度。
+ * @param TargetBoneName 必须存在于主网格的骨骼名；仅有同名 Socket 而没有骨骼也不接受。
+ * @param OutLocation 成功时输出世界坐标，单位厘米；失败时保持零，调用方不得继续投影。
+ * @return 当前目标是有效 Character、骨骼存在且位置有限时返回 true。
+ */
+bool USKLockOnIndicatorComponent::GetLockTargetAnchorLocation(FName TargetBoneName, FVector& OutLocation) const
 {
-    const AActor* LockTarget = GetLockTarget();
-    if (!LockTarget) return FVector::ZeroVector;
+    OutLocation = FVector::ZeroVector;
+    const ACharacter* LockTarget = Cast<ACharacter>(GetLockTarget());
+    if (!IsValid(LockTarget) || TargetBoneName.IsNone()) return false;
 
-    FVector BoundsOrigin = FVector::ZeroVector;
-    FVector BoundsExtent = FVector::ZeroVector;
-    LockTarget->GetActorBounds(true, BoundsOrigin, BoundsExtent);
-    return BoundsOrigin + FVector(0.0f, 0.0f, BoundsExtent.Z * 0.18f + TargetHeightOffset);
+    const USkeletalMeshComponent* TargetMesh = LockTarget->GetMesh();
+    if (!IsValid(TargetMesh) || TargetMesh->GetBoneIndex(TargetBoneName) == INDEX_NONE) return false;
+
+    const FVector BoneLocation = TargetMesh->GetBoneLocation(TargetBoneName, EBoneSpaces::WorldSpace);
+    if (BoneLocation.ContainsNaN()) return false;
+    OutLocation = BoneLocation;
+    return true;
 }
 
 bool USKLockOnIndicatorComponent::IsScreenPositionInViewport(const FVector2D& ScreenPosition) const

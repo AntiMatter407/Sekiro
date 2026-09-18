@@ -15,12 +15,6 @@ local LuaLog = require("Gameplay.Base.LuaLog")
 local SKCameraManager = UnLua.Class()
 local Debug = true
 
-local CameraMode = {
-    Free = "Free",
-    SprintAlign = "SprintAlign",
-    LockOn = "LockOn",
-}
-
 ---缓存角色 SpringArm 并应用普通移动的位置平滑配置。
 ---只启用位置 Lag 和子步进，不启用旋转 Lag，因此鼠标和锁定视角仍保持原来的响应速度。
 ---@return boolean configured 找到角色与 CameraBoom 且成功写入全部参数时返回 true。
@@ -127,17 +121,17 @@ function SKCameraManager:ReceiveBeginPlay()
 end
 
 ---根据当前输入和运行时状态解析相机模式，避免调用方重复边界判断。
----@return string|nil value 解析出的模式、方向或状态名称。
+---@return userdata|number mode ESKCameraMode 原生枚举值。
 function SKCameraManager:ResolveCameraMode()
     if self:IsMovementTierSprint() then
-        return CameraMode.SprintAlign
+        return UE.ESKCameraMode.SprintAlign
     end
 
     if self:IsLockedOn() then
-        return CameraMode.LockOn
+        return UE.ESKCameraMode.LockOn
     end
 
-    return CameraMode.Free
+    return UE.ESKCameraMode.Free
 end
 
 ---更新非锁定相机：只消费视角输入，不因移动输入主动改变镜头。
@@ -188,11 +182,11 @@ function SKCameraManager:UpdateCameraLogic(delta_seconds)
     self:ValidateLockTargetForScript()
 
     local mode = self:ResolveCameraMode()
-    self:SetCameraModeByName(mode)
+    self:SetCameraMode(mode)
 
-    if mode == CameraMode.SprintAlign then
+    if mode == UE.ESKCameraMode.SprintAlign then
         self:UpdateSprintAlignMode(delta_seconds)
-    elseif mode == CameraMode.LockOn then
+    elseif mode == UE.ESKCameraMode.LockOn then
         self:UpdateLockOnMode(delta_seconds)
     else
         self:UpdateFreeMode(delta_seconds)

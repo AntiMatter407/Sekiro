@@ -8,7 +8,7 @@ local LuaAnimStateMachineGraph = require("Animation.Compiler.LuaAnimStateMachine
 
 ---@class LuaStateMachineNode: LuaAnimNode
 ---@field OwnedGraph LuaAnimStateMachineGraph 节点独占的内部状态机 Graph。
----@field LayoutStyle string 内部状态机未显式放置 State 的自动排版风格。
+---@field LayoutStyle SekiroAnimIRLayoutStyle 内部状态机未显式放置 State 的自动排版风格。
 ---@field Pose LuaAnimPin 状态机最终姿势输出 Pin。
 local LuaStateMachineNode = LuaAnimNode:Extend("LuaStateMachineNode")
 

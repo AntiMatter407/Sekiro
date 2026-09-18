@@ -190,5 +190,7 @@ void ASKCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	if (InputManager)
 	{
 		InputManager->SetupInput(Input);
+		// 本地输入组件建立时 LocalPlayerSubsystem 已可用；补偿 PossessedBy 早于子系统就绪的情况。
+		InputManager->AddMappingContext(Cast<APlayerController>(GetController()));
 	}
 }

@@ -6,6 +6,17 @@
 
 class USKSurvivalComponent;
 
+USTRUCT(BlueprintType)
+struct SEKIRO_API FSKPostureImpactEvaluation
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite)
+    bool bAccepted = false; // 纯计算是否接受该攻防语义
+    UPROPERTY(BlueprintReadWrite)
+    float PostureDamage = 0.f; // 已包含额外伤害和封顶的有限非负增长量
+};
+
 UENUM(BlueprintType)
 enum class ESKLifeState : uint8 { Uninitialized, Alive, Dying, Dead, Reviving };
 

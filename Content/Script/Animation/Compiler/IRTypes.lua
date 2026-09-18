@@ -3,21 +3,12 @@
 -- AnimGraph IR 的 EmmyLua 静态类型声明。
 -- 本模块只供 Rider/LuaLS 建立字段补全与类型跳转，不参与 Lua 编译器运行时流程。
 
----@alias SekiroAnimIRValueType
----| '"None"'
----| '"Bool"'
----| '"Integer"'
----| '"Float"'
----| '"Name"'
----| '"String"'
----| '"SoftObjectPath"'
----| '"SoftClassPath"'
-
----@alias SekiroAnimIRPinDirection '"Input"'|'"Output"'
----@alias SekiroAnimIRBlueprintKind '"AnimBlueprint"'|'"AnimationLayerInterface"'
+---@alias SekiroAnimIRValueType number ELuaAnimIRValueType 原生枚举值。
+---@alias SekiroAnimIRPinDirection number ELuaAnimIRPinDirection 原生枚举值。
+---@alias SekiroAnimIRBlueprintKind number ELuaAnimIRBlueprintKind 原生枚举值。
 
 ---@alias SekiroAnimIRGraphType '"Pose"'|'"StatePose"'|'"StateMachine"'
----@alias SekiroAnimIRLayoutStyle '"Auto"'|'"LeftToRight"'|'"RightToLeft"'|'"TopToBottom"'|'"BottomToTop"'|'"CompactGrid"'|'"Radial"'|'"HierarchicalBlocks"'
+---@alias SekiroAnimIRLayoutStyle number ELuaAnimIRLayoutStyle 原生枚举值。
 
 ---@class SekiroAnimIRLayoutItem
 ---@field ElementId string 当前 Graph 内节点或状态的稳定 ID。
@@ -54,12 +45,13 @@
 ---@class SekiroAnimIRValue
 ---@field Type SekiroAnimIRValueType 显式属性类型标签。
 ---@field BoolValue boolean|nil Bool 类型使用的值。
----@field IntegerValue number|nil Integer 类型使用的整数值。
+---@field IntegerValue number|nil Integer 或 Enum 类型使用的底层整数值。
 ---@field FloatValue number|nil Float 类型使用的值。
 ---@field NameValue string|nil Name 类型使用的值。
 ---@field StringValue string|nil String 类型使用的值。
 ---@field SoftObjectPathValue string|nil SoftObjectPath 类型使用的值。
 ---@field SoftClassPathValue string|nil SoftClassPath 类型使用的值。
+---@field StructValue string|nil Struct 类型使用的 UE 确定性文本值。
 
 ---@class SekiroAnimIRPin
 ---@field Name string C++ NodeType 注册表中的稳定 Pin 名称。
@@ -69,17 +61,25 @@
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
 
 ---@class SekiroAnimIRProperty
----@field Name string C++ NodeType 注册表允许写入的属性名。
+---@field Name string 节点注册表属性名，或 InheritedDefaults 中的直接父类 UPROPERTY 名。
 ---@field Value SekiroAnimIRValue 显式类型化属性值。
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
+
+---@class SekiroAnimIRNodeFunctionBinding
+---@field PropertyName string UAnimGraphNode 上保存 FMemberReference 的反射属性名。
+---@field FunctionName string 将由生成类或允许的函数库提供的目标 UFunction 名。
+---@field PrototypeFunction string UE 用于校验线程安全函数签名的完整原型路径。
+---@field DeclarationOrder number 节点内函数绑定的确定性声明顺序整数。
 
 ---@class SekiroAnimIRNode
 ---@field Id string 节点稳定 ID。
 ---@field NodeType string NodeFactory 注册的节点类型名。
+---@field EditorNodeClass string 可选的原生编辑器节点类路径；非空时允许走通用反射生成。
 ---@field DisplayName string 编辑器显示名称。
 ---@field OwnedGraphId string 节点独占的内部 Graph ID；无内部 Graph 时为空。
 ---@field Pins SekiroAnimIRPin[] 对 C++ 注册 Pin 的完整一致性断言，不定义真实 Pin。
 ---@field Properties SekiroAnimIRProperty[] 请求 NodeFactory 写入的已注册类型化属性值。
+---@field FunctionBindings SekiroAnimIRNodeFunctionBinding[] 请求 NodeFactory 写入的 Anim Node Function 绑定。
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation 节点源码位置。
 
@@ -105,7 +105,7 @@
 ---@class SekiroAnimIRTransitionSettings
 ---@field BlendDuration number 过渡混合时长，单位为秒。
 ---@field PriorityOrder number 同一源状态下的过渡优先级整数。
----@field BlendMode string UE 过渡混合模式注册名。
+---@field BlendMode number EAlphaBlendOption 原生枚举值。
 
 ---@alias SekiroAnimIRTransitionGateType '"LuaBool"'|'"BoolProperty"'|'"TimeRemainingLessEqual"'|'"CurveGreaterEqual"'|'"All"'|'"Any"'|'"Not"'
 
@@ -174,6 +174,7 @@
 ---@field SourceModule string 动画蓝图 Lua 源模块名。
 ---@field ParentAnimInstanceClass string 父 AnimInstance 类软路径。
 ---@field TargetSkeleton string 普通 AnimBlueprint 的目标 Skeleton 资产软路径。
+---@field InheritedDefaults SekiroAnimIRProperty[] 只覆盖显式列出的父类 UPROPERTY 默认值。
 ---@field ImplementedInterfaces string[] 普通 AnimBlueprint 实现的 Animation Layer Interface GeneratedClass 软路径。
 ---@field Variables SekiroAnimIRVariable[] 当前 AnimBlueprint 新声明的成员变量；父类变量通过 UE 反射继承。
 ---@field Layers SekiroAnimIRLayer[] Main AnimGraph 与 UE Animation Layer Function Graph 声明。

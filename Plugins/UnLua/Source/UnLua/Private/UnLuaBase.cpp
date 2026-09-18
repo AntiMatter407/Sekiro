@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -236,7 +236,7 @@ namespace UnLua
                     bool bSuccess = TryToSetMetatable(L, MetatableName);        // set metatable
                     if (!bSuccess)
                     {
-                        UNLUA_LOGERROR(L, LogUnLua, Warning, TEXT("%s, Invalid metatable, metatable name: %s!"),  UTF8_TO_TCHAR(MetatableName));
+                        UNLUA_LOGERROR(L, LogUnLua, Warning, TEXT("%s, Invalid metatable, metatable name: %s!"), ANSI_TO_TCHAR(__FUNCTION__), UTF8_TO_TCHAR(MetatableName));
                         return 1;
                     }
                 }

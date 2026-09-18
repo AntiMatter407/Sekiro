@@ -244,24 +244,53 @@ ASKWeapon* USKWeaponManagerComponent::GetCurrentWeapon() const
 }
 
 /**
- * 按 Lua 提供的 Drawn 或 Sheathed 名称原子切换刀身挂载；不播放动画，也不推断切换帧。
+ * 使用原生武器展示枚举原子切换刀身挂载；不播放动画，也不推断切换帧。
  * 必须在游戏线程调用。
  *
- * @param PresentationName 目标展示名，不区分大小写，仅接受 Drawn 或 Sheathed。
- * @return 名称有效且当前武器成功完成挂载时返回 true；否则返回 false。
+ * @param NewPresentation 目标展示枚举，只接受 Drawn 或 Sheathed。
+ * @return 当前武器成功完成对应挂载时返回 true；武器缺失或枚举无效时返回 false。
+ */
+bool USKWeaponManagerComponent::SetWeaponPresentation(ESKWeaponPresentation NewPresentation)
+{
+    if (!CurrentWeapon) return false;
+    if (NewPresentation != ESKWeaponPresentation::Drawn
+        && NewPresentation != ESKWeaponPresentation::Sheathed)
+    {
+        return false;
+    }
+
+    return CurrentWeapon->SetWeaponPresentation(NewPresentation);
+}
+
+/**
+ * 查询当前武器已经成功应用的原生展示枚举，不触发挂载、资源加载或动画播放。
+ * 必须在游戏线程调用。
+ *
+ * @return 当前武器的展示枚举；尚未生成武器时返回 Drawn，以保持旧调用方的非收刀语义。
+ */
+ESKWeaponPresentation USKWeaponManagerComponent::GetWeaponPresentation() const
+{
+    return CurrentWeapon ? CurrentWeapon->GetWeaponPresentation() : ESKWeaponPresentation::Drawn;
+}
+
+/**
+ * 将旧蓝图提交的展示名称解析为枚举后转发给强类型入口，仅用于迁移期兼容。
+ * 新业务必须直接调用 SetWeaponPresentation；函数不播放动画，也不推断切换帧。
+ * 必须在游戏线程调用。
+ *
+ * @param PresentationName 旧调用方提供的展示名称，不区分大小写，仅接受 Drawn 或 Sheathed。
+ * @return 名称有效且强类型入口完成挂载时返回 true；否则返回 false。
  */
 bool USKWeaponManagerComponent::SetWeaponPresentationByName(FName PresentationName)
 {
-    if (!CurrentWeapon) return false;
-
     const FString NormalizedName = PresentationName.ToString().ToLower();
     if (NormalizedName == TEXT("drawn"))
     {
-        return CurrentWeapon->SetWeaponPresentation(ESKWeaponPresentation::Drawn);
+        return SetWeaponPresentation(ESKWeaponPresentation::Drawn);
     }
     if (NormalizedName == TEXT("sheathed"))
     {
-        return CurrentWeapon->SetWeaponPresentation(ESKWeaponPresentation::Sheathed);
+        return SetWeaponPresentation(ESKWeaponPresentation::Sheathed);
     }
 
     UE_LOG(LogTemp, Warning, TEXT("SKWeaponManager unsupported presentation: %s"), *PresentationName.ToString());

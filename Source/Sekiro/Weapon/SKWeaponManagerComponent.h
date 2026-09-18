@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Weapon/SKWeapon.h"
 #include "UnLuaInterface.h"
 #include "SKWeaponManagerComponent.generated.h"
 
@@ -76,6 +77,12 @@ public:
     ASKWeapon* GetCurrentWeapon() const;                // 获取当前武器
 
     UFUNCTION(BlueprintCallable, Category = "Weapon|Presentation")
+    bool SetWeaponPresentation(ESKWeaponPresentation NewPresentation); // 使用原生枚举切换挂载
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Weapon|Presentation")
+    ESKWeaponPresentation GetWeaponPresentation() const; // 获取当前武器展示枚举
+
+    UFUNCTION(BlueprintCallable, Category = "Weapon|Presentation", meta = (DeprecatedFunction, DeprecationMessage = "Use SetWeaponPresentation with ESKWeaponPresentation."))
     bool SetWeaponPresentationByName(FName PresentationName); // 按 Drawn/Sheathed 切换挂载
 
     // ── 角色动画 ─────────────────────────────────────────────────────────────

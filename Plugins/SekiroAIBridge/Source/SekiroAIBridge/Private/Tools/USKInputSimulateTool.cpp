@@ -54,6 +54,39 @@ static const FActionToInputAction ActionInputActionMappings[] =
 
 static constexpr int32 NumActionMappings = sizeof(ActionInputActionMappings) / sizeof(ActionInputActionMappings[0]);
 
+struct FActiveInputHold
+{
+	TWeakObjectPtr<UWorld> World;          // 当前保持输入所属的 PIE 世界
+	TWeakObjectPtr<UEnhancedInputLocalPlayerSubsystem> Subsystem; // 持续注入所属的本地玩家子系统
+	TWeakObjectPtr<UInputAction> InputAction; // 由 Enhanced Input 持续注入的动作资产
+	FTimerHandle ReleaseTimer;             // 到期自动释放动作值的一次性计时器
+};
+
+static TMap<FString, FActiveInputHold> ActiveInputHolds; // 按工具层动作名保存仍在运行的输入保持状态
+
+/**
+ * 取消指定动作仍在运行的 UE5.8 Continuous Injection 与自动释放计时器。
+ * 本函数只能在游戏线程调用；停止持续注入后由 Enhanced Input 在后续求值中发布 Completed。
+ *
+ * @param World 当前 PIE 世界；为空或与已记录世界不一致时仍会尝试使用记录世界清理。
+ * @param Action 不带 _release 或 _stop 后缀的工具层动作名称。
+ */
+static void CancelActiveInputHold(UWorld* World, const FString& Action)
+{
+	FActiveInputHold* ActiveHold = ActiveInputHolds.Find(Action);
+	if (!ActiveHold) return;
+
+	UWorld* TimerWorld = ActiveHold->World.Get();
+	if (!TimerWorld) TimerWorld = World;
+	if (TimerWorld)
+		TimerWorld->GetTimerManager().ClearTimer(ActiveHold->ReleaseTimer);
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = ActiveHold->Subsystem.Get();
+	UInputAction* InputAction = ActiveHold->InputAction.Get();
+	if (Subsystem && InputAction)
+		Subsystem->StopContinuousInputInjectionForAction(InputAction);
+	ActiveInputHolds.Remove(Action);
+}
+
 // ============================================================================
 // 工具描述 / Schema
 // ============================================================================
@@ -63,7 +96,7 @@ FString USKInputSimulateTool::GetToolDescription() const
 	return TEXT("PIE 运行时模拟玩家输入（通过 Enhanced Input 完整管道注入）："
 	           "支持攻击/防御/闪避/跳跃/移动/视角等全部动作，支持长按和延迟执行。"
 	           "与直接调用回调不同，此工具将输入注入到输入堆栈，经过 Trigger/Modifier 等完整处理。"
-	           "移动/视角是持续型动作，需要显式触发相应的 stop 操作来停止。");
+	           "移动/视角可按 hold_time 持续注入并自动停止，也可显式触发相应的 stop 操作。");
 }
 
 FString USKInputSimulateTool::GetInputSchemaJson() const
@@ -85,8 +118,8 @@ FString USKInputSimulateTool::GetInputSchemaJson() const
 				"\"description\":\"Input action to simulate. "
 					"Button actions (attack/guard/dodge/jump): inject then auto-release after hold_time. "
 					"Release actions (attack_release/guard_release/...): inject the release event. "
-					"Axis actions (move/look): inject axis value, use move_stop/look_stop to clear. "
-					"Button-stops (move_stop/look_stop): inject zero to stop.\""
+					"Axis actions (move/look): inject one frame by default, or continuously until hold_time expires. "
+					"Axis stops (move_stop/look_stop): cancel an active hold and inject zero.\""
 			"},"
 			"\"value_x\":{\"type\":\"number\",\"description\":\"X component for move/look value (default 0)\"},"
 			"\"value_y\":{\"type\":\"number\",\"description\":\"Y component for move/look value (default 0)\"},"
@@ -177,11 +210,13 @@ FString USKInputSimulateTool::Execute(const FString& ArgsJson, FString& OutError
 		return FString();
 	}
 
-	// ── 长按后自动释放（仅按钮类动作） ──
+	// ── 长按后自动释放 ──
 
-	if (HoldTime > 0.0)
+	if (HoldTime > 0.0
+		&& !Action.EndsWith(TEXT("_release"))
+		&& !Action.EndsWith(TEXT("_stop")))
 	{
-		ScheduleRelease(PlayWorld, Action, HoldTime);
+		ScheduleRelease(PlayWorld, Action, ValueX, ValueY, HoldTime);
 	}
 
 	return Result;
@@ -223,6 +258,7 @@ FString USKInputSimulateTool::SimulateAction(
 			return FString();
 		}
 
+		CancelActiveInputHold(World, BaseAction);
 		InjectInput(InputAction, FInputActionValue(false));
 
 		UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: %s (release, inject false)"), *BaseAction);
@@ -241,6 +277,7 @@ FString USKInputSimulateTool::SimulateAction(
 			return FString();
 		}
 
+		CancelActiveInputHold(World, BaseAction);
 		InjectInput(InputAction, FInputActionValue(FVector2D::ZeroVector));
 
 		UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: %s (stop, inject zero)"), *BaseAction);
@@ -278,6 +315,7 @@ FString USKInputSimulateTool::SimulateAction(
 		InputValue = FInputActionValue(true);
 	}
 
+	CancelActiveInputHold(World, Action);
 	InjectInput(InputAction, InputValue);
 
 	UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: %s (x=%.2f, y=%.2f, isAxis=%d)"), *Action, ValueX, ValueY, bIsAxis ? 1 : 0);
@@ -418,7 +456,7 @@ void USKInputSimulateTool::InjectInput(UInputAction* InputAction, const FInputAc
  * @param Action 输入动作的工具层名称。
  * @param ValueX 轴动作的 X 分量。
  * @param ValueY 轴动作的 Y 分量。
- * @param HoldTime 按钮保持时间（秒）；大于零时禁用脉冲并安排自动释放。
+ * @param HoldTime 动作保持时间（秒）；大于零时持续重注入并安排自动释放。
  * @param Delay 首次注入前的延迟（秒）。
  */
 void USKInputSimulateTool::ExecuteWithDelay(
@@ -445,9 +483,11 @@ void USKInputSimulateTool::ExecuteWithDelay(
 			return;
 		}
 
-		if (HoldTime > 0.0f)
+		if (HoldTime > 0.0f
+			&& !Action.EndsWith(TEXT("_release"))
+			&& !Action.EndsWith(TEXT("_stop")))
 		{
-			ScheduleRelease(World, Action, HoldTime);
+			ScheduleRelease(World, Action, ValueX, ValueY, HoldTime);
 		}
 	});
 
@@ -459,22 +499,28 @@ void USKInputSimulateTool::ExecuteWithDelay(
 // ============================================================================
 
 /**
- * 按 PIE 世界帧率持续续注入按钮按下值，并在保持时间结束时停止续注入和注入 false。
- * Enhanced Input 的注入值只在单帧有效，因此长按不能只依赖延迟释放。
+ * 通过 UE5.8 Enhanced Input Continuous Injection 保持动作值，并在到期时停止持续注入。
+ * 不使用 World Timer 每帧调用 InjectInputForAction，避免计时器阶段晚于输入求值而在帧间产生伪 Completed。
  * 本函数必须在游戏线程调用；它只管理当前世界的计时器，不阻塞调用线程。
  *
  * @param World 当前 PIE 世界，不能为空。
- * @param Action 按钮动作的工具层名称；轴动作不会创建保持计时器。
+ * @param Action 动作的工具层名称；支持按钮动作和二维轴动作。
+ * @param ValueX 二维轴动作的 X 分量；按钮动作忽略。
+ * @param ValueY 二维轴动作的 Y 分量；按钮动作忽略。
  * @param HoldTime 从首次注入起继续保持的秒数，必须大于零。
  */
-void USKInputSimulateTool::ScheduleRelease(UWorld* World, const FString& Action, float HoldTime)
+void USKInputSimulateTool::ScheduleRelease(
+	UWorld* World,
+	const FString& Action,
+	float ValueX,
+	float ValueY,
+	float HoldTime)
 {
 	if (!World || HoldTime <= 0.0f)
 	{
 		return;
 	}
 
-	// 只对按钮类动作（非轴类）自动释放
 	bool bIsAxis = false;
 	for (int32 i = 0; i < NumActionMappings; ++i)
 	{
@@ -485,11 +531,6 @@ void USKInputSimulateTool::ScheduleRelease(UWorld* World, const FString& Action,
 		}
 	}
 
-	if (bIsAxis)
-	{
-		return; // 轴动作持续注入，不自动释放
-	}
-
 	FString Error;
 	UInputAction* InputAction = GetInputAction(Action, Error);
 	if (!InputAction)
@@ -498,28 +539,47 @@ void USKInputSimulateTool::ScheduleRelease(UWorld* World, const FString& Action,
 		return;
 	}
 
-	const float ReinjectionInterval = FMath::Max(World->GetDeltaSeconds(), 0.01f);
-	TSharedRef<FTimerHandle> HoldTimerHandle = MakeShared<FTimerHandle>();
-	FTimerDelegate HoldDelegate = FTimerDelegate::CreateLambda([InputAction]()
-	{
-		InjectInput(InputAction, FInputActionValue(true));
-	});
-	World->GetTimerManager().SetTimer(
-		*HoldTimerHandle,
-		HoldDelegate,
-		ReinjectionInterval,
-		true);
+	const FInputActionValue HeldValue = bIsAxis
+		? FInputActionValue(FVector2D(ValueX, ValueY))
+		: FInputActionValue(true);
+	CancelActiveInputHold(World, Action);
 
-	FTimerHandle ReleaseTimerHandle;
-	FTimerDelegate ReleaseDelegate = FTimerDelegate::CreateLambda(
-		[World, Action, InputAction, HoldTimerHandle]()
+	FString SubsystemError;
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = FindEnhancedInputSubsystem(SubsystemError);
+	if (!Subsystem)
 	{
-		World->GetTimerManager().ClearTimer(*HoldTimerHandle);
-		InjectInput(InputAction, FInputActionValue(false));
+		UE_LOG(LogSekiroAIBridge, Warning, TEXT("input.simulate 保持失败: %s"), *SubsystemError);
+		return;
+	}
+	Subsystem->StartContinuousInputInjectionForAction(
+		InputAction,
+		HeldValue,
+		TArray<UInputModifier*>(),
+		TArray<UInputTrigger*>());
+
+	FActiveInputHold& ActiveHold = ActiveInputHolds.Add(Action);
+	ActiveHold.World = World;
+	ActiveHold.Subsystem = Subsystem;
+	ActiveHold.InputAction = InputAction;
+
+	const TWeakObjectPtr<UEnhancedInputLocalPlayerSubsystem> WeakSubsystem = Subsystem;
+	const TWeakObjectPtr<UInputAction> WeakInputAction = InputAction;
+	FTimerDelegate ReleaseDelegate = FTimerDelegate::CreateLambda(
+		[Action, WeakSubsystem, WeakInputAction]()
+	{
+		FActiveInputHold* CompletedHold = ActiveInputHolds.Find(Action);
+		if (CompletedHold)
+		{
+			UEnhancedInputLocalPlayerSubsystem* CompletedSubsystem = WeakSubsystem.Get();
+			UInputAction* CompletedInputAction = WeakInputAction.Get();
+			if (CompletedSubsystem && CompletedInputAction)
+				CompletedSubsystem->StopContinuousInputInjectionForAction(CompletedInputAction);
+			ActiveInputHolds.Remove(Action);
+		}
 
 		UE_LOG(LogSekiroAIBridge, Verbose, TEXT("input.simulate: 自动释放 %s"), *Action);
 	});
-	World->GetTimerManager().SetTimer(ReleaseTimerHandle, ReleaseDelegate, HoldTime, false);
+	World->GetTimerManager().SetTimer(ActiveHold.ReleaseTimer, ReleaseDelegate, HoldTime, false);
 }
 
 // ============================================================================

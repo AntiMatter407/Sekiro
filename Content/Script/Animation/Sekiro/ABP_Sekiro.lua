@@ -24,10 +24,7 @@ local PoseLayerParameters = {
         bIsPose = true,
     },
 }
-local RootMotionMode = {
-    Ignore = 1,
-    Everything = 2,
-}
+local RootMotionMode = UE.ERootMotionMode
 
 ---@class ABP_Sekiro: LuaAnimBlueprint
 local ABP_Sekiro = LuaAnimBlueprint:Extend("ABP_Sekiro", {
@@ -91,8 +88,8 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("LatchedActionDirection", "Enum", Direction.Cardinal.Forward, DirectionEnum)
     self:Variable("LatchedFreeStartDirection", "Enum", Direction.Cardinal.Forward, DirectionEnum)
     self:Variable("LatchedTurnDirection", "Enum", Direction.Cardinal.Right, DirectionEnum)
-    self:Variable("PoseGait", "Enum", 2, GaitEnum)
-    self:Variable("LatchedActionGait", "Enum", 2, GaitEnum)
+    self:Variable("PoseGait", "Enum", UE.ESKAnimGait.Run, GaitEnum)
+    self:Variable("LatchedActionGait", "Enum", UE.ESKAnimGait.Run, GaitEnum)
     self:Variable("bPoseCrouching", "Bool", false)
     self:Variable("LockOnLocomotionAngle", "Float", 0.0)
     self:Variable("LatchedLockOnLocomotionAngle", "Float", 0.0)
@@ -121,7 +118,7 @@ function ABP_Sekiro:DeclareVariables()
     self:Variable("FootIKAlpha", "Float", 0.0)
     self:Variable("bCombatHasMovementInput", "Bool", false)
     self:Variable("bOverlayInAir", "Bool", false)
-    self:Variable("PoseOverlayState", "Enum", 0, OverlayStateEnum)
+    self:Variable("PoseOverlayState", "Enum", UE.ESKAnimOverlayState.Default, OverlayStateEnum)
 end
 
 ---构建 BasePoses 动画层；只狼 Locomotion、空中与持续防御状态仍由原生状态机求值。
@@ -195,7 +192,7 @@ local function build_layer_blending(graph, inputs)
             BranchFilters = Tuning.UpperBody.BranchFilters,
             bMeshSpaceRotationBlend = true,
             bMeshSpaceScaleBlend = false,
-            CurveBlendOption = "Override",
+            CurveBlendOption = UE.ECurveBlendOption.Override,
             bBlendRootMotionBasedOnRootBone = false,
         },
         "LayeredBlendPerBone")
@@ -362,8 +359,8 @@ function ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     -- 空中轨迹完全交给 CharacterMovement；忽略 Jump Start 的 Root Motion，避免状态混合把水平惯性衰减到零。
     -- 落地帧恢复 RootMotionFromEverything，使 Jump Land 和地面运动继续使用各自的根运动。
     Inst.RootMotionMode = Inst.bIsInAir == true
-        and RootMotionMode.Ignore
-        or RootMotionMode.Everything
+        and RootMotionMode.IgnoreRootMotion
+        or RootMotionMode.RootMotionFromEverything
     -- Movement 是锁定四方向的唯一权威；没有有效快照时按自由/冲刺的前向素材处理。
     local lock_on_locomotion_active = Inst.bHasLockOnLocomotionSnapshot == true
     local direction = lock_on_locomotion_active

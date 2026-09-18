@@ -149,20 +149,6 @@ function GenichiroRuntime.NameToString(value)
     return text
 end
 
----比较 UE 枚举值；编辑器中优先比较真实枚举，离线测试回退为末段名称比较。
----@param value userdata|number|string 待比较枚举值。
----@param enum_table_name string UE 全局下的枚举表名。
----@param member_name string 枚举成员名。
----@return boolean equal 是否为指定枚举成员。
-function GenichiroRuntime.EnumEquals(value, enum_table_name, member_name)
-    if UE ~= nil and UE[enum_table_name] ~= nil
-        and UE[enum_table_name][member_name] ~= nil then
-        return value == UE[enum_table_name][member_name]
-    end
-    local text = tostring(value)
-    return text == member_name or string.match(text, "%.([%w_]+)$") == member_name
-end
-
 ---创建 UE FVector；离线环境返回带 X/Y/Z 字段的普通表。
 ---@param x number X 分量。
 ---@param y number Y 分量。

@@ -11,31 +11,34 @@ local AttackDeflected = AnimAssets.AttackDeflected
 ---@field AnimationPath string 动画序列对象路径。
 ---@field ActionId string|nil 动作稳定 ID；按刀侧索引的重攻击配置需要显式填写。
 ---@field NextAction string|nil 普通连段窗口内再次点击时进入的动作。
----@field StartSide string|nil 动作提交时的挥刀侧；缺失时沿用当前锁存侧。
+---@field StartSide userdata|number|nil ESKAttackSide 原生枚举；缺失时沿用当前锁存侧。
 ---@field bAllowHeavy boolean|nil 当前动作是否允许后续输入升级为重攻击。
 
 ---@class SKDeflectSideConfig
+---@field ActionId string 反应动作的稳定字符串 ID。
 ---@field AnimationPath string 当前刀侧对应的弹反成功动画路径。
----@field EndSide string 弹反动作结束后锁存的新刀侧。
+---@field EndSide userdata|number ESKAttackSide 原生枚举；表示动作结束后锁存的新刀侧。
 
 ---@class SKCombatConfigModule
 ---@field SlotName string 全身战斗动作 Slot 名称。
 ---@field BlendInTime number 动作淡入时间，单位为秒。
 ---@field BlendOutTime number 动作淡出时间，单位为秒。
 ---@field HeavyHoldThreshold number 攻击键达到重攻击的持续时间，单位为秒。
----@field DefaultSide string 没有明确刀侧或当前攻击动画结束时使用的默认刀侧。
----@field DefenseSide string Guard 和当前阶段 Deflect 使用的锁存刀侧。
+---@field DefaultSide userdata|number ESKAttackSide 原生枚举；没有明确刀侧或动作结束时使用。
+---@field DefenseSide userdata|number ESKAttackSide 原生枚举；Guard 和当前阶段 Deflect 使用。
 ---@field DeflectSideResetDelay number 弹反成功后保留新刀侧的时间，单位为秒。
 ---@field DefaultIncomingWindow number 调试来袭窗口默认时长，单位为秒。
 ---@field Attacks table<string, SKCombatActionConfig> 稳定攻击动作 ID 到动作配置的映射。
 ---@field AirAttacks table<string, SKCombatActionConfig> 空中轻攻击动作 ID 到动作配置的映射。
 ---@field LandAttacks table<string, SKCombatActionConfig> 落地轻攻击动作 ID 到动作配置的映射。
 ---@field AirToLand table<string, string> 活动空中攻击到配对落地攻击动作 ID 的映射。
----@field HeavyBySide table<string, SKCombatActionConfig> 当前侧别到蓄力突刺动作的映射。
----@field GuardAttackStartupBySide table<string, SKCombatActionConfig> 防御攻击共用起手；首版复用同侧重攻击并在阈值处原地提交。
----@field DeflectBySide table<string, SKDeflectSideConfig> Raise 起始刀侧到成功弹反动作及结束刀侧的映射。
----@field DeflectFailedByType table<string, string[]> 模拟攻击类型到弹反失败动画序列链的映射。
----@field AttackDeflectedBySide table<string, SKDeflectSideConfig> 当前提交攻击刀侧到被弹开动作及保持刀侧的映射。
+---@field LightActionIdBySide table<userdata|number, string> 原生刀侧枚举到基础轻攻击动作 ID 的映射。
+---@field HeavyBySide table<userdata|number, SKCombatActionConfig> 原生刀侧枚举到蓄力突刺动作的映射。
+---@field GuardAttackStartupBySide table<userdata|number, SKCombatActionConfig> 原生刀侧枚举到防御攻击共用起手的映射。
+---@field DeflectBySide table<userdata|number, SKDeflectSideConfig> 原生 Raise 起始刀侧到成功弹反动作及结束刀侧的映射。
+---@field DeflectFailedActionIdByType table<userdata|number, string> ESKIncomingAttackType 原生枚举到动作 ID 前缀的映射。
+---@field DeflectFailedByType table<userdata|number, string[]> ESKIncomingAttackType 原生枚举到弹反失败动画链的映射。
+---@field AttackDeflectedBySide table<userdata|number, SKDeflectSideConfig> 原生提交刀侧到被弹开动作及保持刀侧的映射。
 ---@field Guard table<string, string> 地面与空中防御举刀、收刀动画路径。
 ---@field GuardImpactAnimation string 普通防御命中时播放的震刀动作路径。
 
@@ -45,8 +48,8 @@ local CombatConfig = {
     BlendInTime = 0.06,
     BlendOutTime = 0.10,
     HeavyHoldThreshold = 0.30,
-    DefaultSide = "Right",
-    DefenseSide = "Left",
+    DefaultSide = UE.ESKAttackSide.Right,
+    DefenseSide = UE.ESKAttackSide.Left,
     DeflectSideResetDelay = 0.75,
     DefaultIncomingWindow = 0.25,
     Guard = {
@@ -60,13 +63,13 @@ local CombatConfig = {
         Right = {
             AnimationPath = Attack.Right,
             NextAction = "Left",
-            StartSide = "Right",
+            StartSide = UE.ESKAttackSide.Right,
             bAllowHeavy = true,
         },
         Left = {
             AnimationPath = Attack.Left,
             NextAction = "Combo_01",
-            StartSide = "Left",
+            StartSide = UE.ESKAttackSide.Left,
             bAllowHeavy = true,
         },
         Combo_01 = { AnimationPath = Attack.Combo_01, NextAction = "Combo_02", bAllowHeavy = false },
@@ -112,67 +115,81 @@ local CombatConfig = {
         Air_Combo_02 = "Land_Combo_02",
         Air_Combo_03 = "Land_Combo_03",
     },
+    LightActionIdBySide = {
+        [UE.ESKAttackSide.Right] = "Right",
+        [UE.ESKAttackSide.Left] = "Left",
+    },
     HeavyBySide = {
-        Right = {
+        [UE.ESKAttackSide.Right] = {
             ActionId = "Charged_Thrust_Right",
             AnimationPath = Attack.Charged_Thrust_Right,
-            StartSide = "Right",
+            StartSide = UE.ESKAttackSide.Right,
             bAllowHeavy = true,
         },
-        Left = {
+        [UE.ESKAttackSide.Left] = {
             ActionId = "Charged_Thrust_Left",
             AnimationPath = Attack.Charged_Thrust_Left,
-            StartSide = "Left",
+            StartSide = UE.ESKAttackSide.Left,
             bAllowHeavy = true,
         },
     },
     -- 防御左侧起手立即播放重攻击前摇；短按会在阈值前切入 Left，长按则沿当前 Montage 继续重攻击。
     GuardAttackStartupBySide = {
-        Left = {
+        [UE.ESKAttackSide.Left] = {
             ActionId = "Guard_Attack_Startup_Left",
             AnimationPath = Attack.Charged_Thrust_Left,
-            StartSide = "Left",
+            StartSide = UE.ESKAttackSide.Left,
             bAllowHeavy = true,
         },
     },
     -- 成功弹反只在 Guard Raise 阶段成立：130101 负责右到左，130102 负责左到右。
     DeflectBySide = {
-        Right = {
+        [UE.ESKAttackSide.Right] = {
+            ActionId = "Deflect_Right_To_Left",
             AnimationPath = Deflect.Type_01_Stage_02,
-            EndSide = "Left",
+            EndSide = UE.ESKAttackSide.Left,
         },
-        Left = {
+        [UE.ESKAttackSide.Left] = {
+            ActionId = "Deflect_Left_To_Right",
             AnimationPath = Deflect.Type_01_Stage_03,
-            EndSide = "Right",
+            EndSide = UE.ESKAttackSide.Right,
         },
     },
+    DeflectFailedActionIdByType = {
+        [UE.ESKIncomingAttackType.Light] = "DeflectFailed_Light",
+        [UE.ESKIncomingAttackType.Heavy] = "DeflectFailed_Heavy",
+        [UE.ESKIncomingAttackType.Thrust] = "DeflectFailed_Thrust",
+        [UE.ESKIncomingAttackType.Special] = "DeflectFailed_Special",
+    },
     DeflectFailedByType = {
-        Light = {
+        [UE.ESKIncomingAttackType.Light] = {
             DeflectFailed.Type_01_Stage_01,
             DeflectFailed.Type_01_Stage_02,
             DeflectFailed.Type_01_Stage_03,
         },
-        Heavy = {
+        [UE.ESKIncomingAttackType.Heavy] = {
             DeflectFailed.Type_02_Stage_01,
             DeflectFailed.Type_02_Stage_02,
             DeflectFailed.Type_02_Stage_03,
         },
-        Thrust = {
+        [UE.ESKIncomingAttackType.Thrust] = {
             DeflectFailed.Type_03_Stage_01,
             DeflectFailed.Type_03_Stage_02,
             DeflectFailed.Type_03_Stage_03,
         },
-        Special = { DeflectFailed.Type_04_Stage_01 },
+        [UE.ESKIncomingAttackType.Special] = { DeflectFailed.Type_04_Stage_01 },
     },
     -- 攻击被成功弹开后保持原刀侧：150000 对应右侧，150001 对应左侧。
     AttackDeflectedBySide = {
-        Right = {
+        [UE.ESKAttackSide.Right] = {
+            ActionId = "AttackDeflected_Right",
             AnimationPath = AttackDeflected.Right,
-            EndSide = "Right",
+            EndSide = UE.ESKAttackSide.Right,
         },
-        Left = {
+        [UE.ESKAttackSide.Left] = {
+            ActionId = "AttackDeflected_Left",
             AnimationPath = AttackDeflected.Left,
-            EndSide = "Left",
+            EndSide = UE.ESKAttackSide.Left,
         },
     },
 }

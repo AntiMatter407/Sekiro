@@ -1,4 +1,4 @@
-#include "Tools/USKCompileTool.h"
+﻿#include "Tools/USKCompileTool.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -6,7 +6,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Engine/Engine.h"
-#include "Misc/OutputDevice.h"
+#include "Misc/StringOutputDevice.h"
 
 FString USKCompileTool::GetToolDescription() const
 {

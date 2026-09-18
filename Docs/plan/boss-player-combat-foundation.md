@@ -11,6 +11,7 @@
 独立子任务：[GAS 数值基础系统](gas-numeric-foundation.md)（任务 2.1，已实现并通过编译验证）。
 独立子任务：[生存组件](survival-component.md)（任务 2.2–2.5，USKSurvivalComponent 已实现；仅编译/静态验证，不代表对战闭环验收）。
 独立子需求：[Gameplay C++ 插件与 Lua 标签资产生成](lua-gameplay-tags.md)（任务 2.6，插件窗口及原生 DataTable 生成代码已编译，首份资产生成与迁移等待编辑器重启确认）。
+独立 UI 子需求：[原版敌我血量、架势与锁定 UI](original-combat-ui.md)（任务 10.5，原图已导入、基础显示与弦一郎 Boss 排版已实现；共用 Pelvis 锁定定位的 DebugGame 补编译/重载及运行视觉仍待验证）。
 
 ## 需求描述
 
@@ -27,19 +28,20 @@
 
 当前项目已经具备：
 
-- `USKCombatComponent` 的战斗动作状态、`ActionSerial`、架势值、架势崩溃、攻击/防御输入队列；
+- `USKCombatComponent` 的战斗动作状态、`ActionSerial` 和攻击/防御输入队列；GAS/Survival 已成为生命、架势、崩溃与回生的唯一权威；
 - 动态 Montage 播放、结束回调、动画曲线采样和 `CombatFullBodySlot` 契约；
 - `ASKWeapon` 的连续刀刃 Sweep、单次攻击目标去重、Hit/Guarded/Deflected 接触分类；
 - `FSKAICombatEvent` 队列，以及 `WeaponContact`、`DamageReceived`、`ProjectileImpact` 三类真实 Producer；
 - `ASKAIController` 的视觉感知、`TargetActor`、行为树启动和导航投影；
 - 玩家 Attack/Guard 输入桥接，以及移动、闪避、锁定、相机和动画基础系统；
 - 弦一郎 Lua BehaviorTree、ActionCatalog、CombatMemory、战术 Profile 和投射物执行器。
+- 统一 `CombatHitRequest → CombatHitResult`：近战和箭矢接入同一原生结算，Lua 纯裁决与提交后演出分离；实现/编译情况见任务 3，运行验收尚未进行。
 
 ### 1.2 当前阻塞
 
-- 没有统一的生命、死亡、无敌和复活状态权威；
-- 武器普通命中仍直接提交固定基础伤害，命中、生命伤害和架势伤害不是一次原子结算；
-- Player/Boss 尚未共享完整 `CombatHitRequest → CombatHitResult` 协议；
+- 统一命中已接入 Weapon/Projectile，仍需经用户授权验证实际玩家/Boss 双向命中、免疫和死亡边沿；
+- 近战基础伤害已读取 GAS AttackPower；完整招式倍率、护甲曲线、方向门禁和精确闪避窗口尚未配表接入；
+- 有效 TeamId 的同队过滤已实现，玩家/AI 的完整阵营身份配置仍待补齐；
 - 玩家道具、攻击威胁、强制反应、强制重规划和 Legacy 语义信号缺少真实 Producer；
 - 行为树虽然静态优先级为 Reaction > Phase > Tactical，但运行中动作没有完整的事件驱动即时 Abort；
 - `BossPhase` 没有阶段权威，`bPhaseTransitionPending` 只有消费端；
@@ -72,6 +74,7 @@
 - AI 战斗事件 Producer、Pending 状态和即时 Abort 链；
 - 通用 Boss 阶段/忍杀状态组件；
 - HUD/日志/Blackboard 调试快照；
+- 使用原版资产与排版的敌我血量/架势 HUD，以及原版锁定标记替换；
 - 离线、编译、编辑器静态和用户 PIE 验收用例。
 
 ### 3.2 非目标
@@ -101,8 +104,8 @@
 
 ### FR-002 统一命中请求与结算结果
 
-- 定义 `FSKCombatHitRequest`：来源、目标、ActionSerial、AttackType、DamageChannel、生命伤害、架势伤害、方向和 EventTag；
-- 定义 `FSKCombatHitResult`：Ignored、Hit、Guarded、Deflected、Dodged、Invulnerable、PostureBroken、Killed 及实际伤害；
+- 定义 `FSKCombatHitRequest`：来源、目标、ActionSerial、LifeSerial、HitSourceSerial、AttackType、DamageChannel、生命伤害、架势伤害、方向和 EventTag；
+- 定义 `FSKCombatHitResult`：Rejected/Committed、Ignored/Hit/Guarded/Deflected/Dodged/Invulnerable 接触结果，独立 PostureBroken/Killed 标志，以及攻守双方实际资源回执；
 - 武器和投射物都调用目标 CombatComponent 的统一结算入口；
 - 一次接触只产生一次权威结果，不允许先判定 Guard 再独立重复扣血；
 - CombatComponent 负责战斗裁决，Survival 校验生命/躯干状态，GAS 提交合法数值变化；Survival 根据最终快照管理死亡或崩溃流程。
@@ -112,7 +115,7 @@
 - 保留连续刀刃 Sweep 和单次动作目标去重；
 - 攻击窗口由 Montage 曲线/Notify 或 ActionCatalog 时点显式开启和关闭；
 - 新动作开始、结束、Abort、死亡和武器切换时必须关闭 Hitbox；
-- 命中请求锁存攻击者 `ActionSerial`，过期动作不得继续结算；
+- 近战命中请求锁存攻击者 `ActionSerial`，过期动作不得继续结算；投射物发射后允许正常收招/换招，但生命轮次变化后失效；
 - 阵营、自身、无效对象和重复目标必须失败关闭。
 
 ### FR-004 玩家战斗控制闭环
@@ -184,6 +187,17 @@
 - 正式运行默认关闭逐帧日志；
 - 所有测试失败必须能定位到 Producer、结算、动作、导航或动画层。
 
+### FR-012 原版战斗 UI
+
+- 从本地原版 GFX、布局包与纹理包识别、提取并导入敌我血量/架势和锁定素材，保留可追溯来源；
+- 依据原版布局、图集区域和显示状态实现主角、普通敌人及 Boss UI，不以占位 ProgressBar 代替正式原版效果；
+- 生命与架势只读取 GAS Character AttributeSet/Survival 提交后的快照，UI 不保存或计算第二套资源数值；
+- 替换当前程序绘制的锁定圆环/刻线，保留既有目标选择、相机与屏幕投影逻辑，禁止两套标记叠加；
+- 处理就绪、换 Pawn、切目标、死亡/回生和目标销毁；区分普通目标条与 Boss Encounter 的固定展示来源；
+- 原版精确坐标、填充方向、动画和图集 UV 需有证据后实现，资源名扫描不等于视觉复现完成；
+- 适配 DPI/安全区域/宽屏，运行时只依赖已导入 UE 资产，不依赖原版安装目录或编辑器插件；
+- 拆分与验收见独立子需求 [original-combat-ui](original-combat-ui.md)。
+
 ## 5. 非功能需求
 
 ### NFR-001 架构边界
@@ -196,7 +210,7 @@
 ### NFR-002 确定性与幂等
 
 - 同一 HitRequest 只能提交一次结果；
-- ActionSerial 过期请求必须失败；
+- 近战 ActionSerial 过期请求必须失败；已发射投射物以来源生命轮次为有效性边界，迟到反馈不能抢占射手新动作；
 - 死亡和阶段事件只能在状态边沿发布一次；
 - Reset、Abort 和 Hitbox Deactivate 可重复调用且结果一致。
 
@@ -257,6 +271,14 @@
 - [ ] Reaction > Phase > Tactical 具备实际运行时抢占语义；
 - [ ] 用户 PIE 情境测试通过后，才进入权重和手感校准。
 
+### Gate G：原版战斗 UI（独立子需求）
+
+- [ ] 敌我生命/架势条使用可追溯原版素材，数值与 GAS 一致；
+- [ ] 排版、透明度、填充与显隐有原版布局/参考画面对照；
+- [ ] 原版锁定标记替换旧绘制，切目标和失锁不残留旧图像或数值；
+- [ ] 初始化、上限变化、死亡/回生和目标销毁正确刷新或隐藏 UI；
+- [ ] 不同分辨率/DPI 下布局正确；用户明确授权后完成场景和视觉验收。
+
 ## 7. 任务树
 
 <!--
@@ -275,12 +297,12 @@
   - ✅ 2.4 接入玩家和通用 AI 死亡、显式回生接口及全部躯干逻辑，清理 Combat 数值/公式 (依赖: 2.3)
   - ✅ 2.5 增加状态门禁、死亡/崩溃优先和回生幂等契约测试代码，仅编译未执行 (依赖: 2.4)
   - 🔄 2.6 [独立子需求：Gameplay C++ 插件与 Lua 标签资产生成](lua-gameplay-tags.md)，可扩展编辑器窗口、原生 DataTable 与标签源注册 (依赖: 2.1, 2.4)
-- ⬜ 3. 统一命中结算协议 (依赖: 2)
-  - ⬜ 3.1 定义 HitRequest、HitResult 与 DamageChannel
-  - ⬜ 3.2 实现 CombatComponent 原子结算入口
-  - ⬜ 3.3 迁移 Weapon 普通命中，移除独立固定伤害路径
-  - ⬜ 3.4 迁移 AI Projectile 命中路径
-  - ⬜ 3.5 验证 Hit/Guarded/Deflected/Dodged/PostureBroken/Killed
+- 🔄 3. 统一命中结算协议（代码已实现，运行验收待授权；标签导入器资产迁移不阻塞原生接口） (依赖: 2.1–2.5)
+  - ✅ 3.1 定义 HitRequest、HitResult 与 DamageChannel
+  - ✅ 3.2 实现 CombatComponent 原子结算入口，Lua 纯裁决/纯躯干计算与提交后演出分离
+  - ✅ 3.3 迁移 Weapon 普通命中，移除独立固定伤害路径
+  - ✅ 3.4 迁移 AI Projectile 命中路径，锁存发射票据与生命轮次
+  - 🔄 3.5 补充身份、去重、免疫、复合提交与 Lua 规则测试代码；仅编译/语法检查，Hit/Guarded/Deflected/Dodged/PostureBroken/Killed 运行矩阵未执行
 - ⬜ 4. 玩家战斗闭环 (依赖: 3)
   - ⬜ 4.1 完成轻攻击连段和攻击窗口
   - ⬜ 4.2 完成 Guard/Deflect 与架势反馈
@@ -313,11 +335,12 @@
   - ⬜ 9.2 BossPhase 与 PhasePending Producer
   - ⬜ 9.3 阶段切换动作、无敌和状态清理
   - ⬜ 9.4 Boss 最终死亡与 Encounter 结束
-- ⬜ 10. 调试与测试场景 (依赖: 3, 6, 8, 9)
+- 🔄 10. 原版战斗 UI、调试与测试场景 (完整验收依赖: 3, 6, 8, 9；10.5 的资产与玩家 HUD 可先开展)
   - ⬜ 10.1 Health/Posture/ActionSerial/Target 调试快照
   - ⬜ 10.2 双向战斗训练假人和固定位置测试用例
   - ⬜ 10.3 自动化、UBT 与资产编译回归
   - ⬜ 10.4 输出用户 PIE 测试步骤并暂停等待反馈
+  - 🔄 10.5 [独立 UI 子需求：原版敌我血量/架势条与锁定标记](original-combat-ui.md)（两张原版UE纹理已实际导入，基础 HUD/Lua 与导入窗口已实现并编译；原版完整时序/视觉未验收）
 - ⬜ 11. 弦一郎正式接入 (依赖: 10)
   - ⬜ 11.1 补齐弦一郎 Blackboard Producer
   - ⬜ 11.2 将 ActionCatalog 接入统一 HitRequest/Result
@@ -337,6 +360,12 @@
 | 直接在弦一郎上联调所有基础模块 | 难以定位问题 | 先玩家↔训练假人，再通用 AI↔玩家，最后弦一郎 |
 
 ## 9. 变更记录
+
+2026-08-26：完成任务 3.1–3.4 的统一命中基建。Weapon 开窗读取 GAS AttackPower，Weapon/Projectile 均使用签发来源票据和统一结算，不再独立 TakeDamage；目标生命/躯干复合提交，Lua 纯规则与演出分离，保留免疫、致死优先、动作/生命轮次、去重及重入门禁。ProjectileImpact 只发受击方，避免射手误响应自身箭矢。
+
+验证：`SekiroEditor Win64 Development -Module=Sekiro` 最终编译成功（11.03 秒），主任务再次增量确认 `Target is up to date`（exit 0）；3 个 Lua 文件仅语法编译，594/594 函数文档完整，13 个 C++ 文件 UTF-8 BOM 与变更空白检查通过。新增 3 项原生契约测试及 1 份 Lua 规则测试仅编译，未执行测试、未启动 PIE。日志：`Script/temp/build_combat_hit_foundation_development.log`。当前 DebugGame 编辑器尚未获准重启，新反射接口仍待 DebugGame 补编译/重载；任务 3.5 与所有运行 Gate 保持未验收。
+
+2026-08-26：新增独立 UI 子需求 10.5 和 FR-012 / Gate G；已通过 C++ 导入器保存原版图集/锁定 Texture2D，核查主要布局并完成基础 UI、Lua 绑定与导入窗口，编译/静态及资产设置检查通过。完整原版时序与视觉仍未验收，未启动 PIE。
 
 | 日期 | 变更 |
 |------|------|

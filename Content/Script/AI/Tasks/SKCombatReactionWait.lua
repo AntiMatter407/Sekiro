@@ -7,7 +7,7 @@
 
 local SKCombatReactionWait = {}
 
----@type table<USekiroLuaBehaviorTreeTask, SKCombatReactionWaitTaskState>
+---@type table<ULuaBehaviorTreeTask, SKCombatReactionWaitTaskState>
 local TaskStates = setmetatable({}, {
     __mode = "k",
 })
@@ -35,12 +35,12 @@ local function is_reaction_locked(combat_component)
 end
 
 ---仅在存在战斗反应时进入等待；普通状态返回 Failed 让 Selector 继续尝试攻击和追击。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|nil 当前行为树所属控制器。
 ---@param pawn APawn|nil 当前控制器拥有的 Pawn。
 ---@param _blackboard UBlackboardComponent|nil 当前行为树黑板。
 ---@param _configuration string 当前节点不使用配置，保留统一 Task 签名。
----@return string result 反应中返回 InProgress，否则返回 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；反应中返回 InProgress，否则返回 Failed。
 function SKCombatReactionWait.Execute(
     task,
     controller,
@@ -51,7 +51,7 @@ function SKCombatReactionWait.Execute(
     if controller == nil
         or combat_component == nil
         or is_reaction_locked(combat_component) ~= true then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     controller:StopMovement()
@@ -59,17 +59,17 @@ function SKCombatReactionWait.Execute(
         CombatComponent = combat_component,
         ElapsedSeconds = 0.0,
     }
-    return "InProgress"
+    return UE.ELuaBehaviorTreeTaskResult.InProgress
 end
 
 ---持续等待反应状态和全身动画结束，超时则失败以防异常动画永久卡住行为树。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|nil 当前行为树所属控制器。
 ---@param _pawn APawn|nil 当前控制器拥有的 Pawn。
 ---@param _blackboard UBlackboardComponent|nil 当前行为树黑板。
 ---@param _configuration string 当前节点不使用配置，保留统一 Task 签名。
 ---@param delta_seconds number 当前行为树 Tick 间隔，单位秒。
----@return string result InProgress、Succeeded 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；InProgress、Succeeded 或 Failed。
 function SKCombatReactionWait.Tick(
     task,
     controller,
@@ -80,7 +80,7 @@ function SKCombatReactionWait.Tick(
     local state = TaskStates[task]
     if state == nil or controller == nil then
         TaskStates[task] = nil
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     controller:StopMovement()
@@ -88,24 +88,24 @@ function SKCombatReactionWait.Tick(
         state.ElapsedSeconds + math.max(delta_seconds or 0.0, 0.0)
     if state.ElapsedSeconds >= MaximumReactionWaitSeconds then
         TaskStates[task] = nil
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     if is_reaction_locked(state.CombatComponent) ~= true
         and state.CombatComponent:IsCombatAnimationPlaying() ~= true then
         TaskStates[task] = nil
-        return "Succeeded"
+        return UE.ELuaBehaviorTreeTaskResult.Succeeded
     end
-    return "InProgress"
+    return UE.ELuaBehaviorTreeTaskResult.InProgress
 end
 
 ---中止反应等待时释放当前 Task 的弱键状态，导航是否恢复由行为树下一轮重新决定。
----@param task USekiroLuaBehaviorTreeTask 当前被中止的 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前被中止的 Task 实例。
 ---@param _controller AAIController|nil 当前行为树所属控制器。
 ---@param _pawn APawn|nil 当前控制器拥有的 Pawn。
 ---@param _blackboard UBlackboardComponent|nil 当前行为树黑板。
 ---@param _configuration string 当前节点配置。
----@return string result 固定返回 Succeeded，同步完成 Abort。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；固定返回 Succeeded，同步完成 Abort。
 function SKCombatReactionWait.Abort(
     task,
     _controller,
@@ -113,7 +113,7 @@ function SKCombatReactionWait.Abort(
     _blackboard,
     _configuration)
     TaskStates[task] = nil
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 return SKCombatReactionWait

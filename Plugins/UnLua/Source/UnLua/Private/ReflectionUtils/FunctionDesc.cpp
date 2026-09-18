@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -24,6 +24,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "LuaDeadLoopCheck.h"
 #include "Containers/StaticBitArray.h"
+#include "Misc/EngineVersionComparison.h"
 
 /**
  * Function descriptor constructor
@@ -268,7 +269,11 @@ void FFunctionDesc::BroadcastMulticastDelegate(lua_State *L, int32 NumParams, in
     FFlagArray CleanupFlags;
     const auto Params = Buffer->Get();
     PreCall(L, NumParams, FirstParamIndex, CleanupFlags, Params);
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    ScriptDelegate->ProcessDelegate<UObject>(Params);
+#else
     ScriptDelegate->ProcessMulticastDelegate<UObject>(Params);
+#endif
     PostCall(L, NumParams, FirstParamIndex, Params, CleanupFlags);      // !!! have no return values for multi-cast delegates
     Buffer->Pop(Params);
 }
@@ -549,7 +554,7 @@ bool FFunctionDesc::CheckObject(UObject* Object, FString& Error) const
 
     if (Object->HasAnyFlags(RF_NeedInitialization))
     {
-        Error = FString::Printf(TEXT("attempt to call UFunction '%s' in lua Initialize function on object '%s'."), *Object->GetName());
+        Error = FString::Printf(TEXT("attempt to call UFunction '%s' in lua Initialize function on object '%s'."), *FuncName, *Object->GetName());
         return false;
     }
 

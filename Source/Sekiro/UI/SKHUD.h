@@ -53,6 +53,22 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "UI|HUD|Lua")
     APlayerController* GetHUDPlayerController() const; // 获取 HUD 玩家控制器
 
+    // ── 显式 Boss 展示资料 ──────────────────────────────────
+    UFUNCTION(BlueprintCallable, Category = "UI|HUD")
+    void SetBossDisplayTarget(AActor* TargetActor, FText DisplayName);
+
+    UFUNCTION(BlueprintPure, Category = "UI|HUD")
+    AActor* GetBossDisplayTarget() const;
+
+    UFUNCTION(BlueprintPure, Category = "UI|HUD")
+    FText GetBossDisplayName() const;
+
+    UFUNCTION(BlueprintNativeEvent, Category = "UI|HUD|Gameplay")
+    void HandleBossDisplayTargetChanged(AActor* TargetActor, const FText& DisplayName);
+
+    UFUNCTION(BlueprintNativeEvent, Category = "UI|HUD|Gameplay")
+    void HandleHUDShutdown();
+
 protected:
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -68,6 +84,9 @@ protected:
     FString LuaHUDModuleName = TEXT("Gameplay.Sekiro.UI.SKHUD"); // Lua HUD 模块名
 
 private:
+    TWeakObjectPtr<AActor> BossDisplayTarget; // 显式Encounter展示对象，不跟随锁定切换
+    FText BossDisplayName; // 外部显示资料，不猜测敌人名称或阶段
+
     UPROPERTY()
     TObjectPtr<APlayerController> CachedPlayerController; // 缓存玩家控制器
 

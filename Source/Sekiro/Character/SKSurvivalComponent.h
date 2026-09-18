@@ -132,6 +132,12 @@ public:
     FSKSurvivalTransitionResult CompletePostureRecovery(const FSKSurvivalTransitionToken& Token);
 
     // ── Lua 工作流 ──────────────────────────────────────────
+    UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "Survival")
+    FSKPostureImpactEvaluation EvaluatePostureImpact(FName Reason, ESKIncomingAttackType AttackType, float AdditionalDamage) const;
+
+    UFUNCTION(BlueprintNativeEvent, Category = "Survival")
+    void HandlePostureImpactCommitted(FName Reason);
+
     UFUNCTION(BlueprintNativeEvent, Category = "Survival")
     bool ApplyPostureImpact(FName Reason, ESKIncomingAttackType AttackType, AActor* SourceActor);
 

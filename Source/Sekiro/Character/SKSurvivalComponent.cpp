@@ -516,11 +516,36 @@ FSKSurvivalTransitionResult USKSurvivalComponent::CompletePostureRecovery(const 
 }
 
 /**
- * 游戏线程给 Lua 提供躯干增长策略覆盖点；原生不选择攻防倍率。
+ * 游戏线程给 Lua 提供纯躯干增长策略覆盖点；不写资源、不重置恢复计时或启动演出。
  * @param Reason 已裁决攻防结果，未知结果由 Lua 拒绝。
  * @param AttackType 通用来袭类型。
- * @param SourceActor 可空来源，不转移所有权。
- * @return 原生无策略时失败关闭；Lua 返回是否接受。
+ * @param AdditionalDamage 有限非负额外伤害，须在最终封顶之前纳入。
+ * @return 原生无策略时返回 bAccepted=false；Lua 返回最终待提交增长量。
+ */
+FSKPostureImpactEvaluation USKSurvivalComponent::EvaluatePostureImpact_Implementation(
+    FName Reason, ESKIncomingAttackType AttackType, float AdditionalDamage) const
+{
+    (void)Reason;
+    (void)AttackType;
+    (void)AdditionalDamage;
+    return FSKPostureImpactEvaluation();
+}
+
+/**
+ * 游戏线程在真实接触提交后通知 Lua 重置恢复计时，不写入任何资源或重算伤害。
+ * @param Reason 已被纯计算接受的攻防语义；不保留调用者引用。
+ */
+void USKSurvivalComponent::HandlePostureImpactCommitted_Implementation(FName Reason)
+{
+    (void)Reason;
+}
+
+/**
+ * 游戏线程兼容旧脚本躯干入口；无 Lua 时不修改资源。
+ * @param Reason 抽象攻防语义。
+ * @param AttackType 抽象攻击类型。
+ * @param SourceActor 可空来源角色，不取得所有权。
+ * @return 未绑定 Lua 时返回 false。
  */
 bool USKSurvivalComponent::ApplyPostureImpact_Implementation(
     FName Reason, ESKIncomingAttackType AttackType, AActor* SourceActor)

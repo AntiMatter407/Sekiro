@@ -8,6 +8,7 @@ local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 local LuaAnimNode = require("Animation.Compiler.LuaAnimNode")
 local NodeContracts = require("Animation.Compiler.NodeContracts")
 local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass")
+local IRValue = require("Animation.Compiler.IRValue")
 
 ---@class LuaAnimGraphConfig
 ---@field Blueprint LuaAnimBlueprint 所属动画蓝图编译实例。
@@ -243,6 +244,36 @@ function LuaAnimGraph:Property(name, variable_name)
         assert(node_types[variable.DataType], "Unsupported PropertyGetter variable type"))
 end
 
+---创建一个读取父 AnimInstance 上 Blueprint 可见属性的原生 Getter。
+---调用方只声明稳定数据类型；属性是否存在及真实 UE 类型最终由父类反射和 Graph Schema 复核。
+---@param name string Getter 节点语义名。
+---@param property_name string 父 AnimInstance 上的 Blueprint 可见成员名。
+---@param data_type string 与目标反射节点 Pin 共用的稳定数据类型标识。
+---@return LuaAnimNode node 具有 Value 输出 Pin 的 Getter。
+function LuaAnimGraph:ParentProperty(name, property_name, data_type)
+    local valid_property_name = IRSchema.RequireLuaIdentifier(
+        property_name,
+        "Parent AnimInstance Property")
+    local valid_data_type = IRSchema.RequireSemanticName(
+        data_type,
+        "Parent Property DataType")
+    return self:DynamicNode(
+        name,
+        EditorNodeClass.VariableGet,
+        "ReflectedPropertyGetter",
+        {
+            PropertyName = IRValue.Name(valid_property_name),
+        },
+        {
+            make_dynamic_pin(
+                "Value",
+                "Output",
+                valid_data_type,
+                true,
+                0),
+        })
+end
+
 ---兼容旧业务入口并转发到统一反射节点构造。
 ---@param name string Graph 内节点语义名。
 ---@return LuaAnimNode node Bool Pose 选择节点。
@@ -317,6 +348,43 @@ function LuaAnimGraph:Node(name, editor_node_class, properties, node_type)
     end
     self:AddNode(node)
     return node
+end
+
+---根据集中复核的 Spec 创建尚未进入 C++ 注册表的原生反射节点。
+---业务脚本不能在此入口手写 Pin；类路径、Pin 和允许属性都必须来自 ReflectedNodeSpec 模块。
+---@param name string Graph 内的节点语义名。
+---@param spec LuaReflectedNodeSpec 集中的反射节点类、Pin 与属性约定。
+---@param properties table<string, boolean|number|string|SekiroAnimIRValue>|nil 节点初始反射属性。
+---@return LuaAnimNode node 可通过具名 Pin 参与连接的原生反射节点。
+function LuaAnimGraph:ReflectedNode(name, spec, properties)
+    assert(type(spec) == "table", "Graph:ReflectedNode requires a reviewed node Spec")
+    assert(
+        type(spec.EditorNodeClass) == "string"
+            and spec.EditorNodeClass ~= "",
+        "Reflected node Spec requires EditorNodeClass")
+    assert(
+        type(spec.Pins) == "table" and #spec.Pins > 0,
+        "Reflected node Spec requires reviewed Pins")
+
+    local typed_properties = {}
+    for property_name, value in pairs(properties or {}) do
+        local property_spec = assert(
+            spec.Properties ~= nil and spec.Properties[property_name],
+            string.format(
+                "Reflected NodeType '%s' has no reviewed Property '%s'",
+                tostring(spec.NodeType),
+                tostring(property_name)))
+        typed_properties[property_name] = IRValue.From(
+            property_spec.ValueType,
+            value)
+    end
+
+    return self:DynamicNode(
+        name,
+        spec.EditorNodeClass,
+        spec.NodeType or "Reflected",
+        typed_properties,
+        spec.Pins)
 end
 
 ---创建并登记一个由函数签名提供动态 Pin 的结构型原生 AnimGraph 节点。

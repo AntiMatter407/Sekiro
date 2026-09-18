@@ -8,8 +8,9 @@ public class SekiroTarget : TargetRules
 	public SekiroTarget(TargetInfo Target) : base(Target)
 	{
 		Type = TargetType.Game;
-		DefaultBuildSettings = BuildSettingsVersion.V2;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_2;
+		DefaultBuildSettings = BuildSettingsVersion.V7;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
+		CppStandard = CppStandardVersion.Cpp20;
 		ExtraModuleNames.Add("Sekiro");
 	}
 }

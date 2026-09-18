@@ -422,28 +422,40 @@ function SKSurvivalComponent:ResumeGameplayAfterTransition()
     end
 end
 
----根据已裁决攻防结果读取 GAS 参数计算躯干增长；未知语义拒绝，不重新裁决 Guard/Deflect。
+---只读计算本次躯干增长，供统一命中入口在同一笔 GE 中提交生命与躯干。
 ---@param reason string|userdata 攻防结果 FName，包含防御结果和攻击方反馈。
 ---@param attack_type userdata|number 通用攻击类型枚举。
----@param source_actor AActor|nil 可空的真实来源，透传给 GAS 数值结果。
----@return boolean accepted 是否接受攻防语义；封顶或躯干免疫导致不增加也算接受，不代表数值已应用。
-function SKSurvivalComponent:ApplyPostureImpact(reason, attack_type, source_actor)
-    if self:IsSurvivalReady() ~= true or self:IsAlive() ~= true or self:IsPostureBroken() == true then
-        return false
+---@param additional_damage number 请求携带的额外最终躯干伤害，有限非负；在成功弹反/攻击反馈封顶之前相加。
+---@return FSKPostureImpactEvaluation evaluation 只读计算结果，不写资源、恢复计时或动作状态；未知语义失败关闭。
+function SKSurvivalComponent:EvaluatePostureImpact(reason, attack_type, additional_damage)
+    local evaluation = UE.FSKPostureImpactEvaluation()
+    if self:IsSurvivalReady() ~= true or self:IsAlive() ~= true
+        or not is_finite(additional_damage) or additional_damage < 0.0 then
+        return evaluation
     end
     local reason_name = tostring(reason)
     local gain_field = GainAttributes[reason_name]
     local strength_field = strength_attribute(attack_type)
     if gain_field == nil or strength_field == nil then
-        return false
+        return evaluation
     end
-    self.Runtime.RecoveryEligibleTime = 0.0
+    if self:IsPostureBroken() == true then
+        -- 崩溃时只抑制躯干通道，不能连带拒绝同笔命中的生命伤害。
+        evaluation.bAccepted = true
+        return evaluation
+    end
     local attributes = self:GetSurvivalSnapshot().Attributes
+    if not is_finite(attributes.MaxPosture) or attributes.MaxPosture <= 0.0 then
+        return evaluation
+    end
     local normalized = clamp(attributes.Posture / attributes.MaxPosture, 0.0, 1.0)
     local gain_scale = attributes.PostureMinGainScale
         + (1.0 - attributes.PostureMinGainScale)
         * ((1.0 - normalized) ^ attributes.PostureGainFalloffExponent)
-    local amount = attributes[gain_field] * attributes[strength_field] * gain_scale
+    local amount = attributes[gain_field] * attributes[strength_field] * gain_scale + additional_damage
+    if not is_finite(amount) or amount < 0.0 then
+        return evaluation
+    end
     if reason_name == "DeflectSuccess" then
         amount = math.min(amount, math.max(0.0,
             attributes.MaxPosture * attributes.PostureDeflectSuccessCapRatio - attributes.Posture))
@@ -452,16 +464,48 @@ function SKSurvivalComponent:ApplyPostureImpact(reason, attack_type, source_acto
             attributes.MaxPosture * attributes.PostureAttackCapRatio - attributes.Posture))
     end
     if not is_finite(amount) or amount < 0.0 then
+        return evaluation
+    end
+    evaluation.bAccepted = true
+    evaluation.PostureDamage = amount
+    return evaluation
+end
+
+---确认完整接触已经受理后重置恢复渐进计时，包含封顶或免疫导致的零增量。
+---@param reason string|userdata 已受理的攻防结果；未知语义不改变恢复计时。
+---@return nil result 不再写 GAS 或触发第二次躯干伤害。
+function SKSurvivalComponent:HandlePostureImpactCommitted(reason)
+    if self.Runtime ~= nil and self.Runtime.bEnding ~= true and GainAttributes[tostring(reason)] ~= nil then
+        self.Runtime.RecoveryEligibleTime = 0.0
+    end
+end
+
+---保留独立姿态调试入口；真实武器与投射物必须使用统一命中提交，不能在提交后再调用本函数。
+---@param reason string|userdata 攻防结果 FName，包含防御结果和攻击方反馈。
+---@param attack_type userdata|number 通用攻击类型枚举。
+---@param source_actor AActor|nil 可空的真实来源，透传给 GAS 数值结果。
+---@return boolean accepted 合法语义且数值提交成功、封顶无变化或姿态免疫时为 true。
+function SKSurvivalComponent:ApplyPostureImpact(reason, attack_type, source_actor)
+    if self:IsPostureBroken() == true then
         return false
     end
-    if amount == 0.0 then
+    local evaluation = self:EvaluatePostureImpact(reason, attack_type, 0.0)
+    if evaluation.bAccepted ~= true then
+        return false
+    end
+    if evaluation.PostureDamage == 0.0 then
+        self:HandlePostureImpactCommitted(reason)
         return true
     end
-    local result = self:ApplyPostureDamage(amount, source_actor)
+    local result = self:ApplyPostureDamage(evaluation.PostureDamage, source_actor)
     -- 躯干免疫只抑制数值，不把已经裁决成功的弹反降级成格挡，也不吞掉攻击被弹反的反应。
-    return numeric_accepted(result)
+    local accepted = numeric_accepted(result)
         or (result.Code == UE.ESKNumericResultCode.PolicyRejected
             and tostring(result.RejectionReason) == "PostureImmune")
+    if accepted then
+        self:HandlePostureImpactCommitted(reason)
+    end
+    return accepted
 end
 
 ---绑定事件后读取本角色的平铺 Lua 属性表，一次性通过 GE 初始化统一 Character 属性集。

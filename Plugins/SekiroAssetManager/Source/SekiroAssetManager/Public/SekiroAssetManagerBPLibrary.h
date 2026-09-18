@@ -48,6 +48,22 @@ public:
     static bool AddIntegerCurveToAnimation(const FString& AnimPath, const FString& CurveName,
         const TArray<float>& KeyTimes, const TArray<float>& KeyValues);
 
+    /// 请求当前运行平台的动画压缩数据驻留，并等待压缩任务完成
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation")
+    static void AcquireAnimationCompressionResidencyDetailed(
+        const TArray<FString>& AnimationObjectPaths,
+        const FString& ResidencyOwner,
+        bool& bSuccess,
+        FString& OutError);
+
+    /// 释放由同一调用方请求的当前运行平台动画压缩数据驻留
+    UFUNCTION(BlueprintCallable, Category = "Sekiro|Animation")
+    static void ReleaseAnimationCompressionResidencyDetailed(
+        const TArray<FString>& AnimationObjectPaths,
+        const FString& ResidencyOwner,
+        bool& bSuccess,
+        FString& OutError);
+
     /// 从 JSON 导入动画序列
     /// @param JsonPath JSON 文件绝对路径
     /// @param TargetBasePath UE 目标包基础路径（如 /Game/Characters/Sekiro）

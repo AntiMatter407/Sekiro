@@ -239,7 +239,7 @@ void SAModelImporter::ParseMaterials(
         const TSharedPtr<FJsonObject>* InlineTexObj = nullptr;
         if ((*Obj)->TryGetObjectField(TEXT("Textures"), InlineTexObj))
             for (const auto& Pair : (*InlineTexObj)->Values)
-                Mat.ResolvedTextures.Add(Pair.Key, Pair.Value->AsString());
+                Mat.ResolvedTextures.Add(FString(Pair.Key.Len(), *Pair.Key), Pair.Value->AsString());
 
         OutMaterials.Add(MoveTemp(Mat));
     }
@@ -263,7 +263,7 @@ void SAModelImporter::ParseMaterials(
                 const TSharedPtr<FJsonObject>* TexObj = nullptr;
                 if ((*RmObj)->TryGetObjectField(TEXT("Textures"), TexObj))
                     for (const auto& Pair : (*TexObj)->Values)
-                        Mat->ResolvedTextures.Add(Pair.Key, Pair.Value->AsString());
+                        Mat->ResolvedTextures.Add(FString(Pair.Key.Len(), *Pair.Key), Pair.Value->AsString());
             }
 
             // ShaderType and ShaderPath from ResolvedMaterials (authoritative)
@@ -715,7 +715,7 @@ USkeleton* SAModelImporter::BuildSkeleton(
             }
             ResetLoaders(StalePackage);
             StalePackage->ClearFlags(RF_WasLoaded);
-            StalePackage->ClearInternalFlags(EInternalObjectFlags::AsyncLoading);
+            StalePackage->ClearInternalFlags(EInternalObjectFlags_AsyncLoading);
         }
     }
     UPackage* Package = CreatePackage(*PackagePath);
@@ -776,7 +776,7 @@ USkeletalMesh* SAModelImporter::BuildSkeletalMesh(const FSAModelData& ModelData,
             }
             ResetLoaders(StalePackage);
             StalePackage->ClearFlags(RF_WasLoaded);
-            StalePackage->ClearInternalFlags(EInternalObjectFlags::AsyncLoading);
+            StalePackage->ClearInternalFlags(EInternalObjectFlags_AsyncLoading);
         }
     }
     UPackage* Package = CreatePackage(*PackagePath);

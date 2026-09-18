@@ -72,8 +72,8 @@ function PoseSelectors.Sequence(Graph, name, sequence, loop_animation, sync_grou
     }
     if sync_group ~= nil then
         properties.GroupName = sync_group
-        properties.GroupRole = "CanBeLeader"
-        properties.GroupMethod = "SyncGroup"
+        properties.GroupRole = UE.EAnimGroupRole.CanBeLeader
+        properties.GroupMethod = UE.EAnimSyncMethod.SyncGroup
     end
     return Graph:Node(
         name,

@@ -1,4 +1,4 @@
--- Lua 类型：BehaviorTree Task 模块。本文件由 USekiroLuaBehaviorTreeTask 在决策边界调用。
+-- Lua 类型：BehaviorTree Task 模块。本文件由 ULuaBehaviorTreeTask 在决策边界调用。
 -- 采集距离、导航空间、阶段信号、战斗状态和能力快照，并写入跨层 Blackboard 契约。
 -- 本任务同步完成，不选择动作、不移动 Pawn，也不消费战斗事件。
 
@@ -27,12 +27,12 @@ local function probe_navigation_space(controller, origin, direction, distance_cm
 end
 
 ---采集一次决策上下文并同步写入 Blackboard；目标无效时失败，让外层 Selector 进入无目标分支。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|table|nil 当前行为树所属控制器。
 ---@param pawn APawn|table|nil 当前控制器拥有的 Pawn。
 ---@param blackboard UBlackboardComponent|table|nil 当前行为树黑板。
 ---@param configuration string|nil 保留配置字符串；当前不使用。
----@return string result Succeeded 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；Succeeded 或 Failed。
 function SKGenichiroUpdateContext.Execute(
     task,
     controller,
@@ -41,7 +41,7 @@ function SKGenichiroUpdateContext.Execute(
     configuration)
     local _unused = task or configuration
     if controller == nil or pawn == nil or blackboard == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local keys = Runtime.Keys
@@ -50,20 +50,20 @@ function SKGenichiroUpdateContext.Execute(
         blackboard:SetValueAsBool(keys.bActionLocked, false)
         blackboard:SetValueAsName(keys.TacticalIntent, "Hold")
         blackboard:SetValueAsName(keys.SelectedActionId, "")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local combat_component = Runtime.GetCombatComponent(pawn)
     if combat_component == nil then
         blackboard:SetValueAsString(keys.DebugFailureReason, "MissingCombatComponent")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local distance_cm = tonumber(pawn:GetHorizontalDistanceTo(target_actor)) or 0.0
     local origin = Runtime.GetActorLocation(pawn)
     if origin == nil then
         blackboard:SetValueAsString(keys.DebugFailureReason, "ActorLocationUnavailable")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local right = pawn:GetActorRightVector()
     local forward = pawn:GetActorForwardVector()
@@ -85,7 +85,7 @@ function SKGenichiroUpdateContext.Execute(
 
     local action_state = combat_component:GetCombatActionState()
     local action_locked = combat_component:IsCombatFullBodyActionActive() == true
-        or not Runtime.EnumEquals(action_state, "ESKCombatActionState", "Neutral")
+        or action_state ~= UE.ESKCombatActionState.Neutral
 
     blackboard:SetValueAsFloat(keys.DistanceCm, distance_cm)
     blackboard:SetValueAsName(
@@ -104,7 +104,7 @@ function SKGenichiroUpdateContext.Execute(
         blackboard:SetValueAsFloat(keys.SelfHealthRatio, 1.0)
     end
     blackboard:SetValueAsString(keys.DebugFailureReason, "")
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 return SKGenichiroUpdateContext

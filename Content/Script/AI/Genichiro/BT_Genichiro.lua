@@ -86,7 +86,7 @@ function BT_Genichiro:BehaviorTree(tree)
     local engage = root:Composite("/Script/AIModule.BTComposite_Sequence", "EngageTarget")
     engage:Decorator("/Script/AIModule.BTDecorator_Blackboard", "HasTarget", {
         BlackboardKey = Value.Struct({ SelectedKeyName = Value.Name("TargetActor") }),
-        FlowAbortMode = Value.Enum("Both"),
+        FlowAbortMode = Value.Enum(UE.EBTFlowAbortMode.Both),
     })
     engage:Service("/Script/AIModule.BTService_DefaultFocus", "FocusTarget", {
         BlackboardKey = Value.Struct({ SelectedKeyName = Value.Name("TargetActor") }),

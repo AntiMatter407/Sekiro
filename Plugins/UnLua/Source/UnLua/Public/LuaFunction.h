@@ -72,7 +72,7 @@ public:
 
     void Initialize();
 
-    void Override(UFunction* Function, UClass* Class, bool bAddNew);
+    void Override(UFunction* Function, UClass* Class, bool bAddNew, bool bReplaceExisting);
 
     void Restore();
 
@@ -93,6 +93,7 @@ private:
     UFunction* Overridden;
 
     uint8 bAdded : 1;
+    uint8 bReplaced : 1;
     uint8 bActivated : 1;
     TSharedPtr<FFunctionDesc> Desc;
 };

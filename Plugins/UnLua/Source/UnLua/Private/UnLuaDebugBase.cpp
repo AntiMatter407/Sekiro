@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "UnLuaDebugBase.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Containers/LuaSet.h"
 #include "Containers/LuaMap.h"
 #include "ReflectionUtils/PropertyDesc.h"
@@ -226,7 +227,11 @@ namespace UnLua
         if (ClassNamePtr)
         {
             FString ClassName(ClassNamePtr);
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+            UStruct *Struct = FindFirstObject<UStruct>(*ClassName + 1);
+#else
             UStruct *Struct = FindObject<UStruct>(ANY_PACKAGE, *ClassName + 1);
+#endif
             if (Struct)
             {
                 // the userdata is a struct instance
@@ -484,7 +489,7 @@ namespace UnLua
                     // UClass
                     FClassProperty *ClassProperty = (FClassProperty*)ObjectProperty;
                     UClass *Class = Cast<UClass>(ObjectProperty->GetPropertyValue(ValuePtr));
-                    UClass *MetaClass = Class ? Class : ClassProperty->MetaClass;
+                    UClass *MetaClass = Class ? Class : ClassProperty->MetaClass.Get();
                     if (MetaClass == UClass::StaticClass())
                     {
                         ReadableValue = FString::Printf(TEXT("UClass*: 0x%p"), Class);
@@ -498,7 +503,7 @@ namespace UnLua
                 {
                     // UObject
                     UObject *Object = ObjectProperty->GetPropertyValue(ValuePtr);
-                    UClass *Class = Object ? Object->GetClass() : ObjectProperty->PropertyClass;
+                    UClass *Class = Object ? Object->GetClass() : ObjectProperty->PropertyClass.Get();
                     ReadableValue = FString::Printf(TEXT("%s%s* (%s): 0x%p"), Class->GetPrefixCPP(), *Class->GetName(), Object ? *Object->GetName() : TEXT(""), Object);
                     BuildFromUStruct(Class, Object, Object);
                 }

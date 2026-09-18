@@ -2,6 +2,7 @@
 -- AnimGraph 节点 Pin 的编译期对象。
 -- Pin 只记录类型和连接方向；Connect 最终生成原生 AnimGraph Link IR。
 local CompilerClass = require("Animation.Compiler.CompilerClass")
+local PinDirection = UE.ELuaAnimIRPinDirection
 
 ---@class LuaAnimPinConfig
 ---@field Node LuaAnimNode Pin 所属节点。
@@ -32,11 +33,11 @@ end
 ---@param source_pin LuaAnimPin 提供数据的输出 Pin，必须与当前 Pin 位于同一 Graph 且类型一致。
 ---@return SekiroAnimIRLink link 新建的类型化 Graph Link。
 function LuaAnimPin:Connect(source_pin)
-    assert(self.Direction == "Input", string.format(
+    assert(self.Direction == PinDirection.Input, string.format(
         "Connect target '%s.%s' must be an Input Pin",
         self.Node.Name,
         self.Name))
-    assert(source_pin ~= nil and source_pin.Direction == "Output", "Connect source must be an Output Pin")
+    assert(source_pin ~= nil and source_pin.Direction == PinDirection.Output, "Connect source must be an Output Pin")
     return self.Graph:LinkPins(source_pin, self)
 end
 

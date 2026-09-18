@@ -27,19 +27,9 @@ local TacticalProfile = require("AI.Genichiro.GenichiroTacticalProfile")
 
 local SKGenichiroExecuteCombatAction = {}
 
----@type table<USekiroLuaBehaviorTreeTask, SKGenichiroCombatActionTaskState>
+---@type table<ULuaBehaviorTreeTask, SKGenichiroCombatActionTaskState>
 local TaskStates = setmetatable({}, { __mode = "k" })
 local CachedProjectileClass = nil
-
----返回当前 UE 动作枚举；离线测试使用同名字符串。
----@param member_name string ESKCombatActionState 成员名。
----@return userdata|number|string state 枚举值或离线字符串。
-local function resolve_action_state(member_name)
-    if UE ~= nil and UE.ESKCombatActionState ~= nil then
-        return UE.ESKCombatActionState[member_name]
-    end
-    return member_name
-end
 
 ---判断步骤是否声明指定伤害通道。
 ---@param step GenichiroAnimationStep 当前动画步骤。
@@ -56,15 +46,15 @@ end
 
 ---按动画用途选择无玩家副作用的通用动作状态。
 ---@param step GenichiroAnimationStep 当前动画步骤。
----@return userdata|number|string state ESKCombatActionState 或离线字符串。
+---@return userdata|number state ESKCombatActionState 原生枚举值。
 local function resolve_step_state(step)
     if step.Usage == ActionCatalog.Usage.Locomotion then
-        return resolve_action_state("Dodging")
+        return UE.ESKCombatActionState.Dodging
     end
     if step.Usage == ActionCatalog.Usage.Reaction then
-        return resolve_action_state("AIReaction")
+        return UE.ESKCombatActionState.AIReaction
     end
-    return resolve_action_state("LightAttack")
+    return UE.ESKCombatActionState.LightAttack
 end
 
 ---判断目录条件追加步骤是否满足当前决策快照；未知表达式失败关闭。
@@ -174,22 +164,20 @@ local function invalidate_owned_action(state)
         and combat_component:IsActionSerialValid(state.ExpectedSerial) == true then
         combat_component:StopCombatAnimation(0.05)
         combat_component:InvalidateCombatAction(state.ExpectedSerial)
-        combat_component:SetCombatActionState(resolve_action_state("Neutral"))
+        combat_component:SetCombatActionState(UE.ESKCombatActionState.Neutral)
     end
 end
 
 ---统一清理 Task 和 Blackboard 的调度状态；动作锁由组件当前事实派生。
----@param task USekiroLuaBehaviorTreeTask 当前 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前 Task 实例。
 ---@param state SKGenichiroCombatActionTaskState 当前任务状态。
 ---@param clear_selection boolean 是否清除已选择动作。
 ---@return nil 无返回值。
 local function clear_task_state(task, state, clear_selection)
     local combat_component = state.CombatComponent
     local action_locked = combat_component:IsCombatFullBodyActionActive() == true
-        or not Runtime.EnumEquals(
-            combat_component:GetCombatActionState(),
-            "ESKCombatActionState",
-            "Neutral")
+        or combat_component:GetCombatActionState()
+            ~= UE.ESKCombatActionState.Neutral
     state.Blackboard:SetValueAsBool(Runtime.Keys.bActionLocked, action_locked)
     state.Blackboard:SetValueAsInt(Runtime.Keys.ActionSerial, combat_component:GetActionSerial())
     if clear_selection then
@@ -224,7 +212,7 @@ local function start_current_segment(state, controller)
         1.0,
         1) ~= true then
         state.CombatComponent:InvalidateCombatAction(serial)
-        state.CombatComponent:SetCombatActionState(resolve_action_state("Neutral"))
+        state.CombatComponent:SetCombatActionState(UE.ESKCombatActionState.Neutral)
         return false
     end
 
@@ -312,12 +300,12 @@ local function update_projectile_cue(state)
 end
 
 ---验证动作并启动锁存分支的第一段；纯导航动作拒绝进入本执行器。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|table|nil 当前 AIController。
 ---@param pawn APawn|table|nil 当前 Pawn。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard。
 ---@param configuration string|nil 可选故障超时秒数。
----@return string result InProgress 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；InProgress 或 Failed。
 function SKGenichiroExecuteCombatAction.Execute(
     task,
     controller,
@@ -325,11 +313,11 @@ function SKGenichiroExecuteCombatAction.Execute(
     blackboard,
     configuration)
     if task == nil or controller == nil or pawn == nil or blackboard == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local target_actor = blackboard:GetValueAsObject(Runtime.Keys.TargetActor)
     if not Runtime.IsObjectValid(target_actor) then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local action_id = Runtime.NameToString(
@@ -337,28 +325,26 @@ function SKGenichiroExecuteCombatAction.Execute(
     local action = ActionCatalog.GetAction(action_id)
     if action == nil or action.ExecutionMode == ActionCatalog.ExecutionMode.Navigation then
         blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "CombatActionMissing")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local combat_component = Runtime.GetCombatComponent(pawn)
     if combat_component == nil
         or combat_component:IsPostureBroken() == true
         or combat_component:IsCombatAnimationPlaying() == true
-        or not Runtime.EnumEquals(
-            combat_component:GetCombatActionState(),
-            "ESKCombatActionState",
-            "Neutral") then
-        return "Failed"
+        or combat_component:GetCombatActionState()
+            ~= UE.ESKCombatActionState.Neutral then
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local memory = CombatMemory.GetOrCreate(pawn)
     local context = Runtime.CaptureDecisionContext(pawn, blackboard, 0.0)
     local variant = select_variant(action, memory, context)
     if variant == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local steps = build_steps(action, variant, context)
     if #steps == 0 then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local state = {
@@ -382,7 +368,7 @@ function SKGenichiroExecuteCombatAction.Execute(
     if not start_current_segment(state, controller) then
         invalidate_owned_action(state)
         clear_task_state(task, state, true)
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     state.bStarted = true
@@ -391,17 +377,17 @@ function SKGenichiroExecuteCombatAction.Execute(
     CombatMemory.ApplyCooldowns(memory, action, "OnStart", now_seconds)
     CombatMemory.ApplyStateWrites(memory, action, "OnStart", nil)
     blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "")
-    return "InProgress"
+    return UE.ELuaBehaviorTreeTaskResult.InProgress
 end
 
 ---监控 Serial、Type 2 发射点和 Montage 完成，顺序推进锁存连段并提交完成副作用。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|table|nil 当前 AIController。
 ---@param pawn APawn|table|nil 当前 Pawn。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard。
 ---@param configuration string|nil 原 Execute 配置；Tick 不重新解析。
 ---@param delta_seconds number 当前帧步长。
----@return string result InProgress、Succeeded 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；InProgress、Succeeded 或 Failed。
 function SKGenichiroExecuteCombatAction.Tick(
     task,
     controller,
@@ -412,7 +398,7 @@ function SKGenichiroExecuteCombatAction.Tick(
     local _unused = pawn or blackboard or configuration
     local state = TaskStates[task]
     if state == nil or controller == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local delta = math.max(tonumber(delta_seconds) or 0.0, 0.0)
     state.ElapsedSeconds = state.ElapsedSeconds + delta
@@ -423,12 +409,12 @@ function SKGenichiroExecuteCombatAction.Tick(
         state.Blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "CombatActionFaultTimeoutOrTargetLost")
         invalidate_owned_action(state)
         clear_task_state(task, state, true)
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     if state.CombatComponent:IsActionSerialValid(state.ExpectedSerial) ~= true then
         state.Blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "CombatActionSuperseded")
         clear_task_state(task, state, true)
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local projectile_ready, projectile_failure_reason = update_projectile_cue(state)
     if not projectile_ready then
@@ -437,17 +423,15 @@ function SKGenichiroExecuteCombatAction.Tick(
             projectile_failure_reason or "ProjectileSpawnFailed")
         invalidate_owned_action(state)
         clear_task_state(task, state, true)
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     if state.CombatComponent:IsCombatAnimationPlaying() == true then
-        return "InProgress"
+        return UE.ELuaBehaviorTreeTaskResult.InProgress
     end
 
-    if not Runtime.EnumEquals(
-        state.CombatComponent:GetCombatActionState(),
-        "ESKCombatActionState",
-        "Neutral") then
-        return "InProgress"
+    if state.CombatComponent:GetCombatActionState()
+        ~= UE.ESKCombatActionState.Neutral then
+        return UE.ELuaBehaviorTreeTaskResult.InProgress
     end
     if state.StepIndex < #state.Steps then
         state.StepIndex = state.StepIndex + 1
@@ -455,9 +439,9 @@ function SKGenichiroExecuteCombatAction.Tick(
             state.Blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "NextCombatSegmentFailed")
             invalidate_owned_action(state)
             clear_task_state(task, state, true)
-            return "Failed"
+            return UE.ELuaBehaviorTreeTaskResult.Failed
         end
-        return "InProgress"
+        return UE.ELuaBehaviorTreeTaskResult.InProgress
     end
 
     local memory = CombatMemory.GetOrCreate(state.Pawn)
@@ -472,16 +456,16 @@ function SKGenichiroExecuteCombatAction.Tick(
         state.Blackboard:SetValueAsName(Runtime.Keys.TacticalIntent, "PostCombatMove")
     end
     clear_task_state(task, state, not combat_then_navigation)
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 ---同步释放行为树 Task；立即策略停止自有动作，其余策略移交仍在播放的 Montage 给 CombatComponent。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|table|nil 当前 AIController；本函数不直接调用。
 ---@param pawn APawn|table|nil 当前 Pawn；本函数不直接调用。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard；状态中已锁存引用。
 ---@param configuration string|nil 原 Execute 配置；Abort 不重新解析。
----@return string result 中止结果 Aborted。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；中止结果 Aborted。
 function SKGenichiroExecuteCombatAction.Abort(
     task,
     controller,
@@ -491,13 +475,13 @@ function SKGenichiroExecuteCombatAction.Abort(
     local _unused = controller or pawn or blackboard or configuration
     local state = TaskStates[task]
     if state == nil then
-        return "Aborted"
+        return UE.ELuaBehaviorTreeTaskResult.Aborted
     end
     if state.Action.InterruptPolicy == ActionCatalog.InterruptPolicy.ImmediateNavigationAbort then
         invalidate_owned_action(state)
     end
     clear_task_state(task, state, true)
-    return "Aborted"
+    return UE.ELuaBehaviorTreeTaskResult.Aborted
 end
 
 return SKGenichiroExecuteCombatAction

@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -20,6 +20,33 @@
 
 namespace UnLua
 {
+
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    /** UE5.8 移除的旧类型萃取兼容层，仅供 UnLua 旧接口内部使用。 */
+    template <bool Predicate, typename TrueType, typename FalseType>
+    struct TChooseClass
+    {
+        using Result = std::conditional_t<Predicate, TrueType, FalseType>;
+    };
+
+    template <typename T>
+    struct TRemoveCV
+    {
+        using Type = std::remove_cv_t<T>;
+    };
+
+    template <typename T>
+    struct TRemoveConst
+    {
+        using Type = std::remove_const_t<T>;
+    };
+
+    template <typename T>
+    struct TIsTriviallyDestructible
+    {
+        enum { Value = std::is_trivially_destructible_v<T> };
+    };
+#endif
 
     /**
      * Traits class which tests if a type is constructible

@@ -2,6 +2,7 @@
 local LuaLog = require("Gameplay.Base.LuaLog")
 
 ---@class SKHUD: ASKHUD
+---@field CombatHUDWidget SKCombatHUD|nil 原生原图显示控件，生命周期由 UIManager 管理。
 local SKHUD = UnLua.Class()
 local Debug = false
 
@@ -18,6 +19,7 @@ local LayerZOrder = {
 ---@param _initializer table|nil UnLua 可选初始化表；当前模块不读取该参数。
 ---@return nil 该生命周期入口只执行初始化，不返回业务值。
 function SKHUD:Initialize(_initializer)
+    self.CombatHUDWidget = nil
     LuaLog.Debug(Debug, "SKHUD", "Initialize", "hud lua host initialized")
 end
 
@@ -56,6 +58,15 @@ function SKHUD:HandleHUDInitialized()
         self:ConfigureLayers(ui_manager)
         ui_manager:SetUseLuaUIManagerLogic(true)
         ui_manager:SetLuaUIManagerModuleName("Gameplay.Sekiro.UI.SKUIManager")
+        if self:IsLocalPlayerController() then
+            local created = ui_manager:CreateWidgetByClass("CombatHUD", UE.USKCombatHUDWidget.StaticClass(), "HUD", 0)
+            if created then
+                self.CombatHUDWidget = ui_manager:GetManagedWidget("CombatHUD")
+                self.CombatHUDWidget:InitializeCombatHUD(self)
+                -- 原图HUD不抢焦点、不改变控制器输入模式，也不拦截其他控件命中。
+                self.CombatHUDWidget:SetVisibility(UE.ESlateVisibility.HitTestInvisible)
+            end
+        end
     end
 
     return true
@@ -66,7 +77,29 @@ end
 ---@return boolean handled 始终返回 true，表示 HUD 已刷新本帧所有者缓存。
 function SKHUD:HandleHUDTick(_delta_seconds)
     self:RefreshCachedHUDOwner()
+    if self.CombatHUDWidget ~= nil and UE.UKismetSystemLibrary.IsValid(self.CombatHUDWidget) then
+        self.CombatHUDWidget:RefreshBindingsFromTick(_delta_seconds)
+    end
     return true
+end
+
+---接收外部明确指定的Boss展示对象，脱锁和普通目标切换不会调用此入口。
+---@param target_actor AActor|nil 新Boss展示目标；nil显式关闭。
+---@param _display_name FText 外部名称资料，原字体和布局未核验前不绘制替代文字。
+---@return nil result 仅更新UI绑定，不设置Boss阶段或忍杀节点。
+function SKHUD:HandleBossDisplayTargetChanged(target_actor, _display_name)
+    if self.CombatHUDWidget ~= nil and UE.UKismetSystemLibrary.IsValid(self.CombatHUDWidget) then
+        self.CombatHUDWidget:SetBossTarget(target_actor)
+    end
+end
+
+---在原生HUD移除Widget之前解除所有Survival与控制器订阅。
+---@return nil result 重复调用安全，UIManager仍负责原生控件移除。
+function SKHUD:HandleHUDShutdown()
+    if self.CombatHUDWidget ~= nil and UE.UKismetSystemLibrary.IsValid(self.CombatHUDWidget) then
+        self.CombatHUDWidget:ShutdownCombatHUD()
+    end
+    self.CombatHUDWidget = nil
 end
 
 return SKHUD

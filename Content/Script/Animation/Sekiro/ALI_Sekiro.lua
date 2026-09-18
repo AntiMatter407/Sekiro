@@ -13,7 +13,7 @@ local PoseLayerParameters = {
 
 ---@class ALI_Sekiro: LuaAnimBlueprint
 local ALI_Sekiro = LuaAnimBlueprint:Extend("ALI_Sekiro", {
-    BlueprintKind = "AnimationLayerInterface",
+    BlueprintKind = UE.ELuaAnimIRBlueprintKind.AnimationLayerInterface,
     SourceModule = "Animation.Sekiro.ALI_Sekiro",
     ParentAnimInstanceClass = "",
     TargetSkeleton = "",

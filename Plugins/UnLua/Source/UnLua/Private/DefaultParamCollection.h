@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -15,6 +15,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Misc/EngineVersionComparison.h"
 
 class IParamValue
 {
@@ -53,7 +54,12 @@ public:
     {
         if (!bInitialized)
         {
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+            UEnum* Enum = FindFirstObject<UEnum>(*TypeName, EFindFirstObjectOptions::EnsureIfAmbiguous);
+            check(Enum);
+#else
             UEnum* Enum = FindObjectChecked<UEnum>(ANY_PACKAGE, *TypeName);
+#endif
             Value = Enum->GetValueByIndex(Index);
             bInitialized = true;
         }

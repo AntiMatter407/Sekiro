@@ -44,7 +44,7 @@ local function add_outgoing_transitions(Machine, source_state)
                 { Rule = Rule.BoolProperty(target.Flag, true) })
             transition.BlendDuration = 0.12
             transition.PriorityOrder = priority
-            transition.BlendMode = "Linear"
+            transition.BlendMode = UE.EAlphaBlendOption.Linear
             priority = priority + 1
         end
     end
@@ -56,7 +56,7 @@ local function add_outgoing_transitions(Machine, source_state)
             { Rule = idle_rule() })
         to_idle.BlendDuration = 0.15
         to_idle.PriorityOrder = priority
-        to_idle.BlendMode = "Linear"
+        to_idle.BlendMode = UE.EAlphaBlendOption.Linear
     end
 end
 

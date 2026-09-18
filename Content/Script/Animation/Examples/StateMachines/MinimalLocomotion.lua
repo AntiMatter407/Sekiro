@@ -23,14 +23,14 @@ function MinimalLocomotion.StateMachine(Machine)
     })
     idle_to_move.BlendDuration = 0.15
     idle_to_move.PriorityOrder = 0
-    idle_to_move.BlendMode = "Linear"
+    idle_to_move.BlendMode = UE.EAlphaBlendOption.Linear
 
     local move_to_idle = Machine:Transition("Move_Idle", "Move", "Idle", {
         Rule = Rule.BoolProperty("bShouldMove", false),
     })
     move_to_idle.BlendDuration = 0.15
     move_to_idle.PriorityOrder = 0
-    move_to_idle.BlendMode = "Linear"
+    move_to_idle.BlendMode = UE.EAlphaBlendOption.Linear
 end
 
 ---声明 Idle 状态的动画节点；SequencePlayer 属性直接对应 UE 节点详情。

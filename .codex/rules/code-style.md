@@ -15,6 +15,37 @@ paths:
 
 `Plugins/UnLua*`、`Plugins/UnLuaExtensions*` 下的插件/第三方 Lua 不套用项目业务 Lua 风格，除非明确是在项目侧扩展。
 
+## C++ / Lua 枚举边界（强制）
+
+- 已存在引擎或项目 `UENUM` 时，C++ 的 `UFUNCTION`、`UPROPERTY`、结构体字段和返回值必须直接使用该枚举类型；Lua 直接使用 `UE.EEnumType.Value`。
+- 禁止为了方便 Lua 调用而把枚举接口降级为 `FString`、`FName`、`SetXxxByName()`、`GetXxxName()` 或 `ResolveXxxByName()`；已有名称兼容接口不得继续用于新的业务代码。
+- 禁止 `Lua 枚举值 → tostring/名称字符串 → C++ 再解析成枚举`，也禁止在 Lua 中用枚举名称字符串进行状态比较、分支或缓存。
+- 当 Lua 私有表需要保存枚举语义时，值和 Key 均可直接使用原生枚举，不得复制一套字符串枚举表。
+- 日志、配置持久化、JSON/RPC、网络外部协议等真实文本边界允许输出枚举名称；解析和格式化必须集中在边界适配函数中，进入业务层后立即恢复为枚举值。
+- `NodeType`、`GraphType`、资产路径、GameplayTag 名、注册表 Key 等需要开放扩展的稳定标识符不是封闭枚举，应继续使用 `FName`、字符串或专用值类型；不得为了形式统一强制改成枚举。
+- 通用插件在写入任意反射枚举属性时，应传输“枚举类型/数值”或可反射验证的原生枚举值，不得硬编码具体项目枚举名称。
+
+```lua
+-- 正确：Lua 直接持有并传递 C++ 原生枚举。
+local weapon_presentation = UE.ESKWeaponPresentation.Sheathed
+weapon_manager:SetWeaponPresentation(weapon_presentation)
+
+-- 错误：运行时把枚举语义降级成字符串，再交给 C++ 猜回枚举。
+weapon_manager:SetWeaponPresentationByName("Sheathed")
+if tostring(weapon_manager:GetWeaponPresentation()) == "Sheathed" then
+end
+```
+
+```cpp
+// 正确：反射接口保持强类型。
+UFUNCTION(BlueprintCallable)
+bool SetWeaponPresentation(ESKWeaponPresentation NewPresentation);
+
+// 错误：名称解析接口成为业务主入口。
+UFUNCTION(BlueprintCallable)
+bool SetWeaponPresentationByName(FName PresentationName);
+```
+
 ## 0. 命名前缀（最高准则）
 
 ### 项目代码 → SK 缩写

@@ -347,7 +347,7 @@ void USKAIBridgeSubsystem::ProcessPendingToolsCalls()
 
     TGuardValue<bool> ProcessingGuard(bIsProcessingToolCall, true);
     FSekiroPendingToolCall PendingCall = MoveTemp(PendingToolCalls[0]);
-    PendingToolCalls.RemoveAt(0, 1, false);
+    PendingToolCalls.RemoveAt(0, 1, EAllowShrinking::No);
 
     if (!PendingCall.Params.IsValid()) return;
 

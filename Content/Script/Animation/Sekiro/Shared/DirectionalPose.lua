@@ -87,7 +87,7 @@ function DirectionalPose.GraphAlign(
         name .. "OrientationWarping",
         EditorNodeClass.OrientationWarping,
         {
-            Mode = "Graph",
+            Mode = UE.EWarpingEvaluationMode.Graph,
             SpineBones = warping_settings.SpineBones,
             IKFootRootBone = warping_settings.IKFootRootBone,
             IKFootBones = warping_settings.IKFootBones,

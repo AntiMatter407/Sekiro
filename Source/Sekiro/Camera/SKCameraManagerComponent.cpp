@@ -150,6 +150,18 @@ ESKCameraMode USKCameraManagerComponent::GetCameraMode() const
     return CameraMode;
 }
 
+/**
+ * 将原生相机模式写入组件运行时状态，供 Lua、Blueprint 和 C++ 使用同一枚举契约。
+ * 本函数不执行相机插值、不修改控制器朝向，也不校验锁定目标；这些行为由逐帧相机策略处理。
+ * 必须在游戏线程调用。
+ *
+ * @param NewMode 要应用的 ESKCameraMode 原生枚举值。
+ */
+void USKCameraManagerComponent::SetCameraMode(ESKCameraMode NewMode)
+{
+    CameraMode = NewMode;
+}
+
 bool USKCameraManagerComponent::IsSprintCameraAligning() const
 {
     return CameraMode == ESKCameraMode::SprintAlign;
@@ -195,11 +207,25 @@ bool USKCameraManagerComponent::HasOwnerCharacter() const
     return OwnerCharacter != nullptr;
 }
 
+/**
+ * 将旧蓝图提交的相机模式名解析为枚举后转发给强类型入口，仅用于迁移期兼容。
+ * 新业务必须直接调用 SetCameraMode；未知名称沿用历史行为解析为 Free。
+ * 必须在游戏线程调用。
+ *
+ * @param ModeName 旧调用方提供的相机模式名称，不区分大小写。
+ */
 void USKCameraManagerComponent::SetCameraModeByName(FName ModeName)
 {
-    CameraMode = ResolveCameraModeByName(ModeName);
+    SetCameraMode(ResolveCameraModeByName(ModeName));
 }
 
+/**
+ * 将当前相机模式格式化为旧蓝图使用的稳定名称，仅用于迁移期兼容。
+ * 新业务必须调用 GetCameraMode 并直接比较 ESKCameraMode；本函数不修改相机状态。
+ * 必须在游戏线程调用。
+ *
+ * @return LockOn、SprintAlign 或 Free；返回名称不应用于业务判断。
+ */
 FName USKCameraManagerComponent::GetCameraModeName() const
 {
     if (CameraMode == ESKCameraMode::LockOn) return FName(TEXT("LockOn"));

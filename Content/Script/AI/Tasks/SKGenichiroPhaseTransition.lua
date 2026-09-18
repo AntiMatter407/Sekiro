@@ -7,17 +7,17 @@ local Runtime = require("AI.Genichiro.GenichiroRuntime")
 local SKGenichiroPhaseTransition = {}
 
 ---消费阶段切换标记并重置 710000 的短期连续状态。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例；本任务不持有状态。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例；本任务不持有状态。
 ---@param controller AAIController|table|nil 当前 AIController；本任务不直接调用。
 ---@param pawn APawn|table|nil 当前 Pawn。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard。
 ---@param configuration string|nil 保留配置字符串；当前不使用。
----@return string result 有待处理阶段切换时 Succeeded，否则 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；有待处理阶段切换时 Succeeded，否则 Failed。
 function SKGenichiroPhaseTransition.Execute(task, controller, pawn, blackboard, configuration)
     local _unused = task or controller or configuration
     if pawn == nil or blackboard == nil
         or blackboard:GetValueAsBool(Runtime.Keys.bPhaseTransitionPending) ~= true then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local memory = CombatMemory.GetOrCreate(pawn)
@@ -29,7 +29,7 @@ function SKGenichiroPhaseTransition.Execute(task, controller, pawn, blackboard, 
     blackboard:SetValueAsBool(Runtime.Keys.bPhaseTransitionPending, false)
     blackboard:SetValueAsName(Runtime.Keys.TacticalIntent, "Hold")
     blackboard:SetValueAsName(Runtime.Keys.SelectedActionId, "")
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 return SKGenichiroPhaseTransition

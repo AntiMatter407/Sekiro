@@ -10,8 +10,8 @@ public class Sekiro : ModuleRules
 
 		PrivateIncludePaths.Add("Sekiro");
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "AIModule", "NavigationSystem", "InputCore", "HeadMountedDisplay", "EnhancedInput", "AnimGraphRuntime", "GameplayAbilities", "GameplayTags", "GameplayTasks", "SekiroAssetManager", "UnLua", "UMG" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "Lua", "Slate", "SlateCore" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "AIModule", "NavigationSystem", "InputCore", "HeadMountedDisplay", "EnhancedInput", "AnimGraphRuntime", "GameplayAbilities", "GameplayTags", "GameplayTasks", "MotionTrajectory", "PoseSearch", "SekiroAssetManager", "UnLua", "UMG" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Chooser", "Lua", "Slate", "SlateCore" });
 	}
 }
 

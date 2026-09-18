@@ -32,6 +32,8 @@ local NodeContracts = require("Animation.Compiler.NodeContracts")
 ---@field PinObjects table<string, LuaAnimPin> 供业务 Graph 直接连接的具名 Pin 对象。
 ---@field Properties SekiroAnimIRProperty[] Lua 请求 NodeFactory 写入的类型化属性值。
 ---@field PropertyNames table<string, boolean> 已赋值属性名集合，用于重复和必填校验。
+---@field FunctionBindings SekiroAnimIRNodeFunctionBinding[] Anim Node Function 绑定声明。
+---@field FunctionBindingNames table<string, boolean> 已绑定的 FMemberReference 属性名集合。
 ---@field DeclarationOrder number 源码中的确定性声明顺序整数。
 local LuaAnimNode = CompilerClass:Extend("LuaAnimNode")
 
@@ -109,6 +111,9 @@ function LuaAnimNode:Initialize(config)
         rawset(self, pin.Name, pin)
     end
     self.Properties = {}
+    self.FunctionBindings = {}
+    self.FunctionBindingNames = {}
+    -- PropertyNames 建立后，反射节点的未知赋值会被视作原生属性；内部字段必须先完成初始化。
     self.PropertyNames = {}
 end
 
@@ -162,6 +167,42 @@ function LuaAnimNode:SetProperty(name, value)
     return property
 end
 
+---登记一个经过 ReflectedNodeSpec 审查的 Anim Node Function 绑定。
+---这里只生成线程安全函数引用 IR，不创建 Blueprint Function Graph，也不执行运行时回调。
+---@param function_spec LuaReflectedNodeFunctionSpec 节点类型允许的 FMemberReference 属性与原型契约。
+---@param function_name string 目标生成类函数或允许函数库中的 UFunction 名称。
+---@return SekiroAnimIRNodeFunctionBinding binding 新建并加入节点 IR 的函数绑定。
+function LuaAnimNode:BindFunction(function_spec, function_name)
+    assert(type(function_spec) == "table", "Anim Node Function requires a reviewed function Spec")
+    local property_name = IRSchema.RequireSemanticName(
+        function_spec.PropertyName,
+        "Anim Node Function property")
+    local prototype_function = assert(
+        function_spec.PrototypeFunction,
+        "Anim Node Function requires a prototype path")
+    IRSchema.RequireAssetObjectPath(
+        prototype_function,
+        "Anim Node Function prototype")
+    local target_function = IRSchema.RequireLuaIdentifier(
+        function_name,
+        "Anim Node Function target")
+    assert(self.FunctionBindingNames[property_name] == nil, string.format(
+        "Node '%s' contains duplicate Anim Node Function binding '%s'",
+        self.Name,
+        property_name))
+
+    ---@type SekiroAnimIRNodeFunctionBinding
+    local binding = {
+        PropertyName = property_name,
+        FunctionName = target_function,
+        PrototypeFunction = prototype_function,
+        DeclarationOrder = #self.FunctionBindings,
+    }
+    self.FunctionBindingNames[property_name] = true
+    table.insert(self.FunctionBindings, binding)
+    return binding
+end
+
 ---导出与 FSekiroAnimIRNode 字段一致的纯 Lua 表。
 ---@return SekiroAnimIRNode ir_node 可交给 C++ 导入器的节点声明。
 function LuaAnimNode:ToIR()
@@ -176,6 +217,7 @@ function LuaAnimNode:ToIR()
         OwnedGraphId = self.OwnedGraphId,
         Pins = self.Pins,
         Properties = self.Properties,
+        FunctionBindings = self.FunctionBindings,
         DeclarationOrder = self.DeclarationOrder or 0,
         SourceLocation = self.SourceLocation,
     }

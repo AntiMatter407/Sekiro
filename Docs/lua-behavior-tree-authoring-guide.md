@@ -1,6 +1,6 @@
 # Lua 行为树编写手册
 
-`SekiroLuaBehaviorTreeExt` 将 Lua 声明编译为 UE5.2 原生 `UBlackboardData` 与
+`LuaEditorExtensions` 的 `LuaBehaviorTree` 模块将 Lua 声明编译为 UE5.2 原生 `UBlackboardData` 与
 `UBehaviorTree`。Lua 是唯一源码，生成资产是可重复生成的编译产物。
 
 ## 核心边界
@@ -123,7 +123,7 @@ patrol:LuaTask(
 ```
 
 `LuaTask` 等价于声明
-`/Script/SekiroLuaBehaviorTreeExt.SekiroLuaBehaviorTreeTask`，并反射写入：
+`/Script/LuaBehaviorTree.LuaBehaviorTreeTask`，并反射写入：
 
 - `LuaModuleName`：运行时 `require` 的模块名。
 - `Configuration`：原样传给 Lua 的配置字符串，可自行约定 JSON 或简单标量。

@@ -80,6 +80,45 @@ APlayerController* ASKHUD::GetHUDPlayerController() const
     return CachedPlayerController;
 }
 
+/**
+ * 游戏线程设置独立 Boss 展示对象，允许空对象显式关闭；不寻找敌人或修改锁定。
+ * @param TargetActor 可空目标，只保存弱引用。
+ * @param DisplayName 外部提供的显示资料，不推导Boss身份、阶段或忍杀节点。
+ */
+void ASKHUD::SetBossDisplayTarget(AActor* TargetActor, FText DisplayName)
+{
+    if (!IsInGameThread()) return;
+    BossDisplayTarget = IsValid(TargetActor) ? TargetActor : nullptr;
+    BossDisplayName = DisplayName;
+    HandleBossDisplayTargetChanged(BossDisplayTarget.Get(), BossDisplayName);
+}
+
+/** 游戏线程返回显式Boss弱目标；已销毁或未设置返回空，不转移所有权。 */
+AActor* ASKHUD::GetBossDisplayTarget() const
+{
+    return IsInGameThread() ? BossDisplayTarget.Get() : nullptr;
+}
+
+/** 游戏线程返回外部提供的Boss名称资料，不生成占位名称。 */
+FText ASKHUD::GetBossDisplayName() const
+{
+    return IsInGameThread() ? BossDisplayName : FText::GetEmpty();
+}
+
+/**
+ * 游戏线程提供Lua展示切换入口；原生不自动创建界面。
+ * @param TargetActor 新的可空展示对象。
+ * @param DisplayName 外部显示名称，只在当前调用栈读取。
+ */
+void ASKHUD::HandleBossDisplayTargetChanged_Implementation(AActor* TargetActor, const FText& DisplayName)
+{
+}
+
+/** 游戏线程在移除Widget前给Lua解绑委托和清理显示状态的机会。 */
+void ASKHUD::HandleHUDShutdown_Implementation()
+{
+}
+
 void ASKHUD::BeginPlay()
 {
     Super::BeginPlay();
@@ -93,6 +132,9 @@ void ASKHUD::BeginPlay()
 
 void ASKHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    HandleHUDShutdown();
+    BossDisplayTarget.Reset();
+    BossDisplayName = FText::GetEmpty();
     if (UIManager)
     {
         UIManager->RemoveAllWidgets();

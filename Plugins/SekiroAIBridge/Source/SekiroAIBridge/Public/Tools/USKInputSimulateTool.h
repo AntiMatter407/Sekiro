@@ -63,8 +63,13 @@ private:
 		float HoldTime,
 		float Delay);
 
-	/** 在指定时长内持续注入按钮按下值，并在结束时自动释放 */
-	static void ScheduleRelease(UWorld* World, const FString& Action, float HoldTime);
+	/** 在指定时长内持续注入动作值，并在结束时自动释放 */
+	static void ScheduleRelease(
+		UWorld* World,
+		const FString& Action,
+		float ValueX,
+		float ValueY,
+		float HoldTime);
 
 	/** 按钮类动作：延迟 1 帧后自动注入 false（脉冲释放），确保 Started/Completed 事件触发 */
 	static void SchedulePulseRelease(UWorld* World, const UInputAction* InputAction);

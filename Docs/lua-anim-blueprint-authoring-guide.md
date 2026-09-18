@@ -1,6 +1,6 @@
 # Lua 动画蓝图编写手册
 
-本文说明如何使用 `SekiroAnimBlueprintExt` 的 Lua AnimGraph Function API 编写动画蓝图。
+本文说明如何使用 `LuaEditorExtensions` 的 `LuaAnimBlueprintEditor` 模块提供的 Lua AnimGraph Function API 编写动画蓝图。
 
 Lua 在编辑器编译期描述 Graph、Node、Pin、State 和 Transition。插件随后生成普通的原生 `UAnimBlueprint`。游戏运行时的姿势更新、节点求值、状态混合和 Cached Pose 仍由 UE 动画系统执行；Transition 必须使用强类型 `Rule` AST 生成原生 Transition Rule Graph。
 
@@ -91,6 +91,11 @@ return ABP_Sekiro:Export()
 ```
 
 `graph.Result` 是基类自动创建的 Output Pose 输入 Pin。业务代码只需要把最终 Pose 连接进去。
+
+父 C++ `AnimInstance` 暴露的持久 `UPROPERTY` 默认值可以通过 `InheritedDefaults`
+显式配置。值必须使用 `Animation.Compiler.IRValue` 提供的类型标签；例如对象引用使用
+`IRValue.SoftObjectPath(AssetPath)`。生成器只覆盖表中列出的直接父类属性，不创建变量，
+也不接管其他类默认值、函数或 EventGraph。Animation Layer Interface 禁止声明该字段。
 
 ### Animation Layer Interface、Anim Layer 与子类覆写
 
@@ -365,6 +370,37 @@ local player = graph:Node(
 ```
 
 原生类路径集中在 `Animation.Compiler.NodeClasses.EditorNodeClass`。业务脚本只引用 `EditorNodeClass.UseCachedPose` 等语义字段，不直接保存 `"/Script/..."` 字符串。第四个 `NodeType` 用于复用已有强类型 Pin 契约和结构型 C++ 适配器；现有节点应继续填写。编译器会把普通 Lua 值转换为显式 IR 类型，属性不存在、类型不兼容或必填属性缺失都会在生成阶段报错。
+
+### 反射节点与父类属性
+
+没有专用结构适配器的编辑器节点使用 `graph:ReflectedNode()`。节点类、可连接 Pin、可写属性及其类型必须集中声明在 `Animation.Compiler.ReflectedNodeSpec`，业务脚本不能临时拼写 Pin 或类路径。AnimInstance 父类公开的数据通过 `graph:ParentProperty()` 读取：
+
+```lua
+local DataType = require("Animation.Compiler.ReflectedDataType")
+local ReflectedNodeSpec = require("Animation.Compiler.ReflectedNodeSpec")
+
+local trajectory = graph:ParentProperty(
+    "MotionMatchingTrajectory",
+    "MotionMatchingTrajectory",
+    DataType.MotionTrajectory)
+local motion_matching = graph:ReflectedNode(
+    "MotionMatching",
+    ReflectedNodeSpec.MotionMatching,
+    {
+        Searchable = AnimAssets.PoseSearch.MinimalDatabase,
+    })
+
+motion_matching.Trajectory:Connect(trajectory.Value)
+graph.Result:Connect(motion_matching.Pose)
+```
+
+这种写法仍然生成 UE 原生节点。Lua 只负责编辑器编译期编排，运行时不会通过 Lua 模拟 Motion Matching；新增同类节点优先增加集中 Spec，不为每个节点新增一条硬编码 C++ 分支。
+
+当反射属性是 UE `FStructProperty` 时，Spec 将 `ValueType` 声明为
+`Struct`，业务 Lua 传入稳定的 UE 结构体文本，例如
+`"(Min=0.0,Max=1.0)"`。通用插件根据目标属性的真实 `UScriptStruct`
+类型完整解析到临时值，成功后才原子写入节点；项目不需要为
+`FFloatInterval` 等具体结构修改插件 C++。
 
 ## 六、Pin 连接
 

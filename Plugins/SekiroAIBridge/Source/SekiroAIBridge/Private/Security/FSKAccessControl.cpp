@@ -1,4 +1,4 @@
-#include "Security/FSKAccessControl.h"
+﻿#include "Security/FSKAccessControl.h"
 #include "SekiroAIBridgeLog.h"
 #include "Misc/MessageDialog.h"
 #include "Internationalization/Text.h"
@@ -27,7 +27,7 @@ FSKAccessControl::EConfirmationResult FSKAccessControl::RequestConfirmation(
     );
     FText Message = FText::FromString(MessageStr);
 
-    EAppReturnType::Type Return = FMessageDialog::Open(EAppMsgType::YesNoYesAll, Message, &Title);
+    EAppReturnType::Type Return = FMessageDialog::Open(EAppMsgType::YesNoYesAll, Message, Title);
 
     switch (Return)
     {

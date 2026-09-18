@@ -5,12 +5,14 @@ local CompilerClass = require("Animation.Compiler.CompilerClass")
 local IRSchema = require("Animation.Compiler.IRSchema")
 local LuaAnimLayer = require("Animation.Compiler.LuaAnimLayer")
 local IRValue = require("Animation.Compiler.IRValue")
+local BlueprintKind = UE.ELuaAnimIRBlueprintKind
 
 ---@class LuaAnimBlueprintConfig
----@field BlueprintKind string|nil AnimBlueprint 或 AnimationLayerInterface。
+---@field BlueprintKind SekiroAnimIRBlueprintKind|nil ELuaAnimIRBlueprintKind 原生枚举值。
 ---@field SourceModule string|nil 当前 Lua 动画声明的 require 模块名。
 ---@field ParentAnimInstanceClass string|nil 父 AnimInstance 或父 AnimBlueprint GeneratedClass 软路径。
 ---@field TargetSkeleton string|nil 普通 AnimBlueprint 的 Skeleton 资产软路径。
+---@field InheritedDefaults table<string, boolean|number|string|SekiroAnimIRValue>|nil 只覆盖显式列出的父类 UPROPERTY 默认值。
 ---@field ImplementedInterfaces string[]|nil 实现的 Animation Layer Interface GeneratedClass 软路径。
 
 ---@class LuaAnimBlueprintExport: LuaAnimBlueprint
@@ -19,23 +21,51 @@ local IRValue = require("Animation.Compiler.IRValue")
 
 ---@class LuaAnimBlueprint: CompilerClass
 ---@field SchemaVersion number IR Schema 版本整数。
----@field BlueprintKind string AnimBlueprint 或 AnimationLayerInterface。
+---@field BlueprintKind SekiroAnimIRBlueprintKind ELuaAnimIRBlueprintKind 原生枚举值。
 ---@field SourceModule string 动画蓝图 Lua 模块名。
 ---@field ParentAnimInstanceClass string 父 AnimInstance 类软路径。
 ---@field TargetSkeleton string 普通 AnimBlueprint 必填的目标 Skeleton 资产软路径。
+---@field InheritedDefaults table<string, boolean|number|string|SekiroAnimIRValue> 由 Lua 显式拥有的父类属性默认值。
 ---@field ImplementedInterfaces string[] 普通 AnimBlueprint 实现的 Animation Layer Interface 类软路径。
 ---@field Layers LuaAnimLayer[] 本次编译声明的 Main AnimGraph 与 Animation Layer Function Graph。
 ---@field LayerNames table<string, LuaAnimLayer> 按语义名称索引的 Graph 所有权作用域。
 ---@field SourceLocation SekiroAnimIRSourceLocation 动画蓝图源码位置。
 ---@field AnimGraph fun(self: LuaAnimBlueprint, graph: LuaAnimGraph):nil 子类必须 override 的主动画图函数。
 local LuaAnimBlueprint = CompilerClass:Extend("LuaAnimBlueprint", {
-    SchemaVersion = 3,
-    BlueprintKind = "AnimBlueprint",
+    SchemaVersion = 4,
+    BlueprintKind = BlueprintKind.AnimBlueprint,
     SourceModule = "",
     ParentAnimInstanceClass = "/Script/Engine.AnimInstance",
     TargetSkeleton = "",
+    InheritedDefaults = {},
     ImplementedInterfaces = {},
 })
+
+---把显式声明的父类默认值转换为稳定排序的类型化属性数组。
+---这里只拥有调用方列出的属性；未列出的 CDO 属性仍由原生父类或蓝图编辑器维护。
+---@param defaults table<string, boolean|number|string|SekiroAnimIRValue>|nil 属性名到类型化值的映射。
+---@return SekiroAnimIRProperty[] inherited_defaults 可由 C++ 反射写入器消费的稳定数组。
+local function compile_inherited_defaults(defaults)
+    assert(defaults == nil or type(defaults) == "table",
+        "InheritedDefaults must be a table")
+
+    local property_names = {}
+    for property_name in pairs(defaults or {}) do
+        table.insert(property_names,
+            IRSchema.RequireLuaIdentifier(property_name, "InheritedDefault"))
+    end
+    table.sort(property_names)
+
+    local inherited_defaults = {}
+    for declaration_order, property_name in ipairs(property_names) do
+        table.insert(inherited_defaults, {
+            Name = property_name,
+            Value = IRValue.Infer(defaults[property_name]),
+            DeclarationOrder = declaration_order - 1,
+        })
+    end
+    return inherited_defaults
+end
 
 ---@class LuaAnimLayerConfig
 ---@field FunctionName string|nil 对应 UE Animation Layer UFunction 名；省略时与 Layer 名一致。
@@ -70,11 +100,11 @@ local function make_byte_default(value)
     return IRValue.Integer(value)
 end
 
----把 Blueprint Enum 默认值转换为底层整数 IR Value。
----@param value number Lua 动画蓝图声明的枚举整数值。
----@return SekiroAnimIRValue ir_value 可由 C++ Importer 结合 UEnum 路径解释的 Integer 值。
+---把 Blueprint Enum 默认值转换为带原生枚举类型标签的 IR Value。
+---@param value number Lua 动画蓝图声明的原生枚举值。
+---@return SekiroAnimIRValue ir_value 可由 C++ Importer 结合 UEnum 路径校验的 Enum 值。
 local function make_enum_default(value)
-    return IRValue.Integer(value)
+    return IRValue.Enum(value)
 end
 
 ---规范化一个 Animation Layer 函数参数，并为稳定导入补齐顺序与源码位置。
@@ -300,7 +330,7 @@ end
 ---由基类创建默认 Main Layer 和 AnimGraph，再把 Graph 交给子类像动画蓝图函数一样填写。
 ---@return nil result 该函数只执行固定编译流程，业务动画蓝图不得 override。
 function LuaAnimBlueprint:BuildDeclaredAnimGraph()
-    if self.BlueprintKind == "AnimBlueprint" then
+    if self.BlueprintKind == BlueprintKind.AnimBlueprint then
         assert(type(self.AnimGraph) == "function", string.format(
             "%s must override AnimGraph",
             self.ClassName or "LuaAnimBlueprint"))
@@ -312,7 +342,7 @@ function LuaAnimBlueprint:BuildDeclaredAnimGraph()
         layer:SetRootGraph(graph)
     else
         assert(
-            self.BlueprintKind == "AnimationLayerInterface",
+            self.BlueprintKind == BlueprintKind.AnimationLayerInterface,
             string.format(
                 "Unsupported AnimBlueprint kind '%s'",
                 tostring(self.BlueprintKind)))
@@ -326,7 +356,7 @@ end
 ---构建子类声明并导出规范 IR 表；该函数只在编辑器编译期调用。
 ---@return SekiroAnimBlueprintIR blueprint_ir 与 FSekiroAnimBlueprintIR 对应的纯 Lua 表。
 function LuaAnimBlueprint:CompileIR()
-    local target_skeleton = self.BlueprintKind == "AnimBlueprint"
+    local target_skeleton = self.BlueprintKind == BlueprintKind.AnimBlueprint
         and IRSchema.RequireAssetObjectPath(
             self.TargetSkeleton,
             "TargetSkeleton")
@@ -345,6 +375,8 @@ function LuaAnimBlueprint:CompileIR()
         SourceModule = self.SourceModule,
         ParentAnimInstanceClass = self.ParentAnimInstanceClass,
         TargetSkeleton = target_skeleton,
+        InheritedDefaults = compile_inherited_defaults(
+            self.InheritedDefaults),
         ImplementedInterfaces = self.ImplementedInterfaces,
         Variables = self.Variables,
         Layers = layers,

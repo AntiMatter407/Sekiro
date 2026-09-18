@@ -1,9 +1,8 @@
-#include "values.hpp"
+﻿#include "values.hpp"
 #include "luax.hpp"
 
 
 using rapidjson::Value;
-using rapidjson::SizeType;
 
 
 namespace values {
@@ -51,7 +50,7 @@ namespace values {
 		Value StringValue(lua_State* L, int idx, Allocator& allocator) {
 			size_t len;
 			const char* s = lua_tolstring(L, idx, &len);
-			return Value(s, static_cast<SizeType>(len), allocator);
+			return Value(s, static_cast<rapidjson::SizeType>(len), allocator);
 		}
 
 		Value TableValue(lua_State* L, int idx, int depth, Allocator& allocator)

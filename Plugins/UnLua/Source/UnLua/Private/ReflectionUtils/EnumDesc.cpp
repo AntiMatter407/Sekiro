@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "EnumDesc.h"
+#include "Misc/EngineVersionComparison.h"
 
 FEnumDesc::FEnumDesc(UEnum* InEnum)
     : Enum(InEnum)
@@ -27,7 +28,11 @@ void FEnumDesc::Load()
     if (Enum.IsValid())
         return;
 
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    Enum = FindFirstObject<UEnum>(*EnumName);
+#else
     Enum = FindObject<UEnum>(ANY_PACKAGE, *EnumName);
+#endif
     if (!Enum.IsValid())
         Enum = LoadObject<UEnum>(nullptr, *EnumName);
 

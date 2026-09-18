@@ -50,7 +50,7 @@ function BT_SKAICharacter:BehaviorTree(tree)
             BlackboardKey = Value.Struct({
                 SelectedKeyName = Value.Name("TargetActor"),
             }),
-            FlowAbortMode = Value.Enum("Both"),
+            FlowAbortMode = Value.Enum(UE.EBTFlowAbortMode.Both),
         })
 
     chase_target:Service(

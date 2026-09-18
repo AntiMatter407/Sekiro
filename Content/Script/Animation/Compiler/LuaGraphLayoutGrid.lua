@@ -16,7 +16,7 @@ local LayoutStyle = require("Animation.Compiler.LayoutStyle")
 ---@field RegionRow number|nil 分区在画布区域网格中的纵向索引，必须为非负整数。
 ---@field CellWidth number|nil 分区内部单元格横向间距，单位为 UE Graph 像素。
 ---@field CellHeight number|nil 分区内部单元格纵向间距，单位为 UE Graph 像素。
----@field LayoutStyle string|nil 分区内未显式放置元素的风格覆盖；当前显式 Grid 不消费该值，保留给自动分区扩展。
+---@field LayoutStyle SekiroAnimIRLayoutStyle|nil 分区风格覆盖；当前显式 Grid 不消费该值。
 
 ---@class LuaGraphLayoutGrid: CompilerClass
 ---@field Graph LuaAnimGraph|LuaAnimStateMachineGraph 所属 Graph。
@@ -25,7 +25,7 @@ local LayoutStyle = require("Animation.Compiler.LayoutStyle")
 ---@field RegionRow number 区域纵向索引。
 ---@field CellWidth number 单元格横向间距。
 ---@field CellHeight number 单元格纵向间距。
----@field LayoutStyle string 分区风格覆盖。
+---@field LayoutStyle SekiroAnimIRLayoutStyle 分区风格覆盖。
 ---@field Items SekiroAnimIRLayoutItem[] 显式元素位置。
 local LuaGraphLayoutGrid = CompilerClass:Extend("LuaGraphLayoutGrid")
 

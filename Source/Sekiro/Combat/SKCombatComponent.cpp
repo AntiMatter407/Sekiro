@@ -6,6 +6,7 @@
 #include "AI/SKAIBattleProjectile.h"
 #include "AIController.h"
 #include "Animation/AnimCompositeBase.h"
+#include "Animation/AnimationAsset.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
@@ -18,13 +19,40 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
+#include "GenericTeamAgentInterface.h"
 #include "Input/SKInputManager.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Movement/SKMovementComponent.h"
 #include "Weapon/SKWeaponManagerComponent.h"
 
 namespace
 {
     constexpr int32 AICombatEventQueueCapacity = 32; // 通用 AI 战斗事件队列固定容量
+
+    /** 游戏线程查询 Actor 或其 Controller 的明确阵营；未配置返回 NoTeam，不推测敌我。 */
+    FGenericTeamId GetCombatTeam(const AActor* Actor)
+    {
+        const IGenericTeamAgentInterface* TeamAgent = Cast<IGenericTeamAgentInterface>(Actor);
+        if (TeamAgent) return TeamAgent->GetGenericTeamId();
+        const APawn* Pawn = Cast<APawn>(Actor);
+        TeamAgent = Pawn ? Cast<IGenericTeamAgentInterface>(Pawn->GetController()) : nullptr;
+        return TeamAgent ? TeamAgent->GetGenericTeamId() : FGenericTeamId::NoTeam;
+    }
+
+    /** 游戏线程只读判定提交是否成功或仅受资源免疫抑制；其他策略拒绝和 GE 失败均不接受。 */
+    bool IsCommittedCombatNumeric(const FSKNumericResult& Numeric)
+    {
+        if (Numeric.Code == ESKNumericResultCode::Applied || Numeric.Code == ESKNumericResultCode::NoChange) return true;
+        if (Numeric.Code != ESKNumericResultCode::PolicyRejected || !Numeric.RejectionReason.IsNone()
+            || (Numeric.RequestedHealthDamage == 0.f && Numeric.RequestedPostureDamage == 0.f)) return false;
+        const bool bHealthAccepted = Numeric.RequestedHealthDamage == 0.f
+            || Numeric.HealthChannelCode == ESKNumericResultCode::Applied
+            || Numeric.HealthRejectionReason == FName(TEXT("HealthImmune"));
+        const bool bPostureAccepted = Numeric.RequestedPostureDamage == 0.f
+            || Numeric.PostureChannelCode == ESKNumericResultCode::Applied
+            || Numeric.PostureRejectionReason == FName(TEXT("PostureImmune"));
+        return bHealthAccepted && bPostureAccepted;
+    }
 }
 
 /**
@@ -91,12 +119,12 @@ ESKIncomingAttackType USKCombatComponent::ResolveOutgoingAttackType_Implementati
 
 /**
  * 提供脚本未绑定时的武器接触回退，避免通用碰撞桥接依赖项目战斗规则。
- * 默认把接触视为普通命中；Lua 覆盖负责检查防御阶段、更新双方架势并播放对应反应。
+ * 默认把接触视为普通命中；Lua 覆盖只检查防御阶段，不修改双方架势或播放反应。
  * 本函数不应用伤害、不记录去重且不保留攻击者引用，必须在游戏线程调用。
  *
  * @param AttackerCombat 发起攻击的战斗组件，可为空；默认实现不访问该对象。
  * @param AttackType 本次攻击的抽象类型；默认实现不解释该值。
- * @return 脚本未接管时返回 Hit，由武器继续应用基础伤害。
+ * @return 脚本未接管时返回纯 Hit 分类；真实伤害必须经过 ResolveCombatHit，不能据此直接扣血。
  */
 ESKWeaponContactResult USKCombatComponent::ResolveIncomingWeaponContact_Implementation(
     USKCombatComponent* AttackerCombat,
@@ -105,6 +133,249 @@ ESKWeaponContactResult USKCombatComponent::ResolveIncomingWeaponContact_Implemen
     (void)AttackerCombat;
     (void)AttackType;
     return ESKWeaponContactResult::Hit;
+}
+
+/**
+ * 游戏线程让 Lua 读取 GAS/攻击配置得到近战基础生命伤害，不提交任何资源。
+ * @param AttackType 当前已选择的攻击类型；默认实现不解释类型。
+ * @return 未绑定 Lua 返回负值使来源注册失败关闭；正常规则必须返回有限非负数。
+ */
+float USKCombatComponent::ResolveOutgoingHealthDamage_Implementation(ESKIncomingAttackType AttackType) const
+{
+    (void)AttackType;
+    return -1.f;
+}
+
+/**
+ * 游戏线程纯裁决攻防结果、最终生命伤害与双方躯干语义；不得写 GAS、切换动作或播放动画。
+ * @param Request 已通过原生对象、数值、来源票据和生命门禁的只读请求。
+ * @return 未绑定规则返回 bAccepted=false，禁止使用硬编码伤害兜底。
+ */
+FSKCombatHitEvaluation USKCombatComponent::EvaluateCombatHit_Implementation(const FSKCombatHitRequest& Request) const
+{
+    (void)Request;
+    return FSKCombatHitEvaluation();
+}
+
+/**
+ * 游戏线程接收已经完成的权威命中事实，供 Lua 演出；不得再提交同笔 Health/Posture。
+ * @param Request 原始来源、动作和命中上下文，调用期间只读。
+ * @param Result 实际最终结果，死亡/打崩不覆盖攻防 Outcome。
+ * @param bAsSource true 为攻方反馈，false 为守方反馈；脚本须检查生命与动作身份再演出。
+ */
+void USKCombatComponent::HandleCombatHitCommitted_Implementation(
+    const FSKCombatHitRequest& Request, const FSKCombatHitResult& Result, bool bAsSource)
+{
+    (void)Request;
+    (void)Result;
+    (void)bAsSource;
+}
+
+/**
+ * 游戏线程为一个攻击窗口或飞行物签发唯一来源票据，并锁存动作、生命与配置伤害。
+ * 近战票据只在当前动作有效；飞行物允许动作自然结束后命中，但射手死亡/回生后全部失效。
+ * @param Emitter 当前角色拥有的武器或飞行物，必须有效；只保存弱引用。
+ * @param Channel Melee 或 Projectile，其他枚举值拒绝。
+ * @param HealthDamage 有限非负基础生命伤害；不在原生推导公式。
+ * @param PostureDamage 有限非负额外躯干伤害，交 Survival 公式统一封顶。
+ * @param OutRequest 输出签发字段，调用方仅补 TargetActor、几何和 EventTag；失败重置为空。
+ * @return 生存允许行动且签发成功返回 true；重复载体、无权威、重入或无有效动作返回 false。
+ */
+bool USKCombatComponent::RegisterCombatHitSource(AActor* Emitter, ESKCombatDamageChannel Channel,
+    float HealthDamage, float PostureDamage, FSKCombatHitRequest& OutRequest)
+{
+    OutRequest = FSKCombatHitRequest();
+    if (!IsInGameThread() || bCombatEndedPlay || bResolvingCombatHit) return false;
+    AActor* Owner = GetOwner();
+    const USKSurvivalComponent* Survival = IsValid(Owner) ? Owner->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!Survival || !Survival->CanAct() || !Owner->HasAuthority() || !IsValid(Emitter)
+        || Emitter->GetOwner() != Owner || ActionSerial <= 0 || LastHitSourceSerial == MAX_int64
+        || (Channel != ESKCombatDamageChannel::Melee && Channel != ESKCombatDamageChannel::Projectile)
+        || !FMath::IsFinite(HealthDamage) || HealthDamage < 0.f
+        || !FMath::IsFinite(PostureDamage) || PostureDamage < 0.f) return false;
+
+    for (TMap<int64, FSKCombatHitSourceState>::TIterator It = CombatHitSources.CreateIterator(); It; ++It)
+    {
+        const FSKCombatHitSourceState& Existing = It.Value();
+        if (!Existing.Emitter.IsValid() || Existing.LifeSerial != Survival->GetLifeSerial()
+            || (Existing.Channel == ESKCombatDamageChannel::Melee && Existing.ActionSerial != ActionSerial))
+        {
+            It.RemoveCurrent();
+            continue;
+        }
+        if (Existing.Emitter.Get() == Emitter) return false;
+    }
+
+    FSKCombatHitSourceState State;
+    State.Emitter = Emitter;
+    State.LifeSerial = Survival->GetLifeSerial();
+    State.ActionSerial = ActionSerial;
+    State.AttackType = ResolveOutgoingAttackType();
+    if (static_cast<uint8>(State.AttackType) > static_cast<uint8>(ESKIncomingAttackType::Special)) return false;
+    State.Channel = Channel;
+    State.HealthDamage = HealthDamage;
+    State.PostureDamage = PostureDamage;
+    const int64 Serial = ++LastHitSourceSerial;
+    CombatHitSources.Add(Serial, State);
+    OutRequest.SourceActor = Owner;
+    OutRequest.SourceLifeSerial = State.LifeSerial;
+    OutRequest.SourceActionSerial = State.ActionSerial;
+    OutRequest.HitSourceSerial = Serial;
+    OutRequest.AttackType = State.AttackType;
+    OutRequest.DamageChannel = Channel;
+    OutRequest.HealthDamage = HealthDamage;
+    OutRequest.PostureDamage = PostureDamage;
+    return true;
+}
+
+/** 游戏线程关闭指定正来源票据；未知/已关闭编号幂等忽略，不影响其他攻击或动作。 */
+void USKCombatComponent::ReleaseCombatHitSource(int64 HitSourceSerial)
+{
+    if (IsInGameThread()) CombatHitSources.Remove(HitSourceSerial);
+}
+
+/**
+ * 游戏线程在守方执行唯一命中结算：纯 Lua 裁决、纯 Survival 计算、目标双资源一次提交、结果发布。
+ * 同时锁定攻守两组件防止同步通知重入；不保证跨两个 ASC 的事务回滚，攻方反馈失败单独保存在 SourceNumeric。
+ * @param Request 武器/飞行物签发后补全的接触事实；禁止跨角色、旧生命、近战旧动作、重复目标和同队请求。
+ * @return Rejected 带明确原因且不发布命中事件；Committed 带真实数值和独立的攻防/死亡/崩溃标记。
+ */
+FSKCombatHitResult USKCombatComponent::ResolveCombatHit(const FSKCombatHitRequest& Request)
+{
+    FSKCombatHitResult Result;
+    if (!IsInGameThread()) { Result.RejectionReason = TEXT("WrongThread"); return Result; }
+    AActor* Target = GetOwner();
+    AActor* Source = Request.SourceActor;
+    if (bCombatEndedPlay || !IsValid(Target) || !IsValid(Source) || Request.TargetActor != Target
+        || Source->GetWorld() != Target->GetWorld()) { Result.RejectionReason = TEXT("InvalidActor"); return Result; }
+    if (!Target->HasAuthority() || !Source->HasAuthority()) { Result.RejectionReason = TEXT("NotAuthority"); return Result; }
+    if (Source == Target) { Result.RejectionReason = TEXT("SelfHit"); return Result; }
+    if (!FMath::IsFinite(Request.HealthDamage) || Request.HealthDamage < 0.f
+        || !FMath::IsFinite(Request.PostureDamage) || Request.PostureDamage < 0.f
+        || Request.ImpactPoint.ContainsNaN() || Request.AttackDirection.ContainsNaN())
+    { Result.RejectionReason = TEXT("InvalidNumericInput"); return Result; }
+    const FGenericTeamId SourceTeam = GetCombatTeam(Source);
+    if (SourceTeam != FGenericTeamId::NoTeam && SourceTeam == GetCombatTeam(Target))
+    { Result.RejectionReason = TEXT("FriendlyFire"); return Result; }
+
+    USKCombatComponent* SourceCombat = Source->FindComponentByClass<USKCombatComponent>();
+    USKSurvivalComponent* TargetSurvival = Target->FindComponentByClass<USKSurvivalComponent>();
+    USKSurvivalComponent* SourceSurvival = Source->FindComponentByClass<USKSurvivalComponent>();
+    if (!IsValid(SourceCombat) || !IsValid(TargetSurvival) || !IsValid(SourceSurvival)
+        || !TargetSurvival->IsSurvivalReady() || !SourceSurvival->IsSurvivalReady())
+    { Result.RejectionReason = TEXT("NotReady"); return Result; }
+    if (bResolvingCombatHit || SourceCombat->bResolvingCombatHit)
+    { Result.RejectionReason = TEXT("Reentrant"); return Result; }
+    if (!TargetSurvival->IsAlive()) { Result.RejectionReason = TEXT("TargetNotAlive"); return Result; }
+    Result.RejectionReason = SourceCombat->ValidateCombatHitSource(Request);
+    if (!Result.RejectionReason.IsNone()) return Result;
+    TGuardValue<bool> TargetGuard(bResolvingCombatHit, true);
+    TGuardValue<bool> SourceGuard(SourceCombat->bResolvingCombatHit, true);
+    Result.TargetActionSerial = ActionSerial;
+    const int64 TargetLifeSerial = TargetSurvival->GetLifeSerial();
+    const FSKCombatHitEvaluation Evaluation = EvaluateCombatHit(Request);
+    if (!Evaluation.bAccepted || Evaluation.Outcome == ESKCombatHitOutcome::Ignored
+        || static_cast<uint8>(Evaluation.Outcome) > static_cast<uint8>(ESKCombatHitOutcome::Invulnerable)
+        || !FMath::IsFinite(Evaluation.HealthDamage) || Evaluation.HealthDamage < 0.f)
+    { Result.RejectionReason = TEXT("InvalidCombatEvaluation"); return Result; }
+    if (Evaluation.Outcome != ESKCombatHitOutcome::Hit && Evaluation.HealthDamage != 0.f)
+    { Result.RejectionReason = TEXT("UnexpectedHealthDamage"); return Result; }
+    Result.Outcome = Evaluation.Outcome;
+    const bool bAvoided = Result.Outcome == ESKCombatHitOutcome::Dodged || Result.Outcome == ESKCombatHitOutcome::Invulnerable;
+    FSKPostureImpactEvaluation TargetPosture;
+    FSKPostureImpactEvaluation SourcePosture;
+    TargetPosture.bAccepted = true;
+    SourcePosture.bAccepted = true;
+    if (!bAvoided && !Evaluation.TargetPostureReason.IsNone())
+        TargetPosture = TargetSurvival->EvaluatePostureImpact(Evaluation.TargetPostureReason, Request.AttackType, Request.PostureDamage);
+    if (!bAvoided && !Evaluation.SourcePostureReason.IsNone())
+        SourcePosture = SourceSurvival->EvaluatePostureImpact(Evaluation.SourcePostureReason, Request.AttackType, 0.f);
+    if (!TargetPosture.bAccepted || !SourcePosture.bAccepted
+        || !FMath::IsFinite(TargetPosture.PostureDamage) || TargetPosture.PostureDamage < 0.f
+        || !FMath::IsFinite(SourcePosture.PostureDamage) || SourcePosture.PostureDamage < 0.f)
+    { Result.RejectionReason = TEXT("InvalidPostureEvaluation"); return Result; }
+    if (!bAvoided && Evaluation.TargetPostureReason.IsNone() && Request.PostureDamage > 0.f)
+    { Result.RejectionReason = TEXT("MissingPostureRule"); return Result; }
+
+    // 脚本入口虽然约定纯计算，提交前仍复验身份，避免脚本错误使迟到请求写入新生命。
+    Result.RejectionReason = SourceCombat->ValidateCombatHitSource(Request);
+    if (!Result.RejectionReason.IsNone()) return Result;
+    if (!IsValid(TargetSurvival) || !IsValid(SourceSurvival) || !TargetSurvival->IsAlive()
+        || TargetSurvival->GetLifeSerial() != TargetLifeSerial || ActionSerial != Result.TargetActionSerial || bCombatEndedPlay)
+    { Result.RejectionReason = TEXT("TargetChangedDuringEvaluation"); return Result; }
+    FSKCombatHitSourceState* State = SourceCombat->CombatHitSources.Find(Request.HitSourceSerial);
+    if (!State) { Result.RejectionReason = TEXT("UnknownHitSource"); return Result; }
+    State->ResolvedTargets.Add(Target);
+
+    const float HealthDamage = bAvoided ? 0.f : Evaluation.HealthDamage;
+    Result.Numeric.Code = ESKNumericResultCode::NoChange;
+    Result.Numeric.Operation = ESKNumericOperation::SurvivalImpact;
+    Result.Numeric.SourceActor = Source;
+    Result.Numeric.TargetActor = Target;
+    Result.Numeric.Before = TargetSurvival->GetSurvivalSnapshot().Attributes;
+    Result.Numeric.After = Result.Numeric.Before;
+    if (HealthDamage > 0.f || TargetPosture.PostureDamage > 0.f)
+    {
+        const FSKSurvivalImpactResult Impact = TargetSurvival->ApplySurvivalImpact(HealthDamage, TargetPosture.PostureDamage, Source);
+        Result.Numeric = Impact.Numeric;
+        Result.AppliedHealthDamage = Impact.Numeric.ActualHealthDamage;
+        Result.AppliedPostureDamage = Impact.Numeric.ActualPostureDamage;
+        Result.bKilled = Impact.bDeathStarted;
+        Result.bPostureBroken = Impact.bPostureBroken;
+        if (!IsCommittedCombatNumeric(Result.Numeric))
+        { Result.RejectionReason = TEXT("ResourceCommitRejected"); return Result; }
+    }
+
+    Result.Code = ESKCombatHitResultCode::Committed;
+    Result.RejectionReason = NAME_None;
+    Result.SourceNumeric.Code = ESKNumericResultCode::NoChange;
+    Result.SourceNumeric.Operation = ESKNumericOperation::SurvivalImpact;
+    Result.SourceNumeric.SourceActor = Target;
+    Result.SourceNumeric.TargetActor = Source;
+    const bool bHasSourceFeedback = !bAvoided && !Evaluation.SourcePostureReason.IsNone();
+    if (IsValid(SourceSurvival) && SourceSurvival->IsAlive() && SourceSurvival->GetLifeSerial() == Request.SourceLifeSerial)
+    {
+        Result.SourceNumeric.Before = SourceSurvival->GetSurvivalSnapshot().Attributes;
+        Result.SourceNumeric.After = Result.SourceNumeric.Before;
+        // 目标提交的委托可能改变攻方属性；反馈必须按提交时的新快照重新计算封顶。
+        if (bHasSourceFeedback)
+            SourcePosture = SourceSurvival->EvaluatePostureImpact(Evaluation.SourcePostureReason, Request.AttackType, 0.f);
+        if (!IsValid(SourceSurvival) || !SourceSurvival->IsAlive() || SourceSurvival->GetLifeSerial() != Request.SourceLifeSerial)
+        {
+            Result.SourceNumeric.Code = ESKNumericResultCode::PolicyRejected;
+            Result.SourceNumeric.RejectionReason = TEXT("SourceChangedDuringCommit");
+        }
+        else if (!SourcePosture.bAccepted || !FMath::IsFinite(SourcePosture.PostureDamage) || SourcePosture.PostureDamage < 0.f)
+        {
+            Result.SourceNumeric.Code = ESKNumericResultCode::InvalidInput;
+            Result.SourceNumeric.RejectionReason = TEXT("InvalidPostureEvaluation");
+        }
+        else if (SourcePosture.PostureDamage > 0.f && IsValid(SourceSurvival)
+            && SourceSurvival->IsAlive() && SourceSurvival->GetLifeSerial() == Request.SourceLifeSerial)
+        {
+            const FSKSurvivalImpactResult Feedback = SourceSurvival->ApplySurvivalImpact(0.f, SourcePosture.PostureDamage, Target);
+            Result.SourceNumeric = Feedback.Numeric;
+            Result.AppliedSourcePostureDamage = Feedback.Numeric.ActualPostureDamage;
+            Result.bSourcePostureBroken = Feedback.bPostureBroken;
+        }
+        if (IsValid(SourceSurvival) && SourceSurvival->GetLifeSerial() == Request.SourceLifeSerial
+            && !bAvoided && !Evaluation.SourcePostureReason.IsNone() && IsCommittedCombatNumeric(Result.SourceNumeric))
+            SourceSurvival->HandlePostureImpactCommitted(Evaluation.SourcePostureReason);
+    }
+    else if (bHasSourceFeedback)
+    {
+        Result.SourceNumeric.Code = ESKNumericResultCode::PolicyRejected;
+        Result.SourceNumeric.RejectionReason = TEXT("SourceChangedDuringCommit");
+    }
+    if (IsValid(TargetSurvival) && TargetSurvival->GetLifeSerial() == TargetLifeSerial
+        && !bAvoided && !Evaluation.TargetPostureReason.IsNone())
+        TargetSurvival->HandlePostureImpactCommitted(Evaluation.TargetPostureReason);
+
+    PublishCombatHitEvents(Request, Result, SourceCombat);
+    if (IsValid(this) && !bCombatEndedPlay && IsValid(TargetSurvival)
+        && TargetSurvival->GetLifeSerial() == TargetLifeSerial) HandleCombatHitCommitted(Request, Result, false);
+    if (IsValid(SourceCombat) && !SourceCombat->bCombatEndedPlay) SourceCombat->HandleCombatHitCommitted(Request, Result, true);
+    return Result;
 }
 
 /**
@@ -229,7 +500,7 @@ int32 USKCombatComponent::GetPendingAICombatEventCount() const
  * @param TargetLocation TargetActor 无效时使用的世界瞄准位置，单位厘米；必须包含有限分量。
  * @param Speed 初始飞行速度，单位厘米每秒；必须为有限正数。
  * @param GravityScale ProjectileMovement 重力倍率；必须为有限数，可为零或负数。
- * @param Damage 命中时提交给标准伤害系统的基础伤害；必须为有限非负数。
+ * @param Damage 发射时锁存的统一命中基础伤害；必须为有限非负数，Guard/Deflect 由目标 Lua 裁决。
  * @param LifeSeconds 弹射物自动销毁时间，单位秒；必须为有限正数。
  * @param EventTag 透传给 ProjectileImpact 的可选中性语义标签，不由 C++ 解释。
  * @param OutProjectile 成功时输出生成实例，失败时重置为空；调用方不获得生命周期所有权。
@@ -659,6 +930,7 @@ void USKCombatComponent::ClearCombatInputEvents()
 
 /**
  * 在 CombatFullBodySlot 播放给定 Sequence，并由本组件独占所创建的动态 Montage。
+ * 播放前必须取得 FullBody RootMotion Owner Token；竞争失败时不停止已有 Montage。
  * 开始前会停止本组件旧 Montage，但不会停止其他组件拥有的动画；不选择资产或编排连段。
  * 仅允许游戏线程调用，Animation 在播放期间由组件强引用持有。
  *
@@ -681,6 +953,7 @@ bool USKCombatComponent::PlayCombatAnimation(
     if (!Survival || (!Survival->CanAct() && !Survival->IsTransitionTokenValid(PresentationToken))) return false;
     UAnimInstance* AnimInstance = ResolveAnimInstance();
     if (!Animation || !AnimInstance || CombatSlotName.IsNone()) return false;
+    if (!AcquireCombatRootMotionOwnership()) return false;
 
     UAnimMontage* PreviousMontage = ActiveMontage;
     ClearOwnedAnimationState();
@@ -694,7 +967,11 @@ bool USKCombatComponent::PlayCombatAnimation(
         FMath::Max(0.f, BlendOutTime),
         ActivePlayRate,
         FMath::Max(1, LoopCount));
-    if (!DynamicMontage) return false;
+    if (!DynamicMontage)
+    {
+        ReleaseCombatRootMotionOwnership();
+        return false;
+    }
 
     ActiveSequence = Animation;
     ActiveMontage = DynamicMontage;
@@ -731,7 +1008,7 @@ bool USKCombatComponent::PlayCombatAnimationByPath(
 }
 
 /**
- * 淡出并停止本组件拥有的动态 Montage，并立即清除活动资产引用。
+ * 淡出并停止本组件拥有的动态 Montage，并立即清除活动资产引用与 FullBody 令牌。
  * 本函数不停止其他系统的 Montage，旧结束回调因 Montage 身份校验而成为幂等空操作。
  * 仅允许游戏线程调用。
  *
@@ -742,6 +1019,7 @@ void USKCombatComponent::StopCombatAnimation(float BlendOutTime)
     UAnimMontage* Montage = ActiveMontage;
     UAnimInstance* AnimInstance = ResolveAnimInstance();
     ClearOwnedAnimationState();
+    ReleaseCombatRootMotionOwnership();
     if (Montage && AnimInstance) AnimInstance->Montage_Stop(FMath::Max(0.f, BlendOutTime), Montage);
 }
 
@@ -901,7 +1179,7 @@ bool USKCombatComponent::TryConsumeIncomingAttackAnimation(
 }
 
 /**
- * 监听 Owner 的通用伤害通知，建立组件 Tick 先后关系并为纯原生 UnLua 组件补发 ReceiveBeginPlay。
+ * 监听 GAS 属性快照，建立组件 Tick 先后关系并为纯原生 UnLua 组件补发 ReceiveBeginPlay。
  * InputManager 作为前置 Tick，角色 Mesh 以本组件为前置，确保输入发布、战斗状态和动画采集有确定顺序。
  * 仅由 UE 在游戏线程生命周期调用。
  */
@@ -920,7 +1198,6 @@ void USKCombatComponent::BeginPlay()
     Super::BeginPlay();
 
     AActor* Owner = GetOwner();
-    if (Owner) Owner->OnTakeAnyDamage.AddUniqueDynamic(this, &USKCombatComponent::HandleOwnerTakeAnyDamage);
 
     ACharacter* Character = Cast<ACharacter>(Owner);
     if (Character)
@@ -939,7 +1216,7 @@ void USKCombatComponent::BeginPlay()
 }
 
 /**
- * 在 Owner 离场前解除伤害监听、使 Serial 失效、停止自有 Montage 并清空输入、AI 事件和模拟来袭状态。
+ * 在 Owner 离场前解除属性监听、使 Serial 和命中票据失效、停止自有 Montage 并清空事件状态。
  * 清理可重复调用，旧 Montage 回调因身份和 Serial 校验不会广播新动作结束事件。
  * 仅由 UE 在游戏线程生命周期调用。
  *
@@ -953,8 +1230,8 @@ void USKCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
         ASC->OnAttributesReady.RemoveDynamic(this, &USKCombatComponent::HandleGASAttributesReady);
     }
     bHasBroadcastPosture = false;
-    AActor* Owner = GetOwner();
-    if (Owner) Owner->OnTakeAnyDamage.RemoveDynamic(this, &USKCombatComponent::HandleOwnerTakeAnyDamage);
+    bCombatEndedPlay = true;
+    CombatHitSources.Reset();
 
     InvalidateCombatAction(0);
     StopCombatAnimation(0.f);
@@ -968,8 +1245,9 @@ void USKCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 /**
- * 显式调用 Lua 模块导出的 Tick，使状态机先消费输入，再清理已过期且未消费的模拟来袭。
- * 本函数自身不裁决输入或选择动画；仅由 UE 在游戏线程 PrePhysics 阶段调用。
+ * 显式调用 Lua 模块导出的 Tick，使状态机先消费输入，再收敛失去活动 Montage 的 FullBody 所有权，
+ * 最后清理已过期且未消费的模拟来袭。本函数不裁决输入或选择动画；合法播放与 Blend Out 期间保留令牌。
+ * 仅由 UE 在游戏线程 PrePhysics 阶段调用。
  *
  * @param DeltaTime 本帧组件步长，当前实现不参与区间计算。
  * @param TickType UE Tick 类型，仅透传父类。
@@ -982,6 +1260,23 @@ void USKCombatComponent::TickComponent(
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
     HandleCombatTick(DeltaTime);
+
+    // FullBody 所有权只能跟随本组件仍处于 Active 状态的动态 Montage；结束回调遗漏时主动收敛，
+    // 避免仍存活的 CombatComponent 让 Locomotion 永久停在 ActionOwned。Blend Out 仍属于 Active，
+    // 因此不会在动作姿势尚未退出时提前把 Root Motion 归还给 Motion Matching。
+    UAnimInstance* AnimInstance = ResolveAnimInstance();
+    const bool bOwnedMontageActive = ActiveMontage
+        && AnimInstance
+        && AnimInstance->Montage_IsActive(ActiveMontage);
+    if (ActiveRootMotionOwnerToken.Serial > 0 && !bOwnedMontageActive)
+    {
+        UE_LOG(
+            LogTemp,
+            Warning,
+            TEXT("SKCombatComponent released stale FullBody RootMotion ownership. Owner=%s"),
+            *GetNameSafe(GetOwner()));
+        ReleaseCombatRootMotionOwnership();
+    }
 
     if (IncomingAttackContext.ContextSerial > 0
         && !IncomingAttackContext.bConsumed
@@ -1017,39 +1312,79 @@ void USKCombatComponent::HandleGASAttributesReady()
 }
 
 /**
- * 把 Owner 实际收到的正有限伤害发布为通用 DamageReceived 事件。
- * 本函数只记录事实，不解释 DamageType、不写 Blackboard 且不选择受击反应；由 Owner 的伤害委托在游戏线程同步调用。
- *
- * @param DamagedActor 实际接收伤害的 Actor，通常等于 Owner；为空时使用组件 Owner 作为事件目标。
- * @param Damage 引擎确认的实际伤害值；只有有限且大于零的数值会被发布。
- * @param DamageType 本次伤害类型描述，可为空；当前仅保留通用回调兼容性，不映射事件标签。
- * @param InstigatedBy 发起伤害的控制器，可为空；没有 DamageCauser 时优先使用其 Pawn，否则使用控制器自身。
- * @param DamageCauser 直接造成伤害的 Actor，可为空；存在时作为事件来源最高优先级。
+ * 游戏线程只读验证源组件签发记录、生命/动作和逐目标去重，不消费请求。
+ * @param Request 待核对来源身份、锁存数值和目标；所有字段必须与签发记录一致。
+ * @return None 表示仍可提交；其他名称明确指出失效、伪造或重复原因。
  */
-void USKCombatComponent::HandleOwnerTakeAnyDamage(
-    AActor* DamagedActor,
-    float Damage,
-    const UDamageType* DamageType,
-    AController* InstigatedBy,
-    AActor* DamageCauser)
+FName USKCombatComponent::ValidateCombatHitSource(const FSKCombatHitRequest& Request) const
 {
-    (void)DamageType;
-    if (!FMath::IsFinite(Damage) || Damage <= 0.f) return;
+    if (bCombatEndedPlay || Request.SourceActor != GetOwner()) return TEXT("InvalidSource");
+    const USKSurvivalComponent* Survival = GetOwner() ? GetOwner()->FindComponentByClass<USKSurvivalComponent>() : nullptr;
+    if (!IsValid(Survival) || !Survival->IsAlive()) return TEXT("SourceNotAlive");
+    if (Request.SourceLifeSerial <= 0 || Survival->GetLifeSerial() != Request.SourceLifeSerial) return TEXT("StaleSourceLife");
+    const FSKCombatHitSourceState* State = CombatHitSources.Find(Request.HitSourceSerial);
+    if (!State || !State->Emitter.IsValid()) return TEXT("UnknownHitSource");
+    if (State->Emitter->GetOwner() != GetOwner() || State->LifeSerial != Request.SourceLifeSerial
+        || State->ActionSerial != Request.SourceActionSerial || State->Channel != Request.DamageChannel
+        || State->AttackType != Request.AttackType || State->HealthDamage != Request.HealthDamage
+        || State->PostureDamage != Request.PostureDamage) return TEXT("HitSourceMismatch");
+    if (Request.SourceActionSerial <= 0 || (State->Channel == ESKCombatDamageChannel::Melee
+        && !IsActionSerialValid(Request.SourceActionSerial))) return TEXT("StaleSourceAction");
+    if (State->Channel == ESKCombatDamageChannel::Melee && !Survival->CanAct()) return TEXT("SourceCannotAct");
+    if (State->ResolvedTargets.Contains(Request.TargetActor)) return TEXT("DuplicateHit");
+    return NAME_None;
+}
 
-    AActor* SourceActor = DamageCauser;
-    if (!SourceActor && InstigatedBy)
-    {
-        SourceActor = InstigatedBy->GetPawn();
-        if (!SourceActor) SourceActor = InstigatedBy;
-    }
-
+/**
+ * 游戏线程仅在权威提交完成后向攻守队列发布一次接触及真实伤害/崩溃事实，不写数值或 Blackboard。
+ * @param Request 已完成结算的只读来源身份和几何上下文。
+ * @param Result Committed 结果；真实量为零时不发布 DamageReceived。
+ * @param SourceCombat 可在同步死亡通知中失效的攻方组件，仅有效且未离场时发布。
+ */
+void USKCombatComponent::PublishCombatHitEvents(const FSKCombatHitRequest& Request,
+    const FSKCombatHitResult& Result, USKCombatComponent* SourceCombat)
+{
+    if (Result.Code != ESKCombatHitResultCode::Committed) return;
     FSKAICombatEvent Event;
-    Event.EventType = ESKAICombatEventType::DamageReceived;
-    Event.SourceActor = SourceActor;
-    Event.TargetActor = DamagedActor ? DamagedActor : GetOwner();
-    Event.RelatedActionSerial = ActionSerial;
-    Event.Magnitude = Damage;
-    PublishAICombatEvent(Event);
+    Event.EventType = Request.DamageChannel == ESKCombatDamageChannel::Projectile
+        ? ESKAICombatEventType::ProjectileImpact : ESKAICombatEventType::WeaponContact;
+    Event.SourceActor = Request.SourceActor;
+    Event.TargetActor = Request.TargetActor;
+    Event.RelatedActionSerial = Request.SourceActionSerial;
+    Event.AttackType = Request.AttackType;
+    Event.EventTag = Request.EventTag;
+    Event.HitSourceSerial = Request.HitSourceSerial;
+    Event.HitOutcome = Result.Outcome;
+    Event.bKilled = Result.bKilled;
+    Event.bPostureBroken = Result.bPostureBroken;
+    Event.Magnitude = Result.AppliedHealthDamage;
+    if (Result.Outcome == ESKCombatHitOutcome::Hit) Event.ContactResult = ESKWeaponContactResult::Hit;
+    else if (Result.Outcome == ESKCombatHitOutcome::Guarded) Event.ContactResult = ESKWeaponContactResult::Guarded;
+    else if (Result.Outcome == ESKCombatHitOutcome::Deflected) Event.ContactResult = ESKWeaponContactResult::Deflected;
+    if (Request.DamageChannel == ESKCombatDamageChannel::Melee && IsValid(SourceCombat)
+        && !SourceCombat->bCombatEndedPlay) SourceCombat->PublishAICombatEvent(Event);
+    if (!bCombatEndedPlay) PublishAICombatEvent(Event);
+    if (Result.AppliedHealthDamage > 0.f && !bCombatEndedPlay)
+    {
+        Event.EventType = ESKAICombatEventType::DamageReceived;
+        PublishAICombatEvent(Event);
+    }
+    if (Result.bPostureBroken && !bCombatEndedPlay)
+    {
+        Event.EventType = ESKAICombatEventType::ReactionRequested;
+        Event.Magnitude = Result.AppliedPostureDamage;
+        PublishAICombatEvent(Event);
+    }
+    if (Result.bSourcePostureBroken && IsValid(SourceCombat) && !SourceCombat->bCombatEndedPlay)
+    {
+        Event.EventType = ESKAICombatEventType::ReactionRequested;
+        Event.SourceActor = Request.TargetActor;
+        Event.TargetActor = Request.SourceActor;
+        Event.bKilled = false;
+        Event.bPostureBroken = true;
+        Event.Magnitude = Result.AppliedSourcePostureDamage;
+        SourceCombat->PublishAICombatEvent(Event);
+    }
 }
 
 /**
@@ -1063,6 +1398,51 @@ UAnimInstance* USKCombatComponent::ResolveAnimInstance() const
     const ACharacter* Character = Cast<ACharacter>(GetOwner());
     USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
     return Mesh ? Mesh->GetAnimInstance() : nullptr;
+}
+
+/**
+ * 为 CombatFullBodySlot 在当前角色 Movement 权威上申请排他 FullBody 令牌。
+ * 仅允许游戏线程在 Montage 启动前调用；重复启动会校验已保存令牌，失效时先尝试释放。
+ * 非 USKMovementComponent 角色没有该协调边界，为保留 Classic 和组件测试兼容性视为无需令牌。
+ *
+ * @return 令牌已有效、新申请成功或无需令牌时返回 true；排他通道忙或申请失败时返回 false。
+ */
+bool USKCombatComponent::AcquireCombatRootMotionOwnership()
+{
+    if (!IsInGameThread()) return false;
+
+    USKMovementComponent* SavedAuthority = ActiveRootMotionOwnerToken.Authority.Get();
+    if (SavedAuthority && SavedAuthority->IsRootMotionOwnerTokenValid(ActiveRootMotionOwnerToken))
+        return true;
+    ReleaseCombatRootMotionOwnership();
+
+    const ACharacter* Character = Cast<ACharacter>(GetOwner());
+    USKMovementComponent* MovementComponent = Character
+        ? Cast<USKMovementComponent>(Character->GetCharacterMovement())
+        : nullptr;
+    if (!MovementComponent) return true;
+
+    const FSKRootMotionOwnershipResult Result = MovementComponent->AcquireRootMotionOwnership(
+        this,
+        ESKRootMotionOwnerType::FullBody);
+    if (Result.Code != ESKRootMotionOwnershipResultCode::Acquired
+        && Result.Code != ESKRootMotionOwnershipResultCode::AlreadyOwned) return false;
+
+    ActiveRootMotionOwnerToken = Result.Token;
+    return true;
+}
+
+/**
+ * 释放本组件保存的 FullBody 令牌并无条件清空本地副本。
+ * 仅允许游戏线程在播放失败、显式停止、Montage 结束或 EndPlay 路径调用；
+ * Authority 已销毁或令牌过期时只清理本地状态，不释放任何其他申请者的令牌。
+ */
+void USKCombatComponent::ReleaseCombatRootMotionOwnership()
+{
+    USKMovementComponent* MovementComponent = ActiveRootMotionOwnerToken.Authority.Get();
+    if (MovementComponent)
+        MovementComponent->ReleaseRootMotionOwnership(ActiveRootMotionOwnerToken);
+    ActiveRootMotionOwnerToken = FSKRootMotionOwnerToken();
 }
 
 /**
@@ -1104,19 +1484,24 @@ float USKCombatComponent::EvaluateSequenceCurve(FName CurveName, float SequenceP
 {
     if (!ActiveSequence || CurveName.IsNone()) return 0.f;
 
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    const float ClampedPosition = FMath::Clamp(SequencePosition, 0.f, ActiveSequence->GetPlayLength());
+    return ActiveSequence->EvaluateCurveData(CurveName, FAnimExtractContext(static_cast<double>(ClampedPosition)));
+#else
     const USkeleton* Skeleton = ActiveSequence->GetSkeleton();
     if (!Skeleton) return 0.f;
-
     FSmartName SmartCurveName;
     if (!Skeleton->GetSmartNameByName(USkeleton::AnimCurveMappingName, CurveName, SmartCurveName)) return 0.f;
 
     const float ClampedPosition = FMath::Clamp(SequencePosition, 0.f, ActiveSequence->GetPlayLength());
     return ActiveSequence->EvaluateCurveData(SmartCurveName.UID, ClampedPosition);
+#endif
 }
 
 /**
- * 接收动态 Montage 结束通知，仅当 Montage 身份和启动时 ActionSerial 仍匹配时广播。
- * 广播前清除自有动画引用，允许监听方安全开始下一 Montage；仅由 UE 在游戏线程调用。
+ * 接收动态 Montage 结束通知。Montage 身份仍属于本组件时始终清理资产与 FullBody 令牌；
+ * 只有启动时 ActionSerial 仍匹配才广播，防止已失效动作的迟到回调推进新状态。
+ * 清理在广播前完成，允许监听方安全开始下一 Montage；仅由 UE 在游戏线程调用。
  *
  * @param Montage 已结束的动态 Montage，可为空。
  * @param bInterrupted 是否由停止或抢占导致中断。
@@ -1127,10 +1512,12 @@ void USKCombatComponent::HandleCombatMontageEnded(
     bool bInterrupted,
     int32 EndedActionSerial)
 {
-    if (!Montage || Montage != ActiveMontage || EndedActionSerial != ActionSerial) return;
+    if (!Montage || Montage != ActiveMontage) return;
 
+    const bool bCurrentAction = EndedActionSerial == ActionSerial;
     ClearOwnedAnimationState();
-    OnCombatAnimationEnded.Broadcast(EndedActionSerial, bInterrupted);
+    ReleaseCombatRootMotionOwnership();
+    if (bCurrentAction) OnCombatAnimationEnded.Broadcast(EndedActionSerial, bInterrupted);
 }
 
 /** 清除本组件持有的活动动画引用和播放时间快照；仅允许游戏线程调用，不停止 Montage。 */

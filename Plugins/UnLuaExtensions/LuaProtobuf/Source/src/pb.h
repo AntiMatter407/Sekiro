@@ -1,4 +1,4 @@
-#ifndef pb_h
+﻿#ifndef pb_h
 #define pb_h
 
 #include "lua.hpp"
@@ -14,7 +14,7 @@
 #endif /* PB_NS_BEGIN */
 
 #ifndef PB_STATIC
-# if __GNUC__
+# if defined(__GNUC__) && __GNUC__
 #   define PB_STATIC static __attribute((unused))
 # else
 #   define PB_STATIC static
@@ -1746,4 +1746,3 @@ PB_NS_END
 #endif /* PB_IMPLEMENTATION */
 
 /* cc: flags+='-shared -DPB_IMPLEMENTATION -xc' output='pb.so' */
-

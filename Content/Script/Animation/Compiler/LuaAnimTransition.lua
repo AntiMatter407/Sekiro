@@ -20,7 +20,7 @@ local CompilerClass = require("Animation.Compiler.CompilerClass")
 ---@field RuleFunctionName string IR 兼容字段；Lua DSL 只生成原生 Rule，因此固定为空字符串。
 ---@field BlendDuration number 原生 Transition 混合时长，单位秒。
 ---@field PriorityOrder number 同源 Transition 的优先级整数。
----@field BlendMode string 原生 AlphaBlend 模式注册名。
+---@field BlendMode number EAlphaBlendOption 原生枚举值。
 ---@field Gate LuaTransitionGateExpression 完整原生 Rule AST。
 ---@field DeclarationOrder number 源码声明顺序整数。
 ---@field SourceLocation SekiroAnimIRSourceLocation Lua 源码位置。
@@ -38,7 +38,7 @@ function LuaAnimTransition:Initialize(config)
     self.RuleFunctionName = ""
     self.BlendDuration = settings.BlendDuration or 0.2
     self.PriorityOrder = settings.PriorityOrder or config.DeclarationOrder
-    self.BlendMode = settings.BlendMode or "Linear"
+    self.BlendMode = settings.BlendMode or UE.EAlphaBlendOption.Linear
     self.Gate = assert(settings.Rule, "LuaAnimTransition requires a native Rule")
     self.DeclarationOrder = config.DeclarationOrder or 0
     self.SourceLocation = assert(config.SourceLocation, "LuaAnimTransition requires SourceLocation")

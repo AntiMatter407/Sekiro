@@ -29,6 +29,7 @@ public class LuaRapidjson : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         bEnableUndefinedIdentifierWarnings = false;
         bEnableExceptions = true;
+        CppCompileWarningSettings.ShadowVariableWarningLevel = WarningLevel.Off;
 
         PublicDependencyModuleNames.AddRange(
             new[]

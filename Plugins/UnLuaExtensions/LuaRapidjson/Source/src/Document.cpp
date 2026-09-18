@@ -1,4 +1,4 @@
-#include <cstdio>
+﻿#include <cstdio>
 #include <vector>
 #include <fstream>
 
@@ -21,7 +21,17 @@
 #pragma push_macro("check")
 #undef check
 
-using namespace  rapidjson;
+using rapidjson::Document;
+using rapidjson::FileWriteStream;
+using rapidjson::GetParseError_En;
+using rapidjson::IStreamWrapper;
+using rapidjson::kParseErrorNone;
+using rapidjson::ParseErrorCode;
+using rapidjson::Pointer;
+using rapidjson::PrettyWriter;
+using rapidjson::StringBuffer;
+using rapidjson::Value;
+using rapidjson::Writer;
 
 template<>
 const char* const Userdata<Document>::metatable()

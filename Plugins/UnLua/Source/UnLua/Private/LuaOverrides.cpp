@@ -1,6 +1,7 @@
 ﻿#include "LuaOverrides.h"
 #include "LuaFunction.h"
 #include "LuaOverridesClass.h"
+#include "Misc/EngineVersionComparison.h"
 #include "UObject/MetaData.h"
 
 namespace UnLua
@@ -33,11 +34,28 @@ namespace UnLua
         const auto OverridesClass = GetOrAddOverridesClass(Class);
 
         ULuaFunction* LuaFunction;
-        const auto bAddNew = Function->GetOuter() != Class;
+        if (ULuaFunction* ExistingLuaFunction = Cast<ULuaFunction>(
+            Class->FindFunctionByName(NewName, EIncludeSuperFlag::ExcludeSuper)))
+        {
+            ExistingLuaFunction->Initialize();
+            return;
+        }
+
+        const bool bDeclaredOnClass = Function->GetOuter() == Class;
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+        // UE 5.8 的 BlueprintNativeEvent 包装函数只有找到非 Native Owner 的覆盖函数时才走
+        // ProcessEvent。同类覆盖不能继续原地修改 Native UFunction，必须临时替换类函数表项。
+        const bool bReplaceExisting = bDeclaredOnClass
+            && Function->HasAllFunctionFlags(FUNC_Native | FUNC_BlueprintEvent)
+            && Function->GetFName() == NewName;
+#else
+        const bool bReplaceExisting = false;
+#endif
+        const bool bAddNew = !bDeclaredOnClass || bReplaceExisting;
         if (bAddNew)
         {
             const auto Exists = Class->FindFunctionByName(NewName, EIncludeSuperFlag::ExcludeSuper);
-            if (Exists && Exists->GetSuperStruct() == Function)
+            if (!bReplaceExisting && Exists && Exists->GetSuperStruct() == Function)
                 return;
         }
         else
@@ -61,7 +79,7 @@ namespace UnLua
 
         LuaFunction->StaticLink(true);
         LuaFunction->Initialize();
-        LuaFunction->Override(Function, Class, bAddNew);
+        LuaFunction->Override(Function, Class, bAddNew, bReplaceExisting);
         LuaFunction->Bind();
 
         if (Class->IsRooted() || GUObjectArray.IsDisregardForGC(Class))

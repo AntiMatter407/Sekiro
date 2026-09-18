@@ -7,6 +7,7 @@
 #include "SKLockOnIndicatorComponent.generated.h"
 
 class ACharacter;
+class UTexture2D;
 class APlayerController;
 class USKCameraManagerComponent;
 class USKLockOnIndicatorWidget;
@@ -59,7 +60,7 @@ public:
     float GetLockTargetDistance() const;                 // 获取锁定目标距离
 
     UFUNCTION(BlueprintCallable, Category = "UI|LockOn|Lua")
-    bool UpdateLockTargetScreenPositionForScript(float TargetHeightOffset); // 更新锁定点屏幕位置
+    bool UpdateLockTargetScreenPositionForScript(FName TargetBoneName); // 将目标现有骨骼投影为锁定点
 
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "UI|LockOn|Lua")
     FVector2D GetCachedLockTargetScreenPosition() const; // 获取缓存屏幕位置
@@ -101,6 +102,12 @@ public:
     void SetLockOnIndicatorColorRGBA(float Red, float Green, float Blue, float Alpha); // 设置锁定点 RGBA 颜色
 
     UFUNCTION(BlueprintCallable, Category = "UI|LockOn|Lua")
+    bool SetLockOnIndicatorTexture(UTexture2D* Texture, FVector2D UVMin, FVector2D UVMax);
+
+    UFUNCTION(BlueprintCallable, Category = "UI|LockOn|Lua")
+    void SetLockOnIndicatorDebugDrawing(bool bEnabled);
+
+    UFUNCTION(BlueprintCallable, Category = "UI|LockOn|Lua")
     void RemoveLockOnIndicatorWidget();                  // 移除锁定点控件
 
 protected:
@@ -139,9 +146,16 @@ private:
     FVector2D CachedLockTargetScreenPosition = FVector2D::ZeroVector; // 缓存屏幕位置
     float IndicatorSize = 48.0f;                       // 当前锁定点尺寸
     float IndicatorThickness = 2.0f;                   // 当前锁定点线条粗细
-    FLinearColor IndicatorColor = FLinearColor(1.0f, 0.35f, 0.05f, 1.0f); // 当前锁定点颜色
+    FLinearColor IndicatorColor = FLinearColor::White; // 默认保留原图颜色
+
+    UPROPERTY(Transient)
+    TObjectPtr<UTexture2D> IndicatorTexture; // 原纹理注入，创建Widget前也可配置
+
+    FVector2D IndicatorUVMin = FVector2D::ZeroVector; // 原图左上UV
+    FVector2D IndicatorUVMax = FVector2D::UnitVector; // 原图右下UV
+    bool bIndicatorDebugDrawing = false; // 旧圆环默认禁用
 
     void RefreshCachedComponents();                    // 刷新依赖组件缓存
-    FVector GetLockTargetAnchorLocation(float TargetHeightOffset) const; // 获取锁定点世界锚点
+    bool GetLockTargetAnchorLocation(FName TargetBoneName, FVector& OutLocation) const; // 读取目标骨骼世界坐标
     bool IsScreenPositionInViewport(const FVector2D& ScreenPosition) const; // 判断屏幕点是否在可见范围
 };

@@ -1,0 +1,74 @@
+{
+  "ImportedBy": "USekiroGameplayUIImportLibrary::ImportUITextureManifest",
+  "Manifest": "Config/UI/OriginalCombatUI.json",
+  "AssetCount": 2,
+  "Assets": [
+    {
+      "ObjectPath": "/Game/UI/Combat/Textures/T_OriginalCombatAtlas.T_OriginalCombatAtlas",
+      "Size": [
+        4096,
+        1024
+      ],
+      "Settings": {
+        "lod_group": "<TextureGroup.TEXTUREGROUP_UI: 16>",
+        "compression_settings": "<TextureCompressionSettings.TC_EDITOR_ICON: 7>",
+        "mip_gen_settings": "<TextureMipGenSettings.TMGS_NO_MIPMAPS: 13>",
+        "never_stream": true,
+        "srgb": true,
+        "compression_no_alpha": false,
+        "address_x": "<TextureAddress.TA_CLAMP: 1>",
+        "address_y": "<TextureAddress.TA_CLAMP: 1>"
+      },
+      "Metadata": {
+        "SekiroGameplay.UI.Generator": "UITextureManifest.v1",
+        "SekiroGameplay.UI.SourceFile": "Extracted/UI/OriginalCombat/Textures/SB_FE.png",
+        "SekiroGameplay.UI.PNGSHA1": "E4BD5E0CE1765FD1E67BC048451BCCB90EC97ACB",
+        "SekiroGameplay.UI.SourceSymbol": "SB_FE",
+        "SekiroGameplay.UI.SourceArchive": "menu/hi/01_common.tpf.dcx",
+        "SekiroGameplay.UI.SourceHash": "1d5e5ec3badd984356e2fd123f92ea9808edc1bf23f2cff5029d97a302a33be5",
+        "SekiroGameplay.UI.AtlasRect": "{\r\n\t\"X\": 0,\r\n\t\"Y\": 0,\r\n\t\"Width\": 4096,\r\n\t\"Height\": 1024\r\n}",
+        "SekiroGameplay.UI.AlphaMode": "Straight"
+      },
+      "SavedFile": "Content/UI/Combat/Textures/T_OriginalCombatAtlas.uasset",
+      "SavedBytes": 4256556,
+      "SavedSHA256": "a5145c3bc2744212a6bd4a722aff00d74c57170af5da25af3f7fea5b9090c2bf"
+    },
+    {
+      "ObjectPath": "/Game/UI/Combat/Textures/T_OriginalLockOn.T_OriginalLockOn",
+      "Size": [
+        64,
+        32
+      ],
+      "Settings": {
+        "lod_group": "<TextureGroup.TEXTUREGROUP_UI: 16>",
+        "compression_settings": "<TextureCompressionSettings.TC_EDITOR_ICON: 7>",
+        "mip_gen_settings": "<TextureMipGenSettings.TMGS_NO_MIPMAPS: 13>",
+        "never_stream": true,
+        "srgb": true,
+        "compression_no_alpha": false,
+        "address_x": "<TextureAddress.TA_CLAMP: 1>",
+        "address_y": "<TextureAddress.TA_CLAMP: 1>"
+      },
+      "Metadata": {
+        "SekiroGameplay.UI.Generator": "UITextureManifest.v1",
+        "SekiroGameplay.UI.SourceFile": "Extracted/UI/OriginalCombat/Textures/MENU_Lockon01.png",
+        "SekiroGameplay.UI.PNGSHA1": "7FCCB5BE1F33CDF5EBAA6C33B12A5B92463BF13E",
+        "SekiroGameplay.UI.SourceSymbol": "MENU_Lockon01",
+        "SekiroGameplay.UI.SourceArchive": "menu/hi/01_common.tpf.dcx",
+        "SekiroGameplay.UI.SourceHash": "f3685bbb35e9bce5199e1115e1e51a47eb65e6cdc54b6c1e78f238c3291988cd",
+        "SekiroGameplay.UI.AtlasRect": "{\r\n\t\"X\": 0,\r\n\t\"Y\": 0,\r\n\t\"Width\": 64,\r\n\t\"Height\": 32\r\n}",
+        "SekiroGameplay.UI.AlphaMode": "Straight"
+      },
+      "SavedFile": "Content/UI/Combat/Textures/T_OriginalLockOn.uasset",
+      "SavedBytes": 4742,
+      "SavedSHA256": "3930ef7d52ba759184beb6b513f658edc6a38d37c576f628a6bb41ed876588b2"
+    }
+  ],
+  "Checks": [
+    "已保存Texture2D存在且可加载",
+    "尺寸/UI组/sRGB/alpha保留/NoMipmaps/NeverStream/Clamp一致",
+    "PNG实际SHA1与来源元数据一致",
+    "相对及绝对清单路径预检通过，已识别同源更新"
+  ],
+  "RuntimeTesting": "未启动PIE、未执行输入或运行场景；不表示游戏内视觉验收完成"
+}

@@ -46,6 +46,8 @@ private:
     FString HandleGetInfo(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleCompile(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleSetupAnimGraph(const TSharedPtr<FJsonObject>& Args, FString& OutError);
+    FString HandleSetupMotionMatchingProbe(const TSharedPtr<FJsonObject>& Args, FString& OutError); // 配置独立 Motion Matching 验证图
+    FString HandlePoseSearchDiagnostics(const TSharedPtr<FJsonObject>& Args, FString& OutError); // 查询 Pose Search 派生索引摘要
     FString HandleCreateBlendSpace(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleSetAnimClass(const TSharedPtr<FJsonObject>& Args, FString& OutError);
     FString HandleLayout(const TSharedPtr<FJsonObject>& Args, FString& OutError);

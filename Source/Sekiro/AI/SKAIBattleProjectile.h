@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Combat/SKCombatTypes.h"
 #include "SKAIBattleProjectile.generated.h"
 
 class UPrimitiveComponent;
@@ -31,6 +32,8 @@ public:
         float InLifeSeconds);
 
 protected:
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
     // ── 弹射物组件 ────────────────────────────────────────────
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI|Projectile")
@@ -54,9 +57,8 @@ private:
 
     TWeakObjectPtr<AActor> ShooterActor; // 发射者弱引用
     TWeakObjectPtr<AActor> IntendedTargetActor; // 发射时用于瞄准的目标弱引用
-    int32 RelatedActionSerial = 0; // 发射时锁存的射手动作序列号
-    FName ImpactEventTag = NAME_None; // 命中事件可选语义标签
-    float ProjectileDamage = 0.f; // 标准伤害系统使用的基础伤害
+    UPROPERTY(Transient)
+    FSKCombatHitRequest HitRequestTemplate; // 发射时签发的来源身份与数值，不随射手后续动作改变
     bool bInitialized = false; // 是否已接受一次有效初始化
     bool bImpactResolved = false; // 是否已经处理首个有效阻挡命中
 };

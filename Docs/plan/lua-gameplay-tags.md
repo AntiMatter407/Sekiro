@@ -6,6 +6,7 @@
 
 父需求：[Boss 与玩家对战基础](boss-player-combat-foundation.md) 2.6；关联 [GAS 数值基础](gas-numeric-foundation.md) 与 [Survival](survival-component.md)。
 详细方案：[SekiroGameplay 插件](../design/lua-gameplay-tags.md)。
+独立 UI 子需求：[原版战斗 UI](original-combat-ui.md)，已通过 RegisterTool 实现资源导入菜单项并编译；实际导入/重载状态在 UI 子需求追踪，不计入本 GameplayTag 生成器的验收。
 
 ## 需求与范围
 

@@ -11,23 +11,35 @@
 ---@field CardinalAngle table<SekiroCardinalDirection, number> 四方向枚举对应的角色局部中心角。
 ---@field OctantAngle table<SekiroOctantDirection, number> 八方向枚举对应的角色局部中心角。
 local Direction = {}
+local LocomotionDirection = UE.ESKLocomotionDirection
 
 Direction.Cardinal = {
-    Forward = 0,
-    Back = 4,
-    Left = 2,
-    Right = 6,
+    Forward = LocomotionDirection.Fwd,
+    Back = LocomotionDirection.Bwd,
+    Left = LocomotionDirection.L,
+    Right = LocomotionDirection.R,
 }
 
 Direction.Octant = {
-    Forward = 0,
-    ForwardLeft = 1,
-    Left = 2,
-    BackLeft = 3,
-    Back = 4,
-    BackRight = 5,
-    Right = 6,
-    ForwardRight = 7,
+    Forward = LocomotionDirection.Fwd,
+    ForwardLeft = LocomotionDirection.Fwd_L,
+    Left = LocomotionDirection.L,
+    BackLeft = LocomotionDirection.Bwd_L,
+    Back = LocomotionDirection.Bwd,
+    BackRight = LocomotionDirection.Bwd_R,
+    Right = LocomotionDirection.R,
+    ForwardRight = LocomotionDirection.Fwd_R,
+}
+
+local OctantByIndex = {
+    LocomotionDirection.Fwd,
+    LocomotionDirection.Fwd_L,
+    LocomotionDirection.L,
+    LocomotionDirection.Bwd_L,
+    LocomotionDirection.Bwd,
+    LocomotionDirection.Bwd_R,
+    LocomotionDirection.R,
+    LocomotionDirection.Fwd_R,
 }
 
 Direction.CardinalAngle = {
@@ -189,7 +201,8 @@ function Direction.ClassifyOctant(angle)
     if counter_clockwise_angle < 0 then
         counter_clockwise_angle = counter_clockwise_angle + 360
     end
-    return math.floor((counter_clockwise_angle + 22.5) / 45) % 8
+    local direction_index = math.floor((counter_clockwise_angle + 22.5) / 45) % 8
+    return OctantByIndex[direction_index + 1]
 end
 
 ---计算精确输入角与四方向素材中心角之间的残差，供后续 Orientation Warping 使用。

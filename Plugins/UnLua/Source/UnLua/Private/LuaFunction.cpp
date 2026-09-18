@@ -14,6 +14,8 @@
 
 
 #include "LuaFunction.h"
+#include "Misc/EngineVersionComparison.h"
+#include "UObject/MetaData.h"
 #include "LuaOverrides.h"
 #include "LuaOverridesClass.h"
 #include "UnLuaModule.h"
@@ -135,16 +137,21 @@ void ULuaFunction::Initialize()
     Desc = MakeShared<FFunctionDesc>(this, nullptr);
 }
 
-void ULuaFunction::Override(UFunction* Function, UClass* Class, bool bAddNew)
+void ULuaFunction::Override(UFunction* Function, UClass* Class, bool bAddNew, bool bReplaceExisting)
 {
     check(Function && Class && !From.IsValid());
 
 #if WITH_METADATA
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    FMetaData::CopyMetadata(Function, this);
+#else
     UMetaData::CopyMetadata(Function, this);
+#endif
 #endif
 
     bActivated = false;
     bAdded = bAddNew;
+    bReplaced = bReplaceExisting;
     From = Function;
 
     if (Function->GetNativeFunc() == execScriptCallLua)
@@ -170,21 +177,7 @@ void ULuaFunction::Override(UFunction* Function, UClass* Class, bool bAddNew)
 
 void ULuaFunction::Restore()
 {
-    if (bAdded)
-    {
-        if (const auto OverriddenClass = Cast<ULuaOverridesClass>(GetOuter())->GetOwner())
-            OverriddenClass->RemoveFunctionFromFunctionMap(this);
-    }
-    else
-    {
-        const auto Old = From.Get();
-        if (!Old)
-            return;
-        Old->Script = Script;
-        Old->SetNativeFunc(Overridden->GetNativeFunc());
-        Old->GetOuterUClass()->AddNativeFunction(*Old->GetName(), Overridden->GetNativeFunc());
-        Old->FunctionFlags = Overridden->FunctionFlags;
-    }
+    SetActive(false);
 }
 
 UClass* ULuaFunction::GetOverriddenUClass() const
@@ -210,14 +203,25 @@ void ULuaFunction::SetActive(const bool bActive)
     {
         if (bAdded)
         {
-            check(!Class->FindFunctionByName(GetFName(), EIncludeSuperFlag::ExcludeSuper));
+            UFunction* ExistingFunction = Class->FindFunctionByName(
+                GetFName(), EIncludeSuperFlag::ExcludeSuper);
+            if (bReplaced)
+            {
+                check(ExistingFunction == Function);
+                Class->RemoveFunctionFromFunctionMap(Function);
+            }
+            else
+            {
+                check(!ExistingFunction);
+            }
+
             SetSuperStruct(Function);
             FunctionFlags |= FUNC_Native;
             ClearInternalFlags(EInternalObjectFlags::Native);
             SetNativeFunc(execCallLua);
 
             Class->AddFunctionToFunctionMap(this, *GetName());
-            if (Function->HasAnyFunctionFlags(FUNC_Native))
+            if (!bReplaced && Function->HasAnyFunctionFlags(FUNC_Native))
                 Class->AddNativeFunction(*GetName(), &ULuaFunction::execCallLua);
         }
         else
@@ -243,6 +247,8 @@ void ULuaFunction::SetActive(const bool bActive)
         if (bAdded)
         {
             Class->RemoveFunctionFromFunctionMap(this);
+            if (bReplaced)
+                Class->AddFunctionToFunctionMap(Function, Function->GetFName());
         }
         else
         {
@@ -285,6 +291,8 @@ void ULuaFunction::Bind()
     }
     else
     {
-        SetNativeFunc(ProcessInternal);
+        // UE 5.8 不再向插件模块导出 UObject::ProcessInternal。复制出的临时函数尚未进入类函数表，
+        // 先绑定模块内可解析的 Lua thunk；Override 完成后会携带有效 From 再次 Bind。
+        SetNativeFunc(execCallLua);
     }
 }

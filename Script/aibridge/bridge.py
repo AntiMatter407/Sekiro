@@ -20,6 +20,15 @@ import asyncio
 import json
 import sys
 
+
+def configure_standard_streams():
+    """将 CLI 标准流固定为 UTF-8，避免 Windows 本地代码页破坏 JSON 结果。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 HOST = "127.0.0.1"
 PORT = 9877
 TIMEOUT = 600.0
@@ -246,7 +255,11 @@ async def compile_cpp():
         try:
             proc = subprocess.run(
                 [ubt, "SekiroEditor", "Win64", "Development", f"-Project={project}"],
-                capture_output=True, text=True, timeout=300
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
             )
         except subprocess.TimeoutExpired:
             return {"error": "UBT编译超时（300秒）"}
@@ -607,12 +620,20 @@ async def cmd_anim_blueprint(args):
 
     action = args[0]
     if action == "create":
-        # bridge.py anim_blueprint create /Game/Anim/ABP_Char /Game/Anim/SK_Char
+        # bridge.py anim_blueprint create /Game/Anim/ABP_Char /Game/Anim/SK_Char [--parent-class /Script/Module.Class]
         if len(args) < 3:
-            return {"error": "用法: anim_blueprint create <路径> <骨架路径>"}
+            return {"error": "用法: anim_blueprint create <路径> <骨架路径> [--parent-class <类路径>]"}
+        create_args = {"action": "create", "path": args[1], "skeleton_path": args[2]}
+        i = 3
+        while i < len(args):
+            if args[i] == "--parent-class" and i + 1 < len(args):
+                create_args["parent_class"] = args[i + 1]
+                i += 2
+            else:
+                return {"error": f"未知参数: {args[i]}"}
         return await send_request("tools/call", {
             "name": "anim_blueprint",
-            "arguments": {"action": "create", "path": args[1], "skeleton_path": args[2]}
+            "arguments": create_args
         })
     elif action == "add_state":
         # bridge.py anim_blueprint add_state /Game/Anim/ABP_Char Idle
@@ -854,6 +875,38 @@ async def cmd_anim_blueprint(args):
             "name": "anim_blueprint",
             "arguments": {"action": "compile", "path": path}
         })
+    elif action == "setup_motion_matching_probe":
+        if len(args) < 3:
+            return {"error": "用法: anim_blueprint setup_motion_matching_probe <ABP路径> <Database路径> [--trajectory-variable <变量>] [--active-tags-variable <变量>]"}
+        kwargs = {
+            "action": "setup_motion_matching_probe",
+            "path": args[1],
+            "database_path": args[2],
+        }
+        i = 3
+        while i < len(args):
+            if args[i] == "--trajectory-variable" and i + 1 < len(args):
+                kwargs["trajectory_variable"] = args[i + 1]
+                i += 2
+            elif args[i] == "--active-tags-variable" and i + 1 < len(args):
+                kwargs["active_tags_variable"] = args[i + 1]
+                i += 2
+            else:
+                return {"error": f"未知参数: {args[i]}"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": kwargs,
+        })
+    elif action == "pose_search_diagnostics":
+        if len(args) < 2:
+            return {"error": "用法: anim_blueprint pose_search_diagnostics <Database路径>"}
+        return await send_request("tools/call", {
+            "name": "anim_blueprint",
+            "arguments": {
+                "action": "pose_search_diagnostics",
+                "path": args[1],
+            },
+        })
     elif action == "set_anim_class":
         # bridge.py anim_blueprint set_anim_class <ABP路径> --character <角色BP路径> [--mesh Mesh]
         path = args[1] if len(args) > 1 else None
@@ -909,7 +962,7 @@ async def cmd_anim_blueprint(args):
             "arguments": kwargs
         })
     else:
-        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, upsert_skeleton_slot, remove_state_machine, add_curve, info, compile, layout, rename_node, set_anim_class"}
+        return {"error": f"未知操作: {action}，支持: create, add_state, add_transition, delete_transition, add_node, add_slot, upsert_skeleton_slot, remove_state_machine, add_curve, info, compile, setup_motion_matching_probe, pose_search_diagnostics, layout, rename_node, set_anim_class"}
 
 
 def _find_ue_editor():
@@ -1430,7 +1483,7 @@ async def cmd_input_simulate(args):
     action = args[0]
     valid_actions = ("attack", "attack_release", "guard", "guard_release", "dodge", "dodge_release",
                      "jump", "jump_release", "interact", "use_item", "healing_gourd", "grapple",
-                     "prosthetic", "lock_on", "crouch", "move", "look", "cycle_item_next",
+                     "prosthetic", "lock_on", "crouch", "move", "move_stop", "look", "look_stop", "cycle_item_next",
                      "cycle_item_prev", "pause", "menu")
 
     if action not in valid_actions:
@@ -1533,8 +1586,8 @@ def print_help():
   pie late_join                              添加客户端（多人已运行时）
   input_simulate <action> [--x <值>] [--y <值>] [--hold <秒>] [--delay <秒>]  在PIE运行时模拟玩家输入
     动作: attack, guard, dodge, jump, interact, use_item, healing_gourd, grapple,
-          prosthetic, lock_on, crouch, move, look, cycle_item_next/prev, pause, menu
-    --hold <秒>: 长按后自动释放（适用于attack/guard/dodge/jump）
+          prosthetic, lock_on, crouch, move/move_stop, look/look_stop, cycle_item_next/prev, pause, menu
+    --hold <秒>: 持续注入后自动释放（适用于按钮和 move/look 轴输入）
     --delay <秒>: 延迟执行
   crash check                                检测最近一次运行是否崩溃
   crash analyze                              分析崩溃：错误信息、调用栈、源码定位
@@ -1574,4 +1627,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    configure_standard_streams()
     asyncio.run(main())

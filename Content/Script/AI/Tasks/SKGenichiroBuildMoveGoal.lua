@@ -129,7 +129,7 @@ end
 ---@param blackboard UBlackboardComponent|table 当前 Blackboard。
 ---@param action GenichiroActionDefinition 当前动作。
 ---@param memory GenichiroCombatMemoryState 当前战斗记忆。
----@return string result 成功结果 Succeeded。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；成功结果 Succeeded。
 local function commit_movement(pawn, blackboard, action, memory)
     local direction_name = CombatMemory.GetValue(memory, "PendingNavigationSide", "")
     CombatMemory.ApplyCooldowns(
@@ -151,16 +151,16 @@ local function commit_movement(pawn, blackboard, action, memory)
             CombatMemory.RecordCompletedAction(memory, action)
         end
     end
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 ---在 Build 或 Commit 模式执行移动阶段；配置字符串为 Commit 时只提交 MoveTo 成功结果。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|table|nil 当前 AIController。
 ---@param pawn APawn|table|nil 当前 Pawn。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard。
 ---@param configuration string|nil Build 或 Commit；空值视为 Build。
----@return string result Succeeded 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；Succeeded 或 Failed。
 function SKGenichiroBuildMoveGoal.Execute(
     task,
     controller,
@@ -169,7 +169,7 @@ function SKGenichiroBuildMoveGoal.Execute(
     configuration)
     local _unused = task
     if controller == nil or pawn == nil or blackboard == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local action_id = Runtime.NameToString(
@@ -177,7 +177,7 @@ function SKGenichiroBuildMoveGoal.Execute(
     local action = ActionCatalog.GetAction(action_id)
     if action == nil or action.Movement == nil then
         blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "MoveActionMissing")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local memory = CombatMemory.GetOrCreate(pawn)
@@ -187,14 +187,14 @@ function SKGenichiroBuildMoveGoal.Execute(
 
     local target_actor = blackboard:GetValueAsObject(Runtime.Keys.TargetActor)
     if not Runtime.IsObjectValid(target_actor) then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     if Runtime.GetActorLocation(pawn) == nil
         or Runtime.GetActorLocation(target_actor) == nil then
         blackboard:SetValueAsString(
             Runtime.Keys.DebugFailureReason,
             "ActorLocationUnavailable")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local context = Runtime.CaptureDecisionContext(pawn, blackboard, 0.0)
     local candidate, direction_name = build_candidate(
@@ -205,7 +205,7 @@ function SKGenichiroBuildMoveGoal.Execute(
         memory)
     if candidate == nil then
         blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "NoNavigationSpace")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local projected, move_goal = Runtime.ProjectNavigationPoint(
@@ -214,13 +214,13 @@ function SKGenichiroBuildMoveGoal.Execute(
         NavigationQueryExtent)
     if not projected or move_goal == nil then
         blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "NavigationProjectionFailed")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     blackboard:SetValueAsVector(Runtime.Keys.MoveGoal, move_goal)
     CombatMemory.SetValue(memory, "PendingNavigationSide", direction_name or "")
     blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "")
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 return SKGenichiroBuildMoveGoal

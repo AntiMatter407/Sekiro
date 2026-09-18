@@ -3,9 +3,10 @@
 -- 每个构造函数只写入自身类型对应的字段，C++ 导入器不需要从字符串内容猜测类型。
 ---@class IRValue
 local IRValue = {}
+local ValueType = UE.ELuaAnimIRValueType
 
 ---构造带稳定类型标签的 IR Value 表。
----@param value_type SekiroAnimIRValueType 与 ESekiroAnimIRValueType 对应的稳定类型名。
+---@param value_type SekiroAnimIRValueType ELuaAnimIRValueType 原生枚举值。
 ---@param field_name string 当前类型实际使用的值字段名。
 ---@param value any 写入对应值字段的 Lua 值。
 ---@return SekiroAnimIRValue ir_value 可由 C++ 导入器显式解析的类型化值。
@@ -21,7 +22,7 @@ end
 ---@return SekiroAnimIRValue ir_value Bool 类型 IR Value。
 function IRValue.Bool(value)
     assert(type(value) == "boolean", "Bool IR value requires a boolean")
-    return make_value("Bool", "BoolValue", value)
+    return make_value(ValueType.Bool, "BoolValue", value)
 end
 
 ---构造 Integer 类型属性值。
@@ -29,7 +30,15 @@ end
 ---@return SekiroAnimIRValue ir_value Integer 类型 IR Value。
 function IRValue.Integer(value)
     assert(type(value) == "number" and value % 1 == 0, "Integer IR value requires an integer")
-    return make_value("Integer", "IntegerValue", value)
+    return make_value(ValueType.Integer, "IntegerValue", value)
+end
+
+---构造 Enum 类型属性值；目标反射属性负责提供实际 UEnum 类型并校验该数值。
+---@param value number UnLua 暴露的原生 UENUM 值。
+---@return SekiroAnimIRValue ir_value Enum 类型 IR Value。
+function IRValue.Enum(value)
+    assert(type(value) == "number" and value % 1 == 0, "Enum IR value requires a native enum value")
+    return make_value(ValueType.Enum, "IntegerValue", value)
 end
 
 ---构造 Float 类型属性值。
@@ -37,7 +46,7 @@ end
 ---@return SekiroAnimIRValue ir_value Float 类型 IR Value。
 function IRValue.Float(value)
     assert(type(value) == "number", "Float IR value requires a number")
-    return make_value("Float", "FloatValue", value)
+    return make_value(ValueType.Float, "FloatValue", value)
 end
 
 ---构造 Name 类型属性值。
@@ -45,7 +54,7 @@ end
 ---@return SekiroAnimIRValue ir_value Name 类型 IR Value。
 function IRValue.Name(value)
     assert(type(value) == "string", "Name IR value requires a string")
-    return make_value("Name", "NameValue", value)
+    return make_value(ValueType.Name, "NameValue", value)
 end
 
 ---构造 String 类型属性值。
@@ -53,7 +62,7 @@ end
 ---@return SekiroAnimIRValue ir_value String 类型 IR Value。
 function IRValue.String(value)
     assert(type(value) == "string", "String IR value requires a string")
-    return make_value("String", "StringValue", value)
+    return make_value(ValueType.String, "StringValue", value)
 end
 
 ---构造 SoftObjectPath 类型属性值。
@@ -61,7 +70,7 @@ end
 ---@return SekiroAnimIRValue ir_value SoftObjectPath 类型 IR Value。
 function IRValue.SoftObjectPath(value)
     assert(type(value) == "string" and value ~= "", "SoftObjectPath IR value requires a non-empty string")
-    return make_value("SoftObjectPath", "SoftObjectPathValue", value)
+    return make_value(ValueType.SoftObjectPath, "SoftObjectPathValue", value)
 end
 
 ---构造 SoftClassPath 类型属性值。
@@ -69,7 +78,16 @@ end
 ---@return SekiroAnimIRValue ir_value SoftClassPath 类型 IR Value。
 function IRValue.SoftClassPath(value)
     assert(type(value) == "string" and value ~= "", "SoftClassPath IR value requires a non-empty string")
-    return make_value("SoftClassPath", "SoftClassPathValue", value)
+    return make_value(ValueType.SoftClassPath, "SoftClassPathValue", value)
+end
+
+---构造 Struct 类型属性值，由目标 FStructProperty 解析 UE 确定性文本。
+---插件不解释项目语义；导入器会先在临时结构体中完整解析，成功后才写入节点。
+---@param value string UE 结构体文本，例如 `(Min=0.0,Max=1.0)`。
+---@return SekiroAnimIRValue ir_value Struct 类型 IR Value。
+function IRValue.Struct(value)
+    assert(type(value) == "string" and value ~= "", "Struct IR value requires a non-empty string")
+    return make_value(ValueType.Struct, "StructValue", value)
 end
 
 ---按照节点注册契约把普通 Lua 值转换为显式类型 IR Value。
@@ -79,13 +97,15 @@ end
 ---@return SekiroAnimIRValue ir_value 可交给 C++ 导入器的显式类型值。
 function IRValue.From(value_type, value)
     local constructors = {
-        Bool = IRValue.Bool,
-        Integer = IRValue.Integer,
-        Float = IRValue.Float,
-        Name = IRValue.Name,
-        String = IRValue.String,
-        SoftObjectPath = IRValue.SoftObjectPath,
-        SoftClassPath = IRValue.SoftClassPath,
+        [ValueType.Bool] = IRValue.Bool,
+        [ValueType.Integer] = IRValue.Integer,
+        [ValueType.Enum] = IRValue.Enum,
+        [ValueType.Float] = IRValue.Float,
+        [ValueType.Name] = IRValue.Name,
+        [ValueType.String] = IRValue.String,
+        [ValueType.SoftObjectPath] = IRValue.SoftObjectPath,
+        [ValueType.SoftClassPath] = IRValue.SoftClassPath,
+        [ValueType.Struct] = IRValue.Struct,
     }
     local constructor = constructors[value_type]
     assert(constructor ~= nil, string.format("Unsupported IR value type '%s'", tostring(value_type)))

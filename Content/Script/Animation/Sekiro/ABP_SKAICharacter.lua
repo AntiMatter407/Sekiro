@@ -5,9 +5,7 @@
 local LuaAnimBlueprint = require("Animation.Compiler.LuaAnimBlueprint")
 local ABP_Sekiro = require("Animation.Sekiro.ABP_Sekiro")
 
-local RootMotionMode = {
-    Ignore = 1,
-}
+local RootMotionMode = UE.ERootMotionMode
 local AnimationLayerInterface =
     "/Game/Characters/Sekiro/ALI_Sekiro.ALI_Sekiro_C"
 
@@ -44,7 +42,7 @@ function ABP_SKAICharacter.BlueprintUpdateAnimation(Inst, delta_seconds)
 
     ABP_Sekiro.BlueprintUpdateAnimation(Inst, delta_seconds)
 
-    Inst.RootMotionMode = RootMotionMode.Ignore
+    Inst.RootMotionMode = RootMotionMode.IgnoreRootMotion
 end
 
 return ABP_SKAICharacter:Export()

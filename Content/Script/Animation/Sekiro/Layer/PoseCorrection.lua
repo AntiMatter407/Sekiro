@@ -39,13 +39,13 @@ function PoseCorrection.Build(graph, source_pose)
         EditorNodeClass.TwoBoneIK,
         {
             IKBone = weapon_ik.IKBone,
-            EffectorLocationSpace = "BoneSpace",
+            EffectorLocationSpace = UE.EBoneControlSpace.BCS_BoneSpace,
             EffectorTargetSocketName = weapon_ik.EffectorSocket,
-            JointTargetLocationSpace = "BoneSpace",
+            JointTargetLocationSpace = UE.EBoneControlSpace.BCS_BoneSpace,
             JointTargetBoneName = weapon_ik.JointTargetBone,
             bTakeRotationFromEffectorSpace = true,
             bAllowStretching = false,
-            AlphaInputType = "Curve",
+            AlphaInputType = UE.EAnimAlphaInputType.Curve,
             AlphaCurveName = CurveNames.WeaponHandIK,
         },
         "TwoBoneIK")

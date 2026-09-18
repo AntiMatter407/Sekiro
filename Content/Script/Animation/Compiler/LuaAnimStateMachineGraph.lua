@@ -22,7 +22,7 @@ local LuaGraphLayoutGrid = require("Animation.Compiler.LuaGraphLayoutGrid")
 ---@field Rule LuaTransitionGateExpression 完整的强类型原生规则；Factory 会将其生成为原生 Transition Rule Graph。
 ---@field BlendDuration number|nil 过渡混合时长，单位为秒。
 ---@field PriorityOrder number|nil 同一源状态下的显式过渡优先级整数。
----@field BlendMode string|nil UE 过渡混合模式注册名。
+---@field BlendMode number|nil EAlphaBlendOption 原生枚举值。
 
 ---@class LuaAnimStateMachineGraph: CompilerClass
 ---@field Blueprint LuaAnimBlueprint 所属动画蓝图编译实例。

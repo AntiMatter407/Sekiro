@@ -4,10 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Combat/SKCombatTypes.h"
 #include "SKWeapon.generated.h"
 
 class UCapsuleComponent;
 class USkeletalMeshComponent;
+class USKCombatComponent;
 
 UENUM(BlueprintType)
 enum class ESKWeaponPresentation : uint8
@@ -152,6 +154,9 @@ private:
     FName SheathSocket = TEXT("SheathSocket");               // 角色腰部刀鞘挂点
     ESKWeaponPresentation Presentation = ESKWeaponPresentation::Drawn; // 当前展示状态
     TSet<TWeakObjectPtr<AActor>> AlreadyHitActors;             // 单次攻击已命中的目标集合
+    UPROPERTY(Transient)
+    FSKCombatHitRequest HitRequestTemplate; // 窗口开启时签发的动作、生命和数值上下文
+    TWeakObjectPtr<USKCombatComponent> HitSourceCombat; // 票据签发组件，窗口关闭时释放
     FVector PreviousBladeBase = FVector::ZeroVector;          // 上一帧补全后的刀柄端世界坐标
     FVector PreviousBladeTip = FVector::ZeroVector;           // 上一帧补全后的刀尖端世界坐标
     bool bBladeSweepActive = false;                            // 当前动画曲线是否已开启刀刃 Sweep

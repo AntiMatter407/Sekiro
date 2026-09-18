@@ -114,7 +114,8 @@ void USKInputManager::AddMappingContext(APlayerController* PC)
 	if (UEnhancedInputLocalPlayerSubsystem* Sub =
 		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()))
 	{
-		Sub->AddMappingContext(DefaultMappingContext, 0);
+		if (!Sub->HasMappingContext(DefaultMappingContext))
+			Sub->AddMappingContext(DefaultMappingContext, 0);
 	}
 }
 
@@ -205,11 +206,26 @@ bool USKInputManager::IsOwnerWeaponSlotAnimationPlaying() const
 }
 
 /**
- * 查询所属角色当前武器的展示状态并转换为稳定名称，供 Lua 判断 Drawn/Sheathed。
- * 本接口不切换挂载、不播放动画；角色、管理器或武器缺失时返回 None，避免脚本误判为已拔刀。
+ * 查询所属角色当前武器的原生展示枚举，供 Lua、Blueprint 和 C++ 直接比较。
+ * 本接口不切换挂载、不播放动画；角色、管理器或武器缺失时返回 Drawn，保持旧名称接口
+ * 返回 None 时“不等于 Sheathed”的限制区判断语义。必须在游戏线程调用。
+ *
+ * @return 当前武器的展示枚举；依赖缺失时返回 ESKWeaponPresentation::Drawn。
+ */
+ESKWeaponPresentation USKInputManager::GetOwnerWeaponPresentation() const
+{
+    const ASKCharacter* Character = Cast<ASKCharacter>(GetOwner());
+    const USKWeaponManagerComponent* WeaponManager = Character ? Character->GetWeaponManager() : nullptr;
+    const ASKWeapon* Weapon = WeaponManager ? WeaponManager->GetCurrentWeapon() : nullptr;
+    return Weapon ? Weapon->GetWeaponPresentation() : ESKWeaponPresentation::Drawn;
+}
+
+/**
+ * 将当前武器展示枚举格式化为旧蓝图使用的稳定名称，仅用于迁移期兼容。
+ * 新业务必须调用 GetOwnerWeaponPresentation 并直接比较 ESKWeaponPresentation；本函数不修改状态。
  * 必须在游戏线程调用。
  *
- * @return Drawn、Sheathed 或依赖缺失时的 None。
+ * @return Drawn、Sheathed 或依赖缺失时的 None；返回名称不应用于业务判断。
  */
 FName USKInputManager::GetOwnerWeaponPresentationName() const
 {
@@ -325,7 +341,7 @@ void USKInputManager::ClearAllGameplayInputForScript()
     }
     if (USKMovementComponent* MovementComponent = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
     {
-        MovementComponent->CurrentMovementTier = ESKMovementTier::Idle;
+        MovementComponent->ApplyInputMovementTier(ESKMovementTier::Idle);
     }
 }
 
@@ -731,6 +747,14 @@ bool USKInputManager::AddMovementInputFromScreen(float InputX, float InputY)
 	if (Input.IsNearlyZero()) return false;
 
 	const FVector2D Normalized = Input.GetSafeNormal();
+	if (const USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
+		MoveComp && MoveComp->UsesMotionMatchingLocomotion())
+	{
+		// Motion Matching 下该兼容接口只提交查询意图，不能把输入送进 CMC 生成第二份水平位移。
+		SetMoveIntentForScript(Normalized.X, Normalized.Y, FMath::Clamp(Input.Size(), 0.f, 1.f), 0.f);
+		return true;
+	}
+
 	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
 	const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 	const FVector Right = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
@@ -920,15 +944,52 @@ void USKInputManager::SetOwnerDodgeDirection(float ForwardAmount, float LateralA
 	}
 }
 
-FName USKInputManager::GetMovementTierName() const
+/**
+ * 查询输入系统当前使用的原生移动档位，供 Lua、Blueprint 和 C++ 直接比较。
+ * 本函数只读取角色移动组件，不修改移动意图；组件尚未就绪时返回 Run，保持旧名称接口语义。
+ * 必须在游戏线程调用。
+ *
+ * @return 当前 ESKMovementTier；角色或移动组件缺失时返回 ESKMovementTier::Run。
+ */
+ESKMovementTier USKInputManager::GetMovementTier() const
 {
 	const ACharacter* Owner = OwnerCharacter.Get();
-	if (!Owner) return FName(TEXT("Run"));
+	if (!Owner) return ESKMovementTier::Run;
 
 	const USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
-	if (!MoveComp) return FName(TEXT("Run"));
+	return MoveComp ? MoveComp->CurrentMovementTier : ESKMovementTier::Run;
+}
 
-	switch (MoveComp->CurrentMovementTier)
+/**
+ * 将调用方提交的原生移动档位写入角色移动组件，作为后续移动与动画查询的档位意图。
+ * 外部输入锁生效或依赖组件缺失时不修改状态；函数不生成位移，也不把枚举转换为名称。
+ * 必须在游戏线程调用。
+ *
+ * @param NewTier 要应用的 ESKMovementTier 原生枚举值。
+ */
+void USKInputManager::SetMovementTier(ESKMovementTier NewTier)
+{
+	if (IsExternalInputLocked()) return;
+
+	ACharacter* Owner = OwnerCharacter.Get();
+	if (!Owner) return;
+
+	USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
+	if (!MoveComp) return;
+
+	MoveComp->ApplyInputMovementTier(NewTier);
+}
+
+/**
+ * 将当前移动档位格式化为旧蓝图使用的稳定名称，仅用于迁移期兼容。
+ * 新业务必须调用 GetMovementTier 并直接比较 ESKMovementTier；本函数不修改状态。
+ * 必须在游戏线程调用。
+ *
+ * @return 当前档位名称；依赖缺失或枚举值未知时返回 Run。
+ */
+FName USKInputManager::GetMovementTierName() const
+{
+	switch (GetMovementTier())
 	{
 	case ESKMovementTier::Idle:
 		return FName(TEXT("Idle"));
@@ -945,17 +1006,16 @@ FName USKInputManager::GetMovementTierName() const
 	}
 }
 
+/**
+ * 将旧蓝图提交的移动档位名解析为枚举后转发给强类型入口，仅用于迁移期兼容。
+ * 新业务必须直接调用 SetMovementTier；未知名称沿用历史行为解析为 Run。
+ * 必须在游戏线程调用。
+ *
+ * @param TierName 旧调用方提供的档位名称，不区分大小写。
+ */
 void USKInputManager::SetMovementTierByName(FName TierName)
 {
-	if (IsExternalInputLocked()) return;
-
-	ACharacter* Owner = OwnerCharacter.Get();
-	if (!Owner) return;
-
-	USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
-	if (!MoveComp) return;
-
-	MoveComp->CurrentMovementTier = ResolveMovementTierByName(TierName);
+	SetMovementTier(ResolveMovementTierByName(TierName));
 }
 
 void USKInputManager::SetPressedFlag(FName ActionName, bool bPressed)
@@ -1147,7 +1207,7 @@ void USKInputManager::HandleInputTick_Implementation(float DeltaTime)
 				&& !OwnerCharacter->GetCharacterMovement()->IsFalling()
 				&& MoveComp->CurrentMovementTier != ESKMovementTier::Sprint)
 			{
-				MoveComp->CurrentMovementTier = ESKMovementTier::Sprint;
+				MoveComp->ApplyInputMovementTier(ESKMovementTier::Sprint);
 			}
 			else if (MoveComp->CurrentMovementTier == ESKMovementTier::Sprint)
 			{
@@ -1421,20 +1481,28 @@ void USKInputManager::HandleMoveInput_Implementation(float InputX, float InputY)
 	MoveIntent = Input.GetSafeNormal();
 
 	const FVector2D Normalized = Input.GetSafeNormal();
+	USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
 
-	// ── 世界空间方向 ──
-	const AController* Controller = Owner->GetController();
-	if (!Controller) return;
+	if (MoveComp && MoveComp->UsesMotionMatchingLocomotion())
+	{
+		// Lua 未绑定时也维持 RootMotion 单一位移源；输入只进入查询/朝向意图快照。
+		SetMoveIntentForScript(Normalized.X, Normalized.Y, RawInputAmount, 0.f);
+	}
+	else
+	{
+		// Classic 回退角色继续使用 CMC 输入移动。
+		const AController* Controller = Owner->GetController();
+		if (!Controller) return;
 
-	const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
-	const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-	const FVector Right   = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
-
-	Owner->AddMovementInput(Forward, Normalized.Y);
-	Owner->AddMovementInput(Right,   Normalized.X);
+		const FRotator YawRotation(0.f, Controller->GetControlRotation().Yaw, 0.f);
+		const FVector Forward = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+		const FVector Right   = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+		Owner->AddMovementInput(Forward, Normalized.Y);
+		Owner->AddMovementInput(Right, Normalized.X);
+	}
 
 	// ── 冲刺状态更新 ──
-	if (USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
+	if (MoveComp)
 	{
 		if (MoveComp->CurrentMovementTier == ESKMovementTier::Sprint)
 		{
@@ -1575,7 +1643,7 @@ void USKInputManager::HandleDodgeCompleted_Implementation()
 	// ── 长按结束退出 Sprint；短按保持 Walk/Run 档位并交给 Dodge 动作处理 ──
 	if (USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
 	{
-		MoveComp->CurrentMovementTier = ResolveMovementTierFromInput(MoveInputAmount);
+		MoveComp->ApplyInputMovementTier(ResolveMovementTierFromInput(MoveInputAmount));
 	}
 	DodgeHoldTime = 0.f;
 }
@@ -1633,7 +1701,7 @@ void USKInputManager::HandleCrouchStarted_Implementation()
 		Owner->UnCrouch();
 		if (USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
 		{
-			MoveComp->CurrentMovementTier = ESKMovementTier::Run;
+			MoveComp->ApplyInputMovementTier(ESKMovementTier::Run);
 		}
 	}
 	else
@@ -1641,7 +1709,7 @@ void USKInputManager::HandleCrouchStarted_Implementation()
 		Owner->Crouch();
 		if (USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement()))
 		{
-			MoveComp->CurrentMovementTier = ESKMovementTier::Crouch;
+			MoveComp->ApplyInputMovementTier(ESKMovementTier::Crouch);
 		}
 	}
 }
@@ -1934,7 +2002,7 @@ void USKInputManager::ApplyDesiredMovementTier(float InputMagnitude)
 	USKMovementComponent* MoveComp = Cast<USKMovementComponent>(Owner->GetCharacterMovement());
 	if (!MoveComp) return;
 
-	MoveComp->CurrentMovementTier = ResolveMovementTierFromInput(InputMagnitude);
+	MoveComp->ApplyInputMovementTier(ResolveMovementTierFromInput(InputMagnitude));
 }
 
 void USKInputManager::QueueDodgePressed()

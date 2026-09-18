@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -198,7 +198,7 @@ public:
      */
     FORCEINLINE void Rehash()
     {
-        Set->Rehash(SetLayout, [=](const void* Src) { return ElementInterface->GetValueTypeHash(Src); });
+        Set->Rehash(SetLayout, [this](const void* Src) { return ElementInterface->GetValueTypeHash(Src); });
     }
 
     /**

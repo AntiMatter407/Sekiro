@@ -56,16 +56,16 @@ local function resolve_semantic_signal(event_tag)
 end
 
 ---按来袭攻击类型选择对应 3100～3103 中性防御反应。
----@param attack_type userdata|number|string 来袭攻击类型枚举。
+---@param attack_type userdata|number ESKIncomingAttackType 原生枚举值。
 ---@return string action_id 对应反应动作 ID。
 local function guard_action_for_attack_type(attack_type)
-    if Runtime.EnumEquals(attack_type, "ESKIncomingAttackType", "Heavy") then
+    if attack_type == UE.ESKIncomingAttackType.Heavy then
         return "StrongGuardReaction"
     end
-    if Runtime.EnumEquals(attack_type, "ESKIncomingAttackType", "Thrust") then
+    if attack_type == UE.ESKIncomingAttackType.Thrust then
         return "RushGuardReaction"
     end
-    if Runtime.EnumEquals(attack_type, "ESKIncomingAttackType", "Special") then
+    if attack_type == UE.ESKIncomingAttackType.Special then
         return "SpecialGuardReaction"
     end
     return "StandardGuardReaction"
@@ -93,17 +93,17 @@ end
 ---@return string|nil semantic_signal 解析到的 Legacy 语义。
 local function apply_event_memory(event, memory)
     local semantic_signal = resolve_semantic_signal(event.EventTag)
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "WeaponContact")
+    if event.EventType == UE.ESKAICombatEventType.WeaponContact
         and (semantic_signal == "LegacyKengeki200200"
             or semantic_signal == "LegacyKengeki200215"
             or semantic_signal == "LegacyKengeki200216") then
-        if Runtime.EnumEquals(event.ContactResult, "ESKWeaponContactResult", "Deflected")
-            or Runtime.EnumEquals(event.ContactResult, "ESKWeaponContactResult", "Guarded") then
+        if event.ContactResult == UE.ESKWeaponContactResult.Deflected
+            or event.ContactResult == UE.ESKWeaponContactResult.Guarded then
             CombatMemory.Increment(memory, "DeflectChainCount", 1, 0, 99)
         end
-    elseif Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "DamageReceived") then
+    elseif event.EventType == UE.ESKAICombatEventType.DamageReceived then
         CombatMemory.SetValue(memory, "LastDamageEventSerial", event.EventSerial or 0)
-    elseif Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "ForceReplan") then
+    elseif event.EventType == UE.ESKAICombatEventType.ForceReplan then
         CombatMemory.SetValue(memory, "ForceStrafeAfterAction", nil)
     end
     if semantic_signal == "DeflectChainReset" then
@@ -122,15 +122,15 @@ end
 ---@return GenichiroRoutedReaction|nil reaction 当前事件的反应提案。
 local function route_event(event, semantic_signal, context, memory)
     local event_serial = tonumber(event.EventSerial) or 0
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "ForceReplan") then
+    if event.EventType == UE.ESKAICombatEventType.ForceReplan then
         return { Priority = 90, ReactionType = "ForceReplan", ActionID = nil, EventSerial = event_serial }
     end
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "ReactionRequested") then
+    if event.EventType == UE.ESKAICombatEventType.ReactionRequested then
         local action_id = semantic_signal == "ConditionalReaction3017"
             and "ConditionalProjectileReaction" or "ForcedEndureReaction"
         return { Priority = 80, ReactionType = "ForcedReaction", ActionID = action_id, EventSerial = event_serial }
     end
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "AttackThreat") then
+    if event.EventType == UE.ESKAICombatEventType.AttackThreat then
         return {
             Priority = 65,
             ReactionType = "AttackThreat",
@@ -151,22 +151,22 @@ local function route_event(event, semantic_signal, context, memory)
             }
         end
     end
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "WeaponContact")
-        and Runtime.EnumEquals(event.ContactResult, "ESKWeaponContactResult", "Deflected") then
+    if event.EventType == UE.ESKAICombatEventType.WeaponContact
+        and event.ContactResult == UE.ESKWeaponContactResult.Deflected then
         local action_id = select_clash_action("LegacyKengeki200200", context, memory)
         if action_id ~= nil then
             return { Priority = 60, ReactionType = "Kengeki", ActionID = action_id, EventSerial = event_serial }
         end
     end
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "ProjectileImpact") then
+    if event.EventType == UE.ESKAICombatEventType.ProjectileImpact then
         local action_id = context.Space.Back == true
             and "DefensiveLongBackstep" or "StandardGuardReaction"
         return { Priority = 55, ReactionType = "ProjectileImpact", ActionID = action_id, EventSerial = event_serial }
     end
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "DamageReceived") then
+    if event.EventType == UE.ESKAICombatEventType.DamageReceived then
         return { Priority = 50, ReactionType = "DamageReceived", ActionID = "StandardGuardReaction", EventSerial = event_serial }
     end
-    if Runtime.EnumEquals(event.EventType, "ESKAICombatEventType", "TargetAction")
+    if event.EventType == UE.ESKAICombatEventType.TargetAction
         and (semantic_signal == "TargetUseItem" or Runtime.NameToString(event.EventTag) == "TargetUseItem") then
         return { Priority = 40, ReactionType = "TargetUseItem", ActionID = "TargetUseItemPunish", EventSerial = event_serial }
     end
@@ -191,12 +191,12 @@ local function choose_higher_priority(current, candidate)
 end
 
 ---排空事件批次并输出一次最高优先级反应；Clear 配置用于反应动作完成后的显式收尾。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|table|nil 当前 AIController；本任务不直接调用。
 ---@param pawn APawn|table|nil 当前 Pawn。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard。
 ---@param configuration string|nil Clear 表示清理反应输出，其余值执行路由。
----@return string result Succeeded 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；Succeeded 或 Failed。
 function SKGenichiroReactionRouter.Execute(
     task,
     controller,
@@ -205,18 +205,18 @@ function SKGenichiroReactionRouter.Execute(
     configuration)
     local _unused = task or controller
     if pawn == nil or blackboard == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     if Runtime.NameToString(configuration) == "Clear" then
         blackboard:SetValueAsName(Runtime.Keys.ReactionType, "")
         blackboard:SetValueAsInt(Runtime.Keys.ReactionPriority, 0)
         blackboard:SetValueAsName(Runtime.Keys.SelectedActionId, "")
-        return "Succeeded"
+        return UE.ELuaBehaviorTreeTaskResult.Succeeded
     end
 
     local combat_component = Runtime.GetCombatComponent(pawn)
     if combat_component == nil or combat_component.ConsumeAICombatEvent == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local memory = CombatMemory.GetOrCreate(pawn)
     local context = Runtime.CaptureDecisionContext(pawn, blackboard, 0.0)
@@ -233,12 +233,12 @@ function SKGenichiroReactionRouter.Execute(
     end
 
     if best_reaction == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     if best_reaction.ActionID ~= nil
         and ActionCatalog.GetAction(best_reaction.ActionID) == nil then
         blackboard:SetValueAsString(Runtime.Keys.DebugFailureReason, "ReactionActionMissing")
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     blackboard:SetValueAsName(Runtime.Keys.ReactionType, best_reaction.ReactionType)
@@ -251,7 +251,7 @@ function SKGenichiroReactionRouter.Execute(
         best_reaction.ActionID ~= nil and "CombatAction" or "Hold")
     CombatMemory.SetValue(memory, "LastReactionType", best_reaction.ReactionType)
     CombatMemory.SetValue(memory, "LastReactionEventSerial", best_reaction.EventSerial)
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 return SKGenichiroReactionRouter

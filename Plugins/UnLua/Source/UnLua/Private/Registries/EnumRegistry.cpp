@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "CollisionHelper.h"
+#include "Misc/EngineVersionComparison.h"
 #include "EnumRegistry.h"
 #include "LowLevel.h"
 #include "LuaCore.h"
@@ -47,7 +48,11 @@ namespace UnLua
             return Ret;
 
         const FString EnumName = UTF8_TO_TCHAR(MetatableName);
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+        UEnum* Enum = FindFirstObject<UEnum>(*EnumName);
+#else
         UEnum* Enum = FindObject<UEnum>(ANY_PACKAGE, *EnumName);
+#endif
         if (!Enum)
         {
             Enum = LoadObject<UEnum>(nullptr, *EnumName);

@@ -9,8 +9,8 @@
 ---@field SwitchFrame number 原版 OverrideWeaponModelLocation 事件的挂载边界帧。
 ---@field SwitchTime number 资产写入和校验使用的秒数，由 SwitchFrame / SourceFrameRate 得到；运行时不轮询该值。
 ---@field Duration number 导入动画的播放时长，单位为秒。
----@field StartPresentation string 动画开始前必须成立的武器展示状态。
----@field TargetPresentation string 边界帧到达后提交给 C++ 的武器展示状态。
+---@field StartPresentation userdata|number ESKWeaponPresentation 动画开始前必须成立的原生武器展示状态。
+---@field TargetPresentation userdata|number ESKWeaponPresentation 边界帧到达后提交给 C++ 的原生武器展示状态。
 ---@field SlotName string 动画蓝图中承载该动作的上半身 Slot 名称。
 ---@field BlendInTime number 上半身动作淡入时间，单位为秒。
 ---@field BlendOutTime number 上半身动作淡出时间，单位为秒。
@@ -30,7 +30,7 @@
 
 ---@class SKWeaponDefinition
 ---@field ActorClassPath string 武器蓝图生成类的 UE 对象路径。
----@field InitialPresentation string 武器生成后尚未播放动作时的展示状态。
+---@field InitialPresentation userdata|number ESKWeaponPresentation 武器生成后尚未播放动作时的原生展示状态。
 ---@field Attachments SKWeaponAttachmentConfig 角色骨架挂点配置。
 ---@field Animations SKWeaponAnimationConfig 武器相关角色动画与原版切换帧配置。
 
@@ -49,7 +49,7 @@ local WeaponConfig = {
     Weapons = {
         Kusabimaru = {
             ActorClassPath = "/Game/Gameplay/BP_Kusabimaru.BP_Kusabimaru_C",
-            InitialPresentation = "Drawn",
+            InitialPresentation = UE.ESKWeaponPresentation.Drawn,
             Attachments = {
                 HandSocket = "R_WeaponSocket",
                 HandBoneFallback = "R_Hand",
@@ -65,8 +65,8 @@ local WeaponConfig = {
                     SwitchFrame = 14,
                     SwitchTime = 14.0 / 30.0,
                     Duration = 2.0,
-                    StartPresentation = "Drawn",
-                    TargetPresentation = "Sheathed",
+                    StartPresentation = UE.ESKWeaponPresentation.Drawn,
+                    TargetPresentation = UE.ESKWeaponPresentation.Sheathed,
                     SlotName = "DefaultSlot",
                     BlendInTime = 0.12,
                     BlendOutTime = 0.12,
@@ -80,8 +80,8 @@ local WeaponConfig = {
                     SwitchFrame = 7,
                     SwitchTime = 7.0 / 30.0,
                     Duration = 4.0 / 3.0,
-                    StartPresentation = "Sheathed",
-                    TargetPresentation = "Drawn",
+                    StartPresentation = UE.ESKWeaponPresentation.Sheathed,
+                    TargetPresentation = UE.ESKWeaponPresentation.Drawn,
                     SlotName = "DefaultSlot",
                     BlendInTime = 0.12,
                     BlendOutTime = 0.12,

@@ -27,10 +27,9 @@ Sekiro/
 │   ├── ThirdPerson/                Third Person 模板资产
 │   └── Weapons/                    武器资产
 ├── Plugins/
-│   ├── SekiroAnimBlueprintExt/     Lua 动画蓝图编译与运行时插件
+│   ├── LuaEditorExtensions/        通用 Lua 编辑器扩展：动画蓝图、行为树与 Gameplay 模块
 │   ├── SekiroAssetManager/         Sekiro 资产导入编辑器插件
 │   ├── SekiroAIBridge/             UE 编辑器 TCP JSON-RPC 桥接
-│   ├── SekiroGameplay/             通用 Gameplay 编辑器工具与 Lua 标签 DataTable 生成
 │   ├── UnLua/                      Lua 运行时集成
 │   └── UnLuaExtensions/            LuaSocket、Protobuf、RapidJSON 扩展
 ├── Script/
@@ -55,7 +54,7 @@ Sekiro/
 | 位置 | 职责 | 命名约定 |
 |---|---|---|
 | `Source/Sekiro/` | 只狼项目专用的游戏运行时 | `SK` 前缀 |
-| `Plugins/` | 可复用的引擎、编辑器与脚本扩展 | `Sekiro` 全称前缀 |
+| `Plugins/` | 可复用的引擎、编辑器与脚本扩展 | 通用插件使用能力语义命名；项目专用插件才使用 `Sekiro` 前缀 |
 | `Content/Script/` | Lua 动画声明和玩法编排 | 遵循项目 Lua 规范 |
 | `Script/` | 离线管线、批处理、诊断与验证 | UTF-8 Python / PowerShell |
 

@@ -223,7 +223,7 @@ FSAAnimationLogicIR FSATAEImporter::ParseAnimationEntry(const TSharedPtr<FJsonOb
                 else
                     continue;
 
-                Evt.Params.Add(ParamPair.Key, ValueStr);
+                Evt.Params.Add(FString(ParamPair.Key.Len(), *ParamPair.Key), ValueStr);
             }
         }
 

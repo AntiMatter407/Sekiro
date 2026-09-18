@@ -130,7 +130,7 @@ end
 ---@return boolean restricted 战斗输入当前不可提交时返回 true。
 local function is_combat_restricted(input_manager)
     return is_action_restricted(input_manager)
-        or tostring(input_manager:GetOwnerWeaponPresentationName()) == "Sheathed"
+        or input_manager:GetOwnerWeaponPresentation() == UE.ESKWeaponPresentation.Sheathed
 end
 
 ---在组件 BeginPlay 且 UObject 默认值复制完成后覆盖输入调参项。
@@ -170,7 +170,7 @@ function SKInputManager:LogMoveIntentDebug(reason, force)
         move_x,
         move_y,
         self:GetMoveInputAmount() or 0,
-        tostring(self:GetMovementTierName()),
+        tostring(self:GetMovementTier()),
         tostring(self:IsDodgeHeld()),
         tostring(self:IsWalkHeld()),
         tostring(self:IsOwnerDodging())))
@@ -210,16 +210,17 @@ function SKInputManager:HandleInputTick(delta_seconds)
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
-        self:SetMovementTierByName("Walk")
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
         log_debug(
             "Restriction",
             zone_restricted and "entered zone; waiting for sheathe completion"
                 or "left zone; waiting for draw completion")
     end
 
-    local target_presentation = zone_restricted and "Sheathed" or "Drawn"
+    local target_presentation = zone_restricted and UE.ESKWeaponPresentation.Sheathed
+        or UE.ESKWeaponPresentation.Drawn
     if self.bWeaponTransitionInputLock == true
-        and tostring(self:GetOwnerWeaponPresentationName()) == target_presentation
+        and self:GetOwnerWeaponPresentation() == target_presentation
         and self:IsOwnerWeaponSlotAnimationPlaying() ~= true then
         self.bWeaponTransitionInputLock = false
         log_debug("Restriction", string.format(
@@ -238,7 +239,7 @@ function SKInputManager:HandleInputTick(delta_seconds)
             self:UnCrouchOwner()
         end
         if not external_input_locked and not self:IsOwnerFalling() then
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         end
     end
     if external_input_locked then
@@ -249,7 +250,7 @@ function SKInputManager:HandleInputTick(delta_seconds)
         self.MoveInputActive = false
         self.MoveStartedThisFrame = false
         self:ClearMoveIntentForScript()
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
     end
 
     if self:IsAttackHeld() then
@@ -345,31 +346,31 @@ function SKInputManager:HandleInputTick(delta_seconds)
                 self:GetDodgeHoldTime(),
                 self.CurrentMoveInputAmount or 0))
         end
-        if tostring(self:GetMovementTierName()) ~= "Sprint" then
-            self:SetMovementTierByName("Sprint")
+        if self:GetMovementTier() ~= UE.ESKMovementTier.Sprint then
+            self:SetMovementTier(UE.ESKMovementTier.Sprint)
         end
     elseif restricted then
         self.SprintRequested = false
         if external_input_locked then
-            self:SetMovementTierByName("Idle")
+            self:SetMovementTier(UE.ESKMovementTier.Idle)
         elseif not self:IsOwnerFalling() then
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         end
-    elseif tostring(self:GetMovementTierName()) == "Sprint" then
+    elseif self:GetMovementTier() == UE.ESKMovementTier.Sprint then
         self.SprintRequested = false
         local input_amount = self.CurrentMoveInputAmount or 0
         if self:IsOwnerCrouched() then
-            self:SetMovementTierByName("Crouch")
+            self:SetMovementTier(UE.ESKMovementTier.Crouch)
         elseif input_amount <= self.MoveInputActiveThreshold then
             if self:IsWalkHeld() then
-                self:SetMovementTierByName("Walk")
+                self:SetMovementTier(UE.ESKMovementTier.Walk)
             else
-                self:SetMovementTierByName("Run")
+                self:SetMovementTier(UE.ESKMovementTier.Run)
             end
         elseif self:IsWalkHeld() or input_amount <= self.AnalogWalkEnterThreshold then
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         else
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         end
     else
         self.SprintRequested = false
@@ -393,7 +394,7 @@ function SKInputManager:HandleMoveInput(input_x, input_y)
         self.MoveInputActive = false
         self.MoveStartedThisFrame = false
         self:ClearMoveIntentForScript()
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
         return true
     end
 
@@ -425,25 +426,25 @@ function SKInputManager:HandleMoveInput(input_x, input_y)
 
     -- Sprint 只由 Tick 的持续输入判定写入；OnMove 仅维护非 Sprint 的基础移动档位。
     if is_external_input_locked(self) then
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
     elseif is_action_restricted(self) and not self:IsOwnerFalling() then
-        self:SetMovementTierByName("Walk")
-    elseif tostring(self:GetMovementTierName()) ~= "Sprint"
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
+    elseif self:GetMovementTier() ~= UE.ESKMovementTier.Sprint
         and not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
-            self:SetMovementTierByName("Crouch")
+            self:SetMovementTier(UE.ESKMovementTier.Crouch)
         elseif self:IsWalkHeld() then
-            self:SetMovementTierByName("Walk")
-        elseif tostring(self:GetMovementTierName()) == "Walk" then
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
+        elseif self:GetMovementTier() == UE.ESKMovementTier.Walk then
             if input_amount >= self.AnalogRunEnterThreshold then
-                self:SetMovementTierByName("Run")
+                self:SetMovementTier(UE.ESKMovementTier.Run)
             else
-                self:SetMovementTierByName("Walk")
+                self:SetMovementTier(UE.ESKMovementTier.Walk)
             end
         elseif input_amount <= self.AnalogWalkEnterThreshold then
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         else
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         end
     end
 
@@ -463,16 +464,16 @@ function SKInputManager:HandleMoveCompleted()
     self:ClearMoveIntentForScript()
 
     if is_external_input_locked(self) then
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
     elseif is_action_restricted(self) and not self:IsOwnerFalling() then
-        self:SetMovementTierByName("Walk")
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
     elseif not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
-            self:SetMovementTierByName("Crouch")
+            self:SetMovementTier(UE.ESKMovementTier.Crouch)
         elseif self:IsWalkHeld() then
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         else
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         end
     end
 
@@ -524,10 +525,11 @@ function SKInputManager:HandleJumpStarted()
         and (self.CurrentMoveInputAmount or 0) > self.MoveInputActiveThreshold then
         jump_x = self.CurrentMoveInputX or 0
         jump_y = self.CurrentMoveInputY or 0
-        local movement_tier = tostring(self:GetMovementTierName())
-        if movement_tier == "Walk" or movement_tier == "Crouch" then
+        local movement_tier = self:GetMovementTier()
+        if movement_tier == UE.ESKMovementTier.Walk
+            or movement_tier == UE.ESKMovementTier.Crouch then
             jump_speed = self.JumpWalkHorizontalSpeed
-        elseif movement_tier == "Sprint" then
+        elseif movement_tier == UE.ESKMovementTier.Sprint then
             jump_speed = self.JumpSprintHorizontalSpeed
         else
             jump_speed = self.JumpRunHorizontalSpeed
@@ -606,37 +608,37 @@ function SKInputManager:HandleDodgeCompleted()
         hold_time,
         sprint_input_hold_time,
         tostring(sprint_input_hold_time >= self.SprintHoldThreshold),
-        tostring(self:GetMovementTierName()),
+        tostring(self:GetMovementTier()),
         tostring(self:IsOwnerDodging())))
 
     local input_amount = self.CurrentMoveInputAmount or 0
     if is_external_input_locked(self) then
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
     elseif is_action_restricted(self) then
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
-        self:SetMovementTierByName("Walk")
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
     elseif self:IsOwnerCrouched() then
-        self:SetMovementTierByName("Crouch")
+        self:SetMovementTier(UE.ESKMovementTier.Crouch)
     elseif input_amount <= self.MoveInputActiveThreshold then
         if self:IsWalkHeld() then
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         else
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         end
     elseif self:IsWalkHeld() then
-        self:SetMovementTierByName("Walk")
-    elseif tostring(self:GetMovementTierName()) == "Walk" then
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
+    elseif self:GetMovementTier() == UE.ESKMovementTier.Walk then
         if input_amount >= self.AnalogRunEnterThreshold then
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         else
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         end
     elseif input_amount <= self.AnalogWalkEnterThreshold then
-        self:SetMovementTierByName("Walk")
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
     else
-        self:SetMovementTierByName("Run")
+        self:SetMovementTier(UE.ESKMovementTier.Run)
     end
 
     self:SetDodgeHoldTime(0)
@@ -651,16 +653,16 @@ end
 function SKInputManager:HandleWalkModifierStarted()
     if is_external_input_locked(self) then
         self:SetHeldFlag("Walk", false)
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
         return true
     end
 
     self:SetHeldFlag("Walk", true)
-    if tostring(self:GetMovementTierName()) ~= "Sprint" and not self:IsOwnerFalling() then
+    if self:GetMovementTier() ~= UE.ESKMovementTier.Sprint and not self:IsOwnerFalling() then
         if self:IsOwnerCrouched() then
-            self:SetMovementTierByName("Crouch")
+            self:SetMovementTier(UE.ESKMovementTier.Crouch)
         else
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         end
     end
     return true
@@ -671,19 +673,19 @@ end
 function SKInputManager:HandleWalkModifierCompleted()
     self:SetHeldFlag("Walk", false)
     if is_external_input_locked(self) then
-        self:SetMovementTierByName("Idle")
+        self:SetMovementTier(UE.ESKMovementTier.Idle)
     elseif is_action_restricted(self) and not self:IsOwnerFalling() then
-        self:SetMovementTierByName("Walk")
-    elseif tostring(self:GetMovementTierName()) == "Walk" and not self:IsOwnerFalling() then
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
+    elseif self:GetMovementTier() == UE.ESKMovementTier.Walk and not self:IsOwnerFalling() then
         local input_amount = self:GetMoveInputAmount() or 0
         if self:IsOwnerCrouched() then
-            self:SetMovementTierByName("Crouch")
+            self:SetMovementTier(UE.ESKMovementTier.Crouch)
         elseif input_amount <= 0.1 then
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         elseif input_amount >= self.AnalogRunEnterThreshold then
-            self:SetMovementTierByName("Run")
+            self:SetMovementTier(UE.ESKMovementTier.Run)
         else
-            self:SetMovementTierByName("Walk")
+            self:SetMovementTier(UE.ESKMovementTier.Walk)
         end
     end
     return true
@@ -696,8 +698,9 @@ function SKInputManager:HandleCrouchStarted()
         if self:IsOwnerCrouched() then
             self:UnCrouchOwner()
         end
-        self:SetMovementTierByName(
-            is_external_input_locked(self) and "Idle" or "Walk")
+        self:SetMovementTier(
+            is_external_input_locked(self) and UE.ESKMovementTier.Idle
+                or UE.ESKMovementTier.Walk)
         return true
     end
 
@@ -705,10 +708,10 @@ function SKInputManager:HandleCrouchStarted()
 
     if self:IsOwnerCrouched() then
         self:UnCrouchOwner()
-        self:SetMovementTierByName("Run")
+        self:SetMovementTier(UE.ESKMovementTier.Run)
     else
         self:CrouchOwner()
-        self:SetMovementTierByName("Crouch")
+        self:SetMovementTier(UE.ESKMovementTier.Crouch)
     end
 
     return true

@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -14,7 +14,11 @@
 
 #include "Misc/EngineVersionComparison.h"
 #include "UnLuaIntelliSenseGenerator.h"
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+#include "AssetRegistry/AssetRegistryModule.h"
+#else
 #include "AssetRegistryModule.h"
+#endif
 #include "CoreUObject.h"
 #include "UnLua.h"
 #include "UnLuaEditorSettings.h"

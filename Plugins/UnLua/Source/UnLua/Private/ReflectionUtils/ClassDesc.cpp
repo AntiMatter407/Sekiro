@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "ClassDesc.h"
+#include "Misc/EngineVersionComparison.h"
 #include "FieldDesc.h"
 #include "PropertyDesc.h"
 #include "FunctionDesc.h"
@@ -181,7 +182,11 @@ void FClassDesc::Load()
     UnLoad();
 
     FString Name = (ClassName[0] == 'U' || ClassName[0] == 'A' || ClassName[0] == 'F') ? ClassName.RightChop(1) : ClassName;
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    UStruct* Found = FindFirstObject<UStruct>(*Name);
+#else
     UStruct* Found = FindObject<UStruct>(ANY_PACKAGE, *Name);
+#endif
     if (!Found)
         Found = LoadObject<UStruct>(nullptr, *Name);
 

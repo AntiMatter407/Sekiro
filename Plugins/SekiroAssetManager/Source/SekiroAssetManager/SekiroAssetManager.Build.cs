@@ -34,6 +34,7 @@ public class SekiroAssetManager : ModuleRules
             "AnimationCore",
             "AnimationDataController",
             "MaterialEditor",       // UMaterialEditingLibrary：材质表达式创建与连接
+            "TargetPlatform",
         });
     }
 }

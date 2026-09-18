@@ -16,8 +16,8 @@
 ---@field PelvisBone string 允许 Foot Placement 调整高度的骨盆骨骼名。
 ---@field FootPlacementLegDefinitions string 双腿 FK 脚、IK 目标、脚趾和链长定义。
 ---@field LegIKLegDefinitions string 双腿 IK 目标、FK 脚和链长定义。
----@field PlantSpeedMode string 脚部种植速度来源；Graph 表示由原生姿势运动计算。
----@field PlantLockType string 脚部锁定方式；Unlocked 保留贴地和骨盆求解，但不把脚固定在世界空间。
+---@field PlantSpeedMode number EWarpingEvaluationMode 原生枚举值；Graph 表示由原生姿势运动计算。
+---@field PlantLockType number EFootPlacementLockType 原生枚举值；Unlocked 不把脚固定在世界空间。
 ---@field PelvisMaxOffset number 骨盆最大偏移，单位为厘米。
 ---@field GroundBlendInSpeed number 接地后 Foot IK Alpha 每秒恢复速度。
 ---@field AirBlendOutSpeed number 离地后 Foot IK Alpha 每秒淡出速度。
@@ -132,9 +132,9 @@ local Tuning = {
         PelvisBone = "Pelvis",
         FootPlacementLegDefinitions = "L_Foot,L_Foot_Target,L_Toe0,2|R_Foot,R_Foot_Target,R_Toe0,2",
         LegIKLegDefinitions = "L_Foot_Target,L_Foot,2|R_Foot_Target,R_Foot,2",
-        PlantSpeedMode = "Graph",
+        PlantSpeedMode = UE.EWarpingEvaluationMode.Graph,
         -- 当前骨架的脚目标动画不适合 UE 默认世界空间锁脚；关闭锁定仍保留射线、斜面旋转和骨盆高度补偿。
-        PlantLockType = "Unlocked",
+        PlantLockType = UE.EFootPlacementLockType.Unlocked,
         -- 限制斜坡边缘和落地瞬间的骨盆下沉，避免双腿被过度压缩后带动全身扭曲。
         PelvisMaxOffset = 20.0,
         GroundBlendInSpeed = 8.0,

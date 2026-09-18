@@ -4,7 +4,6 @@
 #include "Combat/SKCombatComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/DamageEvents.h"
 #include "Engine/World.h"
 
 /**
@@ -229,6 +228,11 @@ ESKWeaponPresentation ASKWeapon::GetWeaponPresentation() const
  */
 void ASKWeapon::ActivateHitbox()
 {
+    if (bBladeSweepActive) return;
+    USKCombatComponent* Combat = GetOwner() ? GetOwner()->FindComponentByClass<USKCombatComponent>() : nullptr;
+    if (!IsValid(Combat) || !Combat->RegisterCombatHitSource(this, ESKCombatDamageChannel::Melee,
+        Combat->ResolveOutgoingHealthDamage(Combat->ResolveOutgoingAttackType()), 0.f, HitRequestTemplate)) return;
+    HitSourceCombat = Combat;
     if (AttackHitbox)
     {
         AttackHitbox->SetGenerateOverlapEvents(false);
@@ -247,7 +251,7 @@ void ASKWeapon::ActivateHitbox()
             PreviousBladeBase,
             PreviousBladeTip);
     }
-    SetActorTickEnabled(true);
+    SetActorTickEnabled(bBladeSweepActive);
 }
 
 /**
@@ -256,6 +260,9 @@ void ASKWeapon::ActivateHitbox()
  */
 void ASKWeapon::DeactivateHitbox()
 {
+    if (HitSourceCombat.IsValid()) HitSourceCombat->ReleaseCombatHitSource(HitRequestTemplate.HitSourceSerial);
+    HitSourceCombat.Reset();
+    HitRequestTemplate = FSKCombatHitRequest();
     bBladeSweepActive = false;
     bHasPreviousBladeSegment = false;
     SetActorTickEnabled(false);
@@ -369,13 +376,12 @@ void ASKWeapon::SweepBladeSegment(
 }
 
 /**
- * 把一个连续 Sweep 命中的 Actor 交给现有战斗组件裁决为普通命中、格挡或弹反。
- * 非 Ignored 裁决会先向存在的攻守战斗组件发布接触事件，只有普通命中随后应用基础点伤害。
- * 事件发布失败不改变原有裁决、伤害和攻击窗口去重结果；成功裁决的目标加入当前攻击窗口去重集合。
- * 函数不负责攻击窗口、阵营筛选或具体姿势数值规则，必须在游戏线程调用。
+ * 将连续 Sweep 几何事实补入窗口签发请求，交守方唯一结算入口处理。
+ * 本层不发布 AI 事件、不调用 TakeDamage、不计算架势；仅在权威提交成功后去重。
+ * 必须在游戏线程调用，来源动作或生命过期由统一门禁拒绝。
  *
  * @param OtherActor Sweep 命中的目标 Actor，可为空；持有者和已结算目标会被忽略，不保留引用。
- * @param SweepResult 本次 Sweep 的命中信息，只在调用期间读取，用于生成点伤害事件。
+ * @param SweepResult 本次 Sweep 的命中信息，只在调用期间读取世界接触位置。
  */
 void ASKWeapon::ResolveSweepHit(
     AActor* OtherActor,
@@ -384,49 +390,13 @@ void ASKWeapon::ResolveSweepHit(
     if (!OtherActor || OtherActor == GetOwner()) return;
     if (AlreadyHitActors.Contains(OtherActor)) return;
 
-    AActor* AttackerActor = GetOwner();
-    USKCombatComponent* AttackerCombat = AttackerActor
-        ? AttackerActor->FindComponentByClass<USKCombatComponent>()
-        : nullptr;
     USKCombatComponent* DefenderCombat =
         OtherActor->FindComponentByClass<USKCombatComponent>();
-
-    const ESKIncomingAttackType AttackType = AttackerCombat
-        ? AttackerCombat->ResolveOutgoingAttackType()
-        : ESKIncomingAttackType::Light;
-    ESKWeaponContactResult ContactResult = ESKWeaponContactResult::Hit;
-    if (DefenderCombat)
-    {
-        ContactResult = DefenderCombat->ResolveIncomingWeaponContact(
-            AttackerCombat,
-            AttackType);
-    }
-
-    if (ContactResult == ESKWeaponContactResult::Ignored) return;
-
-    FSKAICombatEvent ContactEvent;
-    ContactEvent.EventType = ESKAICombatEventType::WeaponContact;
-    ContactEvent.SourceActor = AttackerActor;
-    ContactEvent.TargetActor = OtherActor;
-    ContactEvent.RelatedActionSerial = AttackerCombat ? AttackerCombat->GetActionSerial() : 0;
-    ContactEvent.AttackType = AttackType;
-    ContactEvent.ContactResult = ContactResult;
-    if (AttackerCombat) AttackerCombat->PublishAICombatEvent(ContactEvent);
-    if (DefenderCombat) DefenderCombat->PublishAICombatEvent(ContactEvent);
-
-    if (ContactResult == ESKWeaponContactResult::Hit)
-    {
-        const float BaseDamage = 100.f;
-        FPointDamageEvent DamageEvent(
-            BaseDamage,
-            SweepResult,
-            GetActorForwardVector(),
-            nullptr);
-        OtherActor->TakeDamage(
-            BaseDamage,
-            DamageEvent,
-            GetInstigatorController(),
-            AttackerActor);
-    }
-    AlreadyHitActors.Add(OtherActor);
+    if (!IsValid(DefenderCombat) || !HitSourceCombat.IsValid()) return;
+    FSKCombatHitRequest Request = HitRequestTemplate;
+    Request.TargetActor = OtherActor;
+    Request.ImpactPoint = SweepResult.ImpactPoint;
+    Request.AttackDirection = (OtherActor->GetActorLocation() - GetOwner()->GetActorLocation()).GetSafeNormal();
+    const FSKCombatHitResult Result = DefenderCombat->ResolveCombatHit(Request);
+    if (Result.Code == ESKCombatHitResultCode::Committed) AlreadyHitActors.Add(OtherActor);
 }

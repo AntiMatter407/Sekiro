@@ -5,6 +5,8 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Misc/AutomationTest.h"
+#include "Tests/SKCombatHitTestComponent.h"
+#include "AIController.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -428,6 +430,189 @@ bool FSKSurvivalMaximumChangesTest::RunTest(const FString& Parameters)
     TestEqual(TEXT("零最短时长允许显式完成恢复"), Fixture.Survival->CompletePostureRecovery(BreakToken).Code,
         ESKSurvivalResultCode::Applied);
     TestTrue(TEXT("显式恢复后允许行动"), Fixture.Survival->CanAct());
+    return true;
+}
+
+namespace
+{
+    struct FSKCombatContractActor
+    {
+        AAIController* Actor = nullptr; // 隔离世界中的测试阵营宿主，不开始行为树
+        AActor* Emitter = nullptr; // 仅用于签发来源的无行为载体
+        USKAbilitySystemComponent* ASC = nullptr; // 测试原生 GAS 入口
+        USKCombatHitTestSurvivalComponent* Survival = nullptr; // 测试数值协议，不运行 Lua
+        USKCombatHitTestComponent* Combat = nullptr; // 可注入纯判定的测试宿主
+
+        explicit FSKCombatContractActor(UWorld* World);
+        bool Initialize();
+        FSKCombatHitRequest MakeRequest(FSKCombatContractActor& Target, ESKCombatDamageChannel Channel,
+            float Health = 20.f, float Posture = 0.f);
+    };
+
+    /** 游戏线程在已有隔离世界构造无 BeginPlay 的测试角色、ASC、Survival 和 Combat；World 不转移所有权。 */
+    FSKCombatContractActor::FSKCombatContractActor(UWorld* World)
+    {
+        Actor = World->SpawnActor<AAIController>();
+        Actor->SetGenericTeamId(FGenericTeamId::NoTeam);
+        ASC = NewObject<USKAbilitySystemComponent>(Actor);
+        Actor->AddInstanceComponent(ASC);
+        ASC->RegisterComponent();
+        ASC->AddAttributeSetSubobject(NewObject<USKCharacterAttributeSet>(Actor));
+        ASC->InitAbilityActorInfo(Actor, Actor);
+        ASC->RequireResourcePolicy();
+        Survival = NewObject<USKCombatHitTestSurvivalComponent>(Actor);
+        Actor->AddInstanceComponent(Survival);
+        Survival->RegisterComponent();
+        Combat = NewObject<USKCombatHitTestComponent>(Actor);
+        Actor->AddInstanceComponent(Combat);
+        Combat->RegisterComponent();
+        Emitter = World->SpawnActor<AActor>();
+        Emitter->SetOwner(Actor);
+    }
+
+    /** 游戏线程复用 Survival 测试完整配置初始化 GAS；成功返回 true，不启动世界或 Lua。 */
+    bool FSKCombatContractActor::Initialize()
+    {
+        return Survival->BindAttributeSystem(ASC) && ASC->InitializeFromValues(MakeSKSurvivalContractAttributes());
+    }
+
+    /**
+     * 游戏线程为测试签发新来源；生成新载体避免重复使用窗口，旧飞行物仍按生产规则存活。
+     * @param Target 同隔离世界的目标，不持有额外所有权。
+     * @param Channel 要验证的近战或飞行物策略。
+     * @param Health 非负基础生命伤害，单位点。
+     * @param Posture 非负额外姿态伤害，单位点。
+     * @return 有效签发请求；失败保留零序号，由测试断言报告。
+     */
+    FSKCombatHitRequest FSKCombatContractActor::MakeRequest(FSKCombatContractActor& Target,
+        ESKCombatDamageChannel Channel, float Health, float Posture)
+    {
+        Emitter = Actor->GetWorld()->SpawnActor<AActor>();
+        Emitter->SetOwner(Actor);
+        Combat->BeginCombatAction(ESKCombatActionState::LightAttack);
+        FSKCombatHitRequest Request;
+        Combat->RegisterCombatHitSource(Emitter, Channel, Health, Posture, Request);
+        Request.TargetActor = Target.Actor;
+        return Request;
+    }
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSKCombatHitIdentityTest,
+    "Sekiro.Combat.HitIdentity", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 游戏线程显式执行时验证来源、数值、阵营、缺失规则、重入及逐目标去重；不进入 PIE 或推进世界。
+ * @param Parameters 自动化框架参数，未使用。
+ * @return 断言执行完返回 true，失败由框架报告；默认构建只编译不执行。
+ */
+bool FSKCombatHitIdentityTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    FSKSurvivalContractFixture Fixture;
+    FSKCombatContractActor Source(Fixture.World);
+    FSKCombatContractActor Target(Fixture.World);
+    if (!TestTrue(TEXT("来源初始化"), Source.Initialize()) || !TestTrue(TEXT("目标初始化"), Target.Initialize())) return false;
+    FSKCombatHitRequest Request = Source.MakeRequest(Target, ESKCombatDamageChannel::Melee);
+    TestTrue(TEXT("签发正来源号"), Request.HitSourceSerial > 0);
+    FSKCombatHitRequest Invalid = Request;
+    Invalid.TargetActor = Source.Actor;
+    TestEqual(TEXT("自身过滤"), Source.Combat->ResolveCombatHit(Invalid).RejectionReason, FName(TEXT("SelfHit")));
+    Source.Actor->SetGenericTeamId(FGenericTeamId(7));
+    Target.Actor->SetGenericTeamId(FGenericTeamId(7));
+    TestEqual(TEXT("明确同队过滤"), Target.Combat->ResolveCombatHit(Request).RejectionReason, FName(TEXT("FriendlyFire")));
+    Target.Actor->SetGenericTeamId(FGenericTeamId(8));
+    Invalid = Request;
+    Invalid.HealthDamage = -1.f;
+    TestEqual(TEXT("负数过滤"), Target.Combat->ResolveCombatHit(Invalid).RejectionReason, FName(TEXT("InvalidNumericInput")));
+    Invalid = Request;
+    Invalid.HealthDamage += 1.f;
+    TestEqual(TEXT("篡改票据数值过滤"), Target.Combat->ResolveCombatHit(Invalid).RejectionReason, FName(TEXT("HitSourceMismatch")));
+    Target.Combat->bUseMissingRules = true;
+    TestEqual(TEXT("缺规则失败关闭"), Target.Combat->ResolveCombatHit(Request).RejectionReason, FName(TEXT("InvalidCombatEvaluation")));
+    TestEqual(TEXT("所有拒绝不发布事件"), Target.Combat->GetPendingAICombatEventCount(), 0);
+    Target.Combat->bUseMissingRules = false;
+    Target.Combat->bProbeReentrant = true;
+    const FSKCombatHitResult Hit = Target.Combat->ResolveCombatHit(Request);
+    TestEqual(TEXT("实际提交"), Hit.Code, ESKCombatHitResultCode::Committed);
+    TestEqual(TEXT("重入被拒绝"), Target.Combat->ReentrantReason, FName(TEXT("Reentrant")));
+    TestEqual(TEXT("实际伤害来自GAS"), Hit.AppliedHealthDamage, 20.f);
+    TestEqual(TEXT("实际剩余生命"), Target.Survival->GetHealth(), 80.f);
+    TestEqual(TEXT("接触与伤害各一条"), Target.Combat->GetPendingAICombatEventCount(), 2);
+    TestEqual(TEXT("同票据同目标去重"), Target.Combat->ResolveCombatHit(Request).RejectionReason, FName(TEXT("DuplicateHit")));
+    TestEqual(TEXT("重复无新增事件"), Target.Combat->GetPendingAICombatEventCount(), 2);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSKCombatHitLifetimeTest,
+    "Sekiro.Combat.HitLifetime", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 游戏线程显式验证近战随动作失效、飞行物跨动作有效、来源死亡/回生后旧箭失效。
+ * @param Parameters 自动化框架参数，未使用。
+ * @return 断言完成返回 true；只构建的默认工作流不会调用本函数。
+ */
+bool FSKCombatHitLifetimeTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    FSKSurvivalContractFixture Fixture;
+    FSKCombatContractActor Source(Fixture.World);
+    FSKCombatContractActor Target(Fixture.World);
+    if (!Source.Initialize() || !Target.Initialize()) return false;
+    const FSKCombatHitRequest Melee = Source.MakeRequest(Target, ESKCombatDamageChannel::Melee);
+    Source.Combat->InvalidateCombatAction(Melee.SourceActionSerial);
+    TestEqual(TEXT("旧近战动作失效"), Target.Combat->ResolveCombatHit(Melee).RejectionReason, FName(TEXT("StaleSourceAction")));
+    const FSKCombatHitRequest Arrow = Source.MakeRequest(Target, ESKCombatDamageChannel::Projectile);
+    Source.Combat->BeginCombatAction(ESKCombatActionState::Neutral);
+    TestEqual(TEXT("箭跨动作仍可命中"), Target.Combat->ResolveCombatHit(Arrow).Code, ESKCombatHitResultCode::Committed);
+    TestEqual(TEXT("射手不接收自己箭的ProjectileImpact"), Source.Combat->GetPendingAICombatEventCount(), 0);
+    FSKAICombatEvent ImpactEvent;
+    TestTrue(TEXT("目标接收实际弹射物命中"), Target.Combat->ConsumeAICombatEvent(ImpactEvent));
+    TestEqual(TEXT("目标事件先发ProjectileImpact"), ImpactEvent.EventType, ESKAICombatEventType::ProjectileImpact);
+    const FSKCombatHitRequest OldLifeArrow = Source.MakeRequest(Target, ESKCombatDamageChannel::Projectile);
+    Source.Survival->ApplyHealthDamage(1000.f);
+    TestEqual(TEXT("源死亡旧箭无伤害"), Target.Combat->ResolveCombatHit(OldLifeArrow).RejectionReason, FName(TEXT("SourceNotAlive")));
+    Source.Survival->FinishDeath(Source.Survival->GetDeathToken());
+    const FSKSurvivalTransitionResult Revive = Source.Survival->BeginRevive(Source.Survival->GetLifeSerial());
+    Source.Survival->CompleteRevive(Revive.Token, 1.f);
+    TestEqual(TEXT("源回生旧箭无伤害"), Target.Combat->ResolveCombatHit(OldLifeArrow).RejectionReason, FName(TEXT("StaleSourceLife")));
+    TestEqual(TEXT("只发生一次实际伤害"), Target.Survival->GetHealth(), 80.f);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSKCombatHitNumericTest,
+    "Sekiro.Combat.HitNumeric", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+/**
+ * 游戏线程显式验证目标双通道一次提交、真实免疫拒绝原因以及致死时不额外启动崩溃。
+ * @param Parameters 自动化框架参数，未使用。
+ * @return 断言完成返回 true；不启动角色脚本、动画、行为树或 PIE。
+ */
+bool FSKCombatHitNumericTest::RunTest(const FString& Parameters)
+{
+    (void)Parameters;
+    FSKSurvivalContractFixture Fixture;
+    FSKCombatContractActor Source(Fixture.World);
+    FSKCombatContractActor Target(Fixture.World);
+    if (!Source.Initialize() || !Target.Initialize()) return false;
+    Target.Combat->bApplyPosture = true;
+    const FSKCombatHitResult Pair = Target.Combat->ResolveCombatHit(Source.MakeRequest(Target, ESKCombatDamageChannel::Melee, 20.f, 10.f));
+    TestEqual(TEXT("双通道一次复合操作"), Pair.Numeric.Operation, ESKNumericOperation::SurvivalImpact);
+    TestEqual(TEXT("生命实际扣减"), Pair.AppliedHealthDamage, 20.f);
+    TestEqual(TEXT("姿态实际增长"), Pair.AppliedPostureDamage, 10.f);
+    const FGameplayTag Immune = FGameplayTag::RequestGameplayTag(TEXT("State.Damage.Immune"));
+    Target.ASC->AddLooseGameplayTag(Immune);
+    const FSKCombatHitResult ImmuneHit = Target.Combat->ResolveCombatHit(Source.MakeRequest(Target, ESKCombatDamageChannel::Melee));
+    TestEqual(TEXT("免疫接触仍已结算"), ImmuneHit.Code, ESKCombatHitResultCode::Committed);
+    TestEqual(TEXT("保留真实HealthImmune原因"), ImmuneHit.Numeric.HealthRejectionReason, FName(TEXT("HealthImmune")));
+    TestEqual(TEXT("免疫不伪造生命伤害"), ImmuneHit.AppliedHealthDamage, 0.f);
+    const FSKCombatHitResult Partial = Target.Combat->ResolveCombatHit(Source.MakeRequest(Target, ESKCombatDamageChannel::Melee, 20.f, 10.f));
+    TestEqual(TEXT("生命免疫不阻止姿态"), Partial.AppliedPostureDamage, 10.f);
+    Target.ASC->RemoveLooseGameplayTag(Immune);
+    const FSKCombatHitResult Lethal = Target.Combat->ResolveCombatHit(Source.MakeRequest(Target, ESKCombatDamageChannel::Melee, 1000.f, 1000.f));
+    TestTrue(TEXT("实际致死"), Lethal.bKilled);
+    TestFalse(TEXT("同笔致死不启动姿态崩溃"), Lethal.bPostureBroken);
+    TestEqual(TEXT("致死仍保留Hit攻防结果"), Lethal.Outcome, ESKCombatHitOutcome::Hit);
+    TestEqual(TEXT("剩余生命截断到真实伤害"), Lethal.AppliedHealthDamage, 80.f);
     return true;
 }
 

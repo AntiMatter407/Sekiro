@@ -1254,7 +1254,7 @@ FString USKBlueprintTool::HandleSetupMaterial(const TSharedPtr<FJsonObject>& Arg
     {
         for (const auto& Pair : (*TexturesObj)->Values)
         {
-            FString ParamName = Pair.Key;
+            FString ParamName(Pair.Key.Len(), *Pair.Key);
             FString TexPath = Pair.Value->AsString();
 
             UTexture* Tex = LoadObject<UTexture>(nullptr, *TexPath);

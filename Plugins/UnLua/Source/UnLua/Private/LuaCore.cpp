@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "CollisionHelper.h"
+#include "Misc/EngineVersionComparison.h"
 #include "LuaCore.h"
 #include "Binding.h"
 #include "LuaDynamicBinding.h"
@@ -29,9 +30,15 @@ extern "C" {
 #endif
 #endif
 
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+#define TString FLuaTString
+#endif
 #include "lfunc.h"
 #include "lstate.h"
 #include "lobject.h"
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+#undef TString
+#endif
 
 #ifdef __cplusplus
 #if !LUA_COMPILE_AS_CPP

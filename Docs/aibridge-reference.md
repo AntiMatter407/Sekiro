@@ -217,8 +217,11 @@ bridge.py input_simulate interact           # ○ 交互
 bridge.py input_simulate move --x 1.0 --y 0.0        # 向右移动
 bridge.py input_simulate move --x 0.0 --y 1.0        # 向前移动
 bridge.py input_simulate move --x 0.0 --y -1.0       # 向后移动
+bridge.py input_simulate move --x 0.0 --y 1.0 --hold 2.0 # 持续前进 2 秒后自动停止
+bridge.py input_simulate move_stop                    # 立即停止移动轴输入
 bridge.py input_simulate look --x 0.5 --y 0.0        # 视角右转
 bridge.py input_simulate look --x 0.0 --y -0.5       # 视角下转
+bridge.py input_simulate look_stop                    # 立即停止视角轴输入
 
 # 道具/忍义手
 bridge.py input_simulate prosthetic       # 义手忍具
@@ -238,16 +241,18 @@ bridge.py input_simulate attack --delay 0.5           # 0.5s 后攻击
 bridge.py input_simulate attack --hold 0.3 --delay 1.0 # 1s 后长按攻击 0.3s
 ```
 
+`move` 与 `look` 不带 `--hold` 时只注入一帧；带 `--hold` 时会逐帧重注入，并在到期后自动归零。执行对应的 `move_stop` 或 `look_stop` 可以提前取消保持并立即归零。
+
 **支持的 action**:
 `attack`, `attack_release`, `guard`, `guard_release`, `dodge`, `dodge_release`,
 `jump`, `jump_release`, `interact`, `use_item`, `healing_gourd`, `grapple`,
-`prosthetic`, `lock_on`, `crouch`, `move`, `look`, `cycle_item_next`,
+`prosthetic`, `lock_on`, `crouch`, `move`, `move_stop`, `look`, `look_stop`, `cycle_item_next`,
 `cycle_item_prev`, `pause`, `menu`
 
 **可选参数**:
 - `--x <value>`: X 轴值（move/look）
 - `--y <value>`: Y 轴值（move/look）
-- `--hold <seconds>`: 按下保持时间后自动释放（适用于 attack/guard/dodge/jump）
+- `--hold <seconds>`: 持续注入指定时间后自动释放（适用于按钮与 move/look 轴输入）
 - `--delay <seconds>`: 延迟执行
 
 ### 2.11 编辑器生命周期
@@ -318,7 +323,7 @@ bridge.py tools    # 列出所有可用工具
 | 缺少参数 | 展示该命令的正确用法 |
 | 只读模式 | 提示在项目设置中关闭只读模式 |
 | 用户拒绝 | 终止操作并报告 |
-| GBK 编码错误 | 脚本输出含 emoji/中文时可能触发，用 `print(str(msg))` 避免 |
+| 标准流编码错误 | CLI 入口已把 stdout/stderr 固定为 UTF-8，并以 `backslashreplace` 兜底非法字符；若仍报错，检查调用是否绕过 `bridge.py` 入口 |
 
 ---
 

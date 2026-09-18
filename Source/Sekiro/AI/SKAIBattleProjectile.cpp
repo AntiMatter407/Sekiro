@@ -4,9 +4,6 @@
 
 #include "Combat/SKCombatComponent.h"
 #include "Components/SphereComponent.h"
-#include "Engine/DamageEvents.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/DamageType.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 
@@ -50,7 +47,7 @@ ASKAIBattleProjectile::ASKAIBattleProjectile()
  * @param InShooterActor 发射者 Actor，必须有效；以弱引用保存，并加入移动忽略列表。
  * @param InTargetActor 可选预期目标 Actor，以弱引用保存；实际命中对象仍由碰撞决定。
  * @param InTargetLocation 已解析的世界瞄准位置，单位厘米；必须有限且不能等于出生位置。
- * @param InRelatedActionSerial 发射时的射手动作序列号，可为零，仅用于事件关联。
+ * @param InRelatedActionSerial 发射时射手当前的正动作序列号，必须仍有效；发射成功后允许动作正常结束。
  * @param InEventTag ProjectileImpact 携带的可选中性标签，不由本类解释。
  * @param InDamage 命中时提交的基础伤害，必须为有限非负数。
  * @param InSpeed 初始速度，单位厘米每秒，必须为有限正数。
@@ -87,14 +84,15 @@ bool ASKAIBattleProjectile::InitializeProjectile(
         return false;
     }
 
+    USKCombatComponent* SourceCombat = InShooterActor->FindComponentByClass<USKCombatComponent>();
+    if (!IsValid(SourceCombat) || !SourceCombat->IsActionSerialValid(InRelatedActionSerial)) return false;
+    SetOwner(InShooterActor);
+    if (!SourceCombat->RegisterCombatHitSource(this, ESKCombatDamageChannel::Projectile, InDamage, 0.f, HitRequestTemplate)) return false;
+    HitRequestTemplate.EventTag = InEventTag;
     ShooterActor = InShooterActor;
     IntendedTargetActor = InTargetActor;
-    RelatedActionSerial = InRelatedActionSerial;
-    ImpactEventTag = InEventTag;
-    ProjectileDamage = InDamage;
     bInitialized = true;
 
-    SetOwner(InShooterActor);
     SetInstigator(Cast<APawn>(InShooterActor));
     SetActorRotation(FlightDirection.Rotation());
     CollisionComponent->IgnoreActorWhenMoving(InShooterActor, true);
@@ -107,15 +105,26 @@ bool ASKAIBattleProjectile::InitializeProjectile(
 }
 
 /**
- * 处理首个非射手阻挡命中，先向被命中 Actor 的战斗组件发布 ProjectileImpact，再同步提交标准点伤害。
- * 该顺序保证同一守方事件队列先收到 ProjectileImpact，随后由 OnTakeAnyDamage 追加 DamageReceived；两者不在 C++ 合并。
- * 本函数由碰撞组件在游戏线程调用，发布或伤害失败均不会重复处理，完成后销毁弹射物。
+ * 游戏线程离场时释放来源票据，超时销毁同样关闭请求；不改变射手动作或资源。
+ * @param EndPlayReason 引擎离场原因，原样转交父类。
+ */
+void ASKAIBattleProjectile::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    AActor* Source = ShooterActor.Get();
+    USKCombatComponent* Combat = Source ? Source->FindComponentByClass<USKCombatComponent>() : nullptr;
+    if (IsValid(Combat)) Combat->ReleaseCombatHitSource(HitRequestTemplate.HitSourceSerial);
+    Super::EndPlay(EndPlayReason);
+}
+
+/**
+ * 处理首个非射手阻挡命中，将签发的请求交守方统一结算；不独立发布事件或调用标准伤害。
+ * 本函数由碰撞组件在游戏线程调用，完成后销毁弹射物并释放票据；失败不会重复处理。
  *
  * @param HitComponent 产生命中的本方碰撞组件，可为空且仅作为委托上下文。
  * @param OtherActor 实际阻挡命中的 Actor，可为空；射手自身会被忽略。
  * @param OtherComponent 实际命中的目标组件，可为空且不保留引用。
  * @param NormalImpulse 物理求解冲量，当前查询型弹射物不使用该值。
- * @param Hit 本次命中的只读几何信息，用于标准点伤害事件。
+ * @param Hit 本次命中的只读几何信息，仅用于世界接触点。
  */
 void ASKAIBattleProjectile::HandleProjectileHit(
     UPrimitiveComponent* HitComponent,
@@ -137,35 +146,13 @@ void ASKAIBattleProjectile::HandleProjectileHit(
         : nullptr;
     if (TargetCombat)
     {
-        FSKAICombatEvent ImpactEvent;
-        ImpactEvent.EventType = ESKAICombatEventType::ProjectileImpact;
-        ImpactEvent.SourceActor = SourceActor;
-        ImpactEvent.TargetActor = OtherActor;
-        ImpactEvent.RelatedActionSerial = RelatedActionSerial;
-        ImpactEvent.EventTag = ImpactEventTag;
-        ImpactEvent.Magnitude = ProjectileDamage;
-        TargetCombat->PublishAICombatEvent(ImpactEvent);
-    }
-
-    if (OtherActor && ProjectileDamage > 0.f)
-    {
-        APawn* ShooterPawn = Cast<APawn>(SourceActor);
-        AController* InstigatorController = ShooterPawn
-            ? ShooterPawn->GetController()
-            : GetInstigatorController();
-        const FVector ShotDirection = ProjectileMovementComponent
+        FSKCombatHitRequest Request = HitRequestTemplate;
+        Request.TargetActor = OtherActor;
+        Request.ImpactPoint = Hit.ImpactPoint;
+        Request.AttackDirection = ProjectileMovementComponent
             ? ProjectileMovementComponent->Velocity.GetSafeNormal()
             : GetActorForwardVector();
-        FPointDamageEvent DamageEvent(
-            ProjectileDamage,
-            Hit,
-            ShotDirection,
-            UDamageType::StaticClass());
-        OtherActor->TakeDamage(
-            ProjectileDamage,
-            DamageEvent,
-            InstigatorController,
-            SourceActor ? SourceActor : this);
+        TargetCombat->ResolveCombatHit(Request);
     }
 
     Destroy();

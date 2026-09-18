@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "Engine/World.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Components/InputComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "LuaEnv.h"
@@ -29,11 +30,17 @@
 #include "UnLuaLegacy.h"
 #include "UnLuaLib.h"
 #include "UnLuaSettings.h"
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+#define TString FLuaTString
+#endif
 #include "lstate.h"
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+#undef TString
+#endif
 
 namespace UnLua
 {
-    constexpr EInternalObjectFlags AsyncObjectFlags = EInternalObjectFlags::AsyncLoading | EInternalObjectFlags::Async;
+    constexpr EInternalObjectFlags AsyncObjectFlags = EInternalObjectFlags_AsyncLoading | EInternalObjectFlags::Async;
 
     TMap<lua_State*, FLuaEnv*> FLuaEnv::AllEnvs;
     FLuaEnv::FOnCreated FLuaEnv::OnCreated;

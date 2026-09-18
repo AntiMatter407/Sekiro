@@ -16,7 +16,7 @@ local WeaponConfig = require("Gameplay.Sekiro.Weapon.WeaponConfig")
 ---@field ActiveTransition SKWeaponTransitionRuntime|nil 当前正在播放的武器切换动作。
 ---@field bRestrictedZoneObserved boolean 上一帧是否处于限制输入区域。
 ---@field PendingRestrictedTransition string|nil 等待稳定移动状态后执行的 Sheathe 或 Draw。
----@field CurrentPresentation string|nil Lua 已确认的当前武器展示状态。
+---@field CurrentPresentation userdata|number|nil Lua 已确认的 ESKWeaponPresentation 原生枚举值。
 local SKWeaponManager = UnLua.Class()
 local Debug = true
 
@@ -60,7 +60,7 @@ function SKWeaponManager:SpawnConfiguredWeapon(weapon_id)
         return false
     end
 
-    if self:SetWeaponPresentationByName(weapon_definition.InitialPresentation) ~= true then
+    if self:SetWeaponPresentation(weapon_definition.InitialPresentation) ~= true then
         return false
     end
 
@@ -73,9 +73,9 @@ end
 ---把刀身合并到刀鞘所在的角色 Dummy 147；该操作只在收刀 Type 715 起始帧调用一次。
 ---@return boolean merged 刀身是否成功切换到收纳挂点。
 function SKWeaponManager:MergeBladeIntoSheath()
-    local merged = self:SetWeaponPresentationByName("Sheathed") == true
+    local merged = self:SetWeaponPresentation(UE.ESKWeaponPresentation.Sheathed) == true
     if merged then
-        self.CurrentPresentation = "Sheathed"
+        self.CurrentPresentation = UE.ESKWeaponPresentation.Sheathed
     end
     return merged
 end
@@ -83,9 +83,9 @@ end
 ---把刀身从 Dummy 147 分离并恢复到右手 Dummy 20；该操作只在拔刀 Type 715 结束帧调用一次。
 ---@return boolean separated 刀身是否成功切换到右手挂点。
 function SKWeaponManager:SeparateBladeFromSheath()
-    local separated = self:SetWeaponPresentationByName("Drawn") == true
+    local separated = self:SetWeaponPresentation(UE.ESKWeaponPresentation.Drawn) == true
     if separated then
-        self.CurrentPresentation = "Drawn"
+        self.CurrentPresentation = UE.ESKWeaponPresentation.Drawn
     end
     return separated
 end
@@ -105,7 +105,7 @@ function SKWeaponManager:StartWeaponTransition(transition_name)
         return false
     end
 
-    if self:SetWeaponPresentationByName(transition_config.StartPresentation) ~= true then
+    if self:SetWeaponPresentation(transition_config.StartPresentation) ~= true then
         return false
     end
     self.CurrentPresentation = transition_config.StartPresentation
@@ -197,9 +197,9 @@ function SKWeaponManager:HandleWeaponAnimationEvent(event_name, _animation)
     end
 
     local switched = false
-    if transition.Config.TargetPresentation == "Sheathed" then
+    if transition.Config.TargetPresentation == UE.ESKWeaponPresentation.Sheathed then
         switched = self:MergeBladeIntoSheath()
-    elseif transition.Config.TargetPresentation == "Drawn" then
+    elseif transition.Config.TargetPresentation == UE.ESKWeaponPresentation.Drawn then
         switched = self:SeparateBladeFromSheath()
     end
     if switched ~= true then
@@ -243,7 +243,8 @@ function SKWeaponManager:HandleWeaponManagerTick(delta_seconds)
         and self.PendingRestrictedTransition ~= nil
         and self:IsOwnerReadyForRestrictedWeaponTransition() == true then
         local pending = self.PendingRestrictedTransition
-        local target_presentation = pending == "Sheathe" and "Sheathed" or "Drawn"
+        local target_presentation = pending == "Sheathe" and UE.ESKWeaponPresentation.Sheathed
+            or UE.ESKWeaponPresentation.Drawn
         if self.CurrentPresentation == target_presentation then
             self.PendingRestrictedTransition = nil
         elseif self:StartWeaponTransition(pending) == true then

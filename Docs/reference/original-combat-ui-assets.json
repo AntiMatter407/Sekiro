@@ -1,0 +1,396 @@
+{
+  "Generator": "Script/extract_combat_ui.py v1",
+  "Archives": [
+    {
+      "SourceArchive": "menu/01_000_fe.gfx",
+      "SHA256": "9269f8c95ac04d04690dc0d61bf1ccc7c75ac2fa9e35aed8b282458dd8ff57c8",
+      "SizeBytes": 1552848
+    },
+    {
+      "SourceArchive": "menu/hi/01_common.sblytbnd.dcx",
+      "SHA256": "74efa9cc8c117ecd83aa7e524a6e1f847b61a543d8eefcf81e67967c09ace3fa",
+      "SizeBytes": 10799
+    },
+    {
+      "SourceArchive": "menu/hi/01_common.tpf.dcx",
+      "SHA256": "77a8409a6f3115acb2b13bac76fdfa5cd8e42a3d8ddc69110d0c6a62f0673b3c",
+      "SizeBytes": 47149072
+    }
+  ],
+  "Stage": {
+    "Bounds": [
+      0.0,
+      1920.0,
+      0.0,
+      1080.0
+    ],
+    "FrameRate": 60.0,
+    "FrameCount": 1
+  },
+  "LayoutMember": "01_common-sblytbnd-dcx/Menu/ScaleForm/SBLayout/01_Common/Hi/SB_FE.layout",
+  "LayoutSHA256": "25204614c4634c4fa3b214a3be513a38d7a8a6772ed88901ad1a20905560dd28",
+  "Textures": [
+    {
+      "SourceFile": "SB_FE.png",
+      "AssetPackagePath": "/Game/UI/Combat/Textures/T_OriginalCombatAtlas",
+      "sRGB": true,
+      "AlphaMode": "Straight",
+      "ExpectedWidth": 4096,
+      "ExpectedHeight": 1024,
+      "SourceSymbol": "SB_FE",
+      "SourceArchive": "menu/hi/01_common.tpf.dcx",
+      "SourceHash": "1d5e5ec3badd984356e2fd123f92ea9808edc1bf23f2cff5029d97a302a33be5",
+      "PNGHash": "ecd6a72fc0b3769539687290aa4b877b0eca3b270870c0b4ddc844cdf2715a46",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 0,
+        "Width": 4096,
+        "Height": 1024
+      }
+    },
+    {
+      "SourceFile": "MENU_Lockon01.png",
+      "AssetPackagePath": "/Game/UI/Combat/Textures/T_OriginalLockOn",
+      "sRGB": true,
+      "AlphaMode": "Straight",
+      "ExpectedWidth": 64,
+      "ExpectedHeight": 32,
+      "SourceSymbol": "MENU_Lockon01",
+      "SourceArchive": "menu/hi/01_common.tpf.dcx",
+      "SourceHash": "f3685bbb35e9bce5199e1115e1e51a47eb65e6cdc54b6c1e78f238c3291988cd",
+      "PNGHash": "5c73199e81cd54400ae720d9f4b004a1a8acdd63378ff216314e99c8d3cde277",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 0,
+        "Width": 64,
+        "Height": 32
+      }
+    }
+  ],
+  "Sprites": [
+    {
+      "SourceSymbol": "MENU_Enemy_HP_02",
+      "AtlasRect": {
+        "X": 2186,
+        "Y": 922,
+        "Width": 50,
+        "Height": 38
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Enemy_HP_Base_02",
+      "AtlasRect": {
+        "X": 2442,
+        "Y": 622,
+        "Width": 62,
+        "Height": 54
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_Boss_base",
+      "AtlasRect": {
+        "X": 3197,
+        "Y": 934,
+        "Width": 80,
+        "Height": 80
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_Boss",
+      "AtlasRect": {
+        "X": 3429,
+        "Y": 634,
+        "Width": 114,
+        "Height": 114
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_Stamp",
+      "AtlasRect": {
+        "X": 2507,
+        "Y": 50,
+        "Width": 20,
+        "Height": 68
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_bar_Boss",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 694,
+        "Width": 1618,
+        "Height": 30
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_bar_Enemy_base",
+      "AtlasRect": {
+        "X": 1374,
+        "Y": 931,
+        "Width": 266,
+        "Height": 22
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_bar_Enemy",
+      "AtlasRect": {
+        "X": 1644,
+        "Y": 925,
+        "Width": 256,
+        "Height": 12
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_bar_L",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 931,
+        "Width": 1370,
+        "Height": 30
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_bar",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 586,
+        "Width": 1670,
+        "Height": 16
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_bar_mark",
+      "AtlasRect": {
+        "X": 2493,
+        "Y": 310,
+        "Width": 18,
+        "Height": 54
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_base_2",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 606,
+        "Width": 1654,
+        "Height": 84
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_base_3",
+      "AtlasRect": {
+        "X": 3741,
+        "Y": 726,
+        "Width": 72,
+        "Height": 74
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_base_4",
+      "AtlasRect": {
+        "X": 2550,
+        "Y": 922,
+        "Width": 176,
+        "Height": 58
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_base_Boss",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 728,
+        "Width": 1618,
+        "Height": 30
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_HP_base",
+      "AtlasRect": {
+        "X": 2362,
+        "Y": 570,
+        "Width": 160,
+        "Height": 48
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_Arrow_2",
+      "AtlasRect": {
+        "X": 1916,
+        "Y": 570,
+        "Width": 30,
+        "Height": 28
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_Arrow",
+      "AtlasRect": {
+        "X": 1904,
+        "Y": 925,
+        "Width": 78,
+        "Height": 36
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_Crash_02",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 843,
+        "Width": 1388,
+        "Height": 48
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_Effect",
+      "AtlasRect": {
+        "X": 2326,
+        "Y": 688,
+        "Width": 460,
+        "Height": 72
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_ST1",
+      "AtlasRect": {
+        "X": 1622,
+        "Y": 694,
+        "Width": 700,
+        "Height": 78
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_ST2",
+      "AtlasRect": {
+        "X": 1658,
+        "Y": 606,
+        "Width": 700,
+        "Height": 78
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_ST3",
+      "AtlasRect": {
+        "X": 1392,
+        "Y": 843,
+        "Width": 700,
+        "Height": 78
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_bar",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 895,
+        "Width": 1376,
+        "Height": 32
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_base_02",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 762,
+        "Width": 1500,
+        "Height": 77
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_base_03",
+      "AtlasRect": {
+        "X": 1278,
+        "Y": 965,
+        "Width": 1052,
+        "Height": 44
+      },
+      "Rotated": false,
+      "Half": false
+    },
+    {
+      "SourceSymbol": "MENU_Taikan_base",
+      "AtlasRect": {
+        "X": 0,
+        "Y": 965,
+        "Width": 1274,
+        "Height": 34
+      },
+      "Rotated": false,
+      "Half": false
+    }
+  ],
+  "LockOnShape": {
+    "CharacterId": 1042,
+    "TextureId": 36,
+    "ShapeBounds": [
+      -16,
+      16,
+      -16,
+      16
+    ],
+    "BitmapTranslation": [
+      -16,
+      -16
+    ],
+    "UVMin": [
+      0,
+      0
+    ],
+    "UVMax": [
+      0.5,
+      1
+    ],
+    "Evidence": "01_000_fe.gfx DefineShape 1042 的位图填充，仅使用 64x32 贴图左侧 32x32"
+  },
+  "Notes": [
+    "未执行原版 ActionScript；纹理/静态矩阵不等同完整原版显示行为。",
+    "DDS 解码为直通 RGBA；MENU_Lockon01 有 RGB=255、A=0 的像素，不能按预乘 alpha 导入。"
+  ]
+}

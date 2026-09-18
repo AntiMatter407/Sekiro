@@ -7,9 +7,7 @@ local EditorNodeClass = require("Animation.Compiler.NodeClasses.EditorNodeClass"
 local AnimAssets = require("Animation.Genichiro.GenichiroAnimAssets")
 local GenichiroLocomotion = require("Animation.Genichiro.StateMachines.GenichiroLocomotion")
 
-local RootMotionMode = {
-    FromMontagesOnly = 3,
-}
+local RootMotionMode = UE.ERootMotionMode
 
 ---@class ABP_Genichiro: LuaAnimBlueprint
 local ABP_Genichiro = LuaAnimBlueprint:Extend("ABP_Genichiro", {
@@ -92,7 +90,7 @@ function ABP_Genichiro.BlueprintUpdateAnimation(Inst, delta_seconds)
     Inst.bTurnLeftRequested = turn_requested and aim_yaw_delta < 0.0
     Inst.bTurnRightRequested = turn_requested and aim_yaw_delta >= 0.0
     Inst.bCombatActionActive = Inst.bIsCombatFullBodyActionActive == true
-    Inst.RootMotionMode = RootMotionMode.FromMontagesOnly
+    Inst.RootMotionMode = RootMotionMode.RootMotionFromMontagesOnly
 end
 
 ---把原生 SequencePlayer 资产短名解析为弦一郎 Lua 资源表语义名。

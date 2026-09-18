@@ -6,25 +6,25 @@ local Runtime = require("AI.Genichiro.GenichiroRuntime")
 local SKGenichiroIntentGate = {}
 
 ---校验当前 TacticalIntent 是否与配置相同；配置可用竖线声明多个允许值。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例；本任务不持有状态。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例；本任务不持有状态。
 ---@param controller AAIController|table|nil 当前 AIController；本任务不直接调用。
 ---@param pawn APawn|table|nil 当前 Pawn；本任务不直接调用。
 ---@param blackboard UBlackboardComponent|table|nil 当前 Blackboard。
 ---@param configuration string|nil 允许的 TacticalIntent，多个值用竖线分隔。
----@return string result 匹配时 Succeeded，否则 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；匹配时 Succeeded，否则 Failed。
 function SKGenichiroIntentGate.Execute(task, controller, pawn, blackboard, configuration)
     local _unused = task or controller or pawn
     if blackboard == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
     local current_intent = Runtime.NameToString(
         blackboard:GetValueAsName(Runtime.Keys.TacticalIntent))
     for expected_intent in string.gmatch(configuration or "", "[^|]+") do
         if current_intent == expected_intent then
-            return "Succeeded"
+            return UE.ELuaBehaviorTreeTaskResult.Succeeded
         end
     end
-    return "Failed"
+    return UE.ELuaBehaviorTreeTaskResult.Failed
 end
 
 return SKGenichiroIntentGate

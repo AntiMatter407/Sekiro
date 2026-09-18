@@ -63,8 +63,11 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera|Sensitivity")
     uint32 bInvertPitch : 1;                          // 是否反转俯仰
 
-    UFUNCTION(BlueprintCallable, Category = "Camera|State")
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Camera|State")
     ESKCameraMode GetCameraMode() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Camera|State")
+    void SetCameraMode(ESKCameraMode NewMode);
 
     UFUNCTION(BlueprintCallable, Category = "Camera|State")
     bool IsSprintCameraAligning() const;
@@ -97,10 +100,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
     bool HasOwnerCharacter() const;                        // 是否存在所属角色
 
-    UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
+    UFUNCTION(BlueprintCallable, Category = "Camera|Lua", meta = (DeprecatedFunction, DeprecationMessage = "Use SetCameraMode with ESKCameraMode."))
     void SetCameraModeByName(FName ModeName);              // 通过名称设置相机模式
 
-    UFUNCTION(BlueprintCallable, Category = "Camera|Lua")
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Camera|Lua", meta = (DeprecatedFunction, DeprecationMessage = "Use GetCameraMode and compare ESKCameraMode directly."))
     FName GetCameraModeName() const;                       // 获取相机模式名
 
     UFUNCTION(BlueprintCallable, Category = "Camera|Lua")

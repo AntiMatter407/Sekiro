@@ -1,4 +1,4 @@
-#include <lua.hpp>
+﻿#include <lua.hpp>
 
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
@@ -12,7 +12,10 @@
 #pragma push_macro("check")
 #undef check
 
-using namespace rapidjson;
+using rapidjson::Document;
+using rapidjson::SchemaDocument;
+using rapidjson::SchemaValidator;
+using rapidjson::StringBuffer;
 
 template<>
 const char* const Userdata<SchemaDocument>::metatable()

@@ -209,11 +209,11 @@ function SKInputManager:OnMove(_context, input_x, input_y)
     local amount = math.min(math.sqrt(x * x + y * y), 1)
 
     if self:IsOwnerCrouched() then
-        self:SetMovementTierByName("Crouch")
+        self:SetMovementTier(UE.ESKMovementTier.Crouch)
     elseif self:IsWalkHeld() or amount <= self.AnalogWalkEnterThreshold then
-        self:SetMovementTierByName("Walk")
+        self:SetMovementTier(UE.ESKMovementTier.Walk)
     else
-        self:SetMovementTierByName("Run")
+        self:SetMovementTier(UE.ESKMovementTier.Run)
     end
 
     return true
@@ -348,6 +348,49 @@ local created = self:CreateWidgetByPath(
 - 不提供 `GetContextObject()`、`CallCpp()` 一类转发接口。类内直接使用真实 `self`；确需动态函数名时应优先改成有明确语义的 C++ 接口。
 - 只有动画编译器、IR、数据表和工具库继续使用纯 Lua 类系统；它们的 `self` 不是 UObject。
 
+### 8.1 原生枚举跨语言传递
+
+当 C++ 或引擎已经定义 `UENUM` 时，Lua 必须直接持有和传递该原生枚举值。传参、返回值、比较、缓存以及 Lua 表 Key 都不得先转换成枚举名称字符串。
+
+```lua
+-- 正确：局部变量直接保存反射枚举值。
+local weapon_presentation = UE.ESKWeaponPresentation.Sheathed
+weapon_manager:SetWeaponPresentation(weapon_presentation)
+
+local movement_tier = UE.ESKMovementTier.Sprint
+input_manager:SetMovementTier(movement_tier)
+
+if input_manager:GetMovementTier() == UE.ESKMovementTier.Walk then
+    input_manager:SetMovementTier(UE.ESKMovementTier.Run)
+end
+```
+
+禁止以下运行时往返：
+
+```lua
+-- 错误：Lua 把枚举写成字符串，C++ 再通过名称解析回枚举。
+weapon_manager:SetWeaponPresentationByName("Sheathed")
+input_manager:SetMovementTierByName("Sprint")
+
+-- 错误：把 C++ 返回枚举转成字符串参与业务分支。
+if tostring(input_manager:GetMovementTier()) == "Walk" then
+end
+
+-- 错误：已经存在 UENUM，却在 Lua 中复制一套字符串枚举。
+local CameraMode = {
+    Free = "Free",
+    LockOn = "LockOn",
+}
+```
+
+补充约束：
+
+- C++ 侧应提供以枚举为参数和返回值的 `UFUNCTION`；Lua 不为 `ByName`、`FromString`、`GetXxxName` 兼容接口继续增加调用。
+- Lua 表可以直接使用枚举值作为 Key，例如 `handlers[UE.ESKIncomingAttackType.Heavy]`，不需要先转换为 `"Heavy"`。
+- 动画蓝图和行为树 IR 遇到真实反射枚举属性时，应通过插件支持的原生枚举值通道传递；不得仅为迎合旧 Importer 而退化成字符串。通用插件负责根据目标反射属性验证类型和数值，不得硬编码项目枚举。
+- `NodeType`、`GraphType`、资产路径、状态图节点名、GameplayTag 名和其他开放注册标识符不是封闭枚举，仍使用字符串或 `FName`。
+- 只有日志展示、持久化、JSON/RPC、外部文件格式等真正的文本边界允许枚举名称转换；转换集中在单一适配层，业务代码内部始终使用枚举。
+
 override 示例：
 
 ```lua
@@ -440,7 +483,7 @@ start_to_cycle.BlendMode = "Linear"
 - Movement Lua 负责速度档位映射、ActorYaw 所有权、自由/冲刺/锁定朝向选择和转向前方向快照；`UCharacterMovementComponent` 继续负责物理、碰撞、Root Motion 应用和网络预测。
 - 摄像机模块只处理视角模式、ControllerYaw、视角输入和锁定目标，不直接写 ActorYaw 或角色移动规则。
 - 同一帧固定为 `Input Lua -> Movement Lua -> Camera Lua -> AnimInstance/Lua AnimBP`；动画需要转身前角度时读取 Movement 发布的快照，不得在角色旋转后重新推导。
-- UI、输入、摄像机调用 C++ 的函数应保持语义化，例如 `SetMovementTierByName`、`ApplyControllerYawForScript`、`SetLockOnIndicatorVisible`。
+- UI、输入、摄像机调用 C++ 的函数应保持语义化并保留强类型，例如 `SetMovementTier(UE.ESKMovementTier.Run)`、`ApplyControllerYawForScript`、`SetLockOnIndicatorVisible`。
 - 每个跨系统调用点要通过函数名或注释说明影响范围，避免 Lua 文件之间隐式耦合。
 
 ## 十一、提交前检查

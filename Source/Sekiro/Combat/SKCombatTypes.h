@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AbilitySystem/SKAttributeTypes.h"
 #include "SKCombatTypes.generated.h"
 
 UENUM(BlueprintType)
@@ -70,6 +71,94 @@ enum class ESKWeaponContactResult : uint8
 };
 
 UENUM(BlueprintType)
+enum class ESKCombatDamageChannel : uint8 { Melee, Projectile };
+
+UENUM(BlueprintType)
+enum class ESKCombatHitOutcome : uint8 { Ignored, Hit, Guarded, Deflected, Dodged, Invulnerable };
+
+UENUM(BlueprintType)
+enum class ESKCombatHitResultCode : uint8 { Rejected, Committed };
+
+USTRUCT(BlueprintType)
+struct SEKIRO_API FSKCombatHitRequest
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite)
+    TObjectPtr<AActor> SourceActor = nullptr; // 发起角色，不是武器或弹射物
+    UPROPERTY(BlueprintReadWrite)
+    TObjectPtr<AActor> TargetActor = nullptr; // 实际接触目标
+    UPROPERTY(BlueprintReadWrite)
+    int32 SourceActionSerial = 0; // 签发来源时锁存的正动作序号
+    UPROPERTY(BlueprintReadWrite)
+    int64 SourceLifeSerial = 0; // 来源生命轮次，死亡或回生使旧请求失效
+    UPROPERTY(BlueprintReadWrite)
+    int64 HitSourceSerial = 0; // 来源组件签发的窗口或弹射物身份
+    UPROPERTY(BlueprintReadWrite)
+    ESKIncomingAttackType AttackType = ESKIncomingAttackType::Light; // 签发时的攻击类型
+    UPROPERTY(BlueprintReadWrite)
+    ESKCombatDamageChannel DamageChannel = ESKCombatDamageChannel::Melee; // 来源通道
+    UPROPERTY(BlueprintReadWrite)
+    float HealthDamage = 0.f; // Lua 配置的有限非负基础生命伤害
+    UPROPERTY(BlueprintReadWrite)
+    float PostureDamage = 0.f; // 在 Survival 公式封顶前纳入的额外躯干伤害
+    UPROPERTY(BlueprintReadWrite)
+    FVector ImpactPoint = FVector::ZeroVector; // 世界命中点，厘米
+    UPROPERTY(BlueprintReadWrite)
+    FVector AttackDirection = FVector::ZeroVector; // 从来源指向目标的世界方向
+    UPROPERTY(BlueprintReadWrite)
+    FName EventTag = NAME_None; // 不由原生解释的中性事件标签
+};
+
+USTRUCT(BlueprintType)
+struct SEKIRO_API FSKCombatHitEvaluation
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite)
+    bool bAccepted = false; // 规则必须显式接受，未绑定 Lua 时失败关闭
+    UPROPERTY(BlueprintReadWrite)
+    ESKCombatHitOutcome Outcome = ESKCombatHitOutcome::Ignored; // 攻防接触结果，不与死亡或崩溃混合
+    UPROPERTY(BlueprintReadWrite)
+    float HealthDamage = 0.f; // 规则计算后的生命伤害
+    UPROPERTY(BlueprintReadWrite)
+    FName TargetPostureReason = NAME_None; // 守方躯干规则语义
+    UPROPERTY(BlueprintReadWrite)
+    FName SourcePostureReason = NAME_None; // 攻方躯干规则语义
+};
+
+USTRUCT(BlueprintType)
+struct SEKIRO_API FSKCombatHitResult
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    ESKCombatHitResultCode Code = ESKCombatHitResultCode::Rejected; // 是否完成一次权威结算
+    UPROPERTY(BlueprintReadOnly)
+    ESKCombatHitOutcome Outcome = ESKCombatHitOutcome::Ignored; // 独立保存攻防结果
+    UPROPERTY(BlueprintReadOnly)
+    FName RejectionReason = NAME_None; // 明确的门禁或提交拒绝原因
+    UPROPERTY(BlueprintReadOnly)
+    float AppliedHealthDamage = 0.f; // 守方实际生命扣减
+    UPROPERTY(BlueprintReadOnly)
+    float AppliedPostureDamage = 0.f; // 守方实际躯干增长
+    UPROPERTY(BlueprintReadOnly)
+    float AppliedSourcePostureDamage = 0.f; // 攻方反馈实际躯干增长
+    UPROPERTY(BlueprintReadOnly)
+    bool bPostureBroken = false; // 本次首次打崩守方
+    UPROPERTY(BlueprintReadOnly)
+    bool bSourcePostureBroken = false; // 本次首次打崩攻方
+    UPROPERTY(BlueprintReadOnly)
+    bool bKilled = false; // 本次守方开始死亡，不代表 Boss 最终击败
+    UPROPERTY(BlueprintReadOnly)
+    int32 TargetActionSerial = 0; // 裁决前目标动作身份
+    UPROPERTY(BlueprintReadOnly)
+    FSKNumericResult Numeric; // 守方复合提交的真实 GAS 数值结果
+    UPROPERTY(BlueprintReadOnly)
+    FSKNumericResult SourceNumeric; // 攻方反馈结果，不掩盖已经提交的守方结果
+};
+
+UENUM(BlueprintType)
 enum class ESKAICombatEventType : uint8
 {
     None,
@@ -114,6 +203,18 @@ struct SEKIRO_API FSKAICombatEvent
 
     UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
     float Magnitude = 0.f; // 可选事件强度
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    ESKCombatHitOutcome HitOutcome = ESKCombatHitOutcome::Ignored; // 统一命中结果，兼容保留 ContactResult
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    int64 HitSourceSerial = 0; // 关联唯一攻击窗口或弹射物
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    bool bKilled = false; // 本次接触是否开始死亡
+
+    UPROPERTY(BlueprintReadWrite, Category = "Combat|AI Event")
+    bool bPostureBroken = false; // 本次接触是否首次打崩
 
     UPROPERTY(BlueprintReadOnly, Category = "Combat|AI Event")
     double EventTimeSeconds = 0.0; // 组件记录的游戏世界绝对时间

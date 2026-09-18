@@ -17,7 +17,7 @@
 
 local SKCombatAttack = {}
 
----@type table<USekiroLuaBehaviorTreeTask, SKCombatAttackTaskState>
+---@type table<ULuaBehaviorTreeTask, SKCombatAttackTaskState>
 local TaskStates = setmetatable({}, {
     __mode = "k",
 })
@@ -85,12 +85,12 @@ local function try_start_attack(state, controller)
 end
 
 ---验证目标距离并创建本次攻击任务状态；朝向已经满足时立即启动攻击。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|nil 当前行为树所属控制器。
 ---@param pawn APawn|nil 当前控制器拥有的 Pawn。
 ---@param blackboard UBlackboardComponent|nil 当前行为树黑板。
 ---@param configuration string 节点配置字符串。
----@return string result Failed 或 InProgress。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；Failed 或 InProgress。
 function SKCombatAttack.Execute(
     task,
     controller,
@@ -98,7 +98,7 @@ function SKCombatAttack.Execute(
     blackboard,
     configuration)
     if controller == nil or pawn == nil or blackboard == nil then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local target_actor = blackboard:GetValueAsObject(TargetKeyName)
@@ -107,7 +107,7 @@ function SKCombatAttack.Execute(
     if target_actor == nil
         or combat_component == nil
         or pawn:GetHorizontalDistanceTo(target_actor) > config.AttackRange then
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local state = {
@@ -127,19 +127,19 @@ function SKCombatAttack.Execute(
         config.FacingAngleDegrees) == true
         and try_start_attack(state, controller) ~= true then
         TaskStates[task] = nil
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
-    return "InProgress"
+    return UE.ELuaBehaviorTreeTaskResult.InProgress
 end
 
 ---等待 AI 转正后启动攻击，并在攻击及其反应动画完全结束后完成节点。
----@param task USekiroLuaBehaviorTreeTask 当前运行时 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前运行时 Task 实例。
 ---@param controller AAIController|nil 当前行为树所属控制器。
 ---@param pawn APawn|nil 当前控制器拥有的 Pawn。
 ---@param blackboard UBlackboardComponent|nil 当前行为树黑板。
 ---@param _configuration string Execute 已经解析的节点配置。
 ---@param delta_seconds number 当前行为树 Tick 间隔，单位秒。
----@return string result InProgress、Succeeded 或 Failed。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；InProgress、Succeeded 或 Failed。
 function SKCombatAttack.Tick(
     task,
     controller,
@@ -150,27 +150,27 @@ function SKCombatAttack.Tick(
     local state = TaskStates[task]
     if state == nil or controller == nil or pawn == nil or blackboard == nil then
         TaskStates[task] = nil
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     local current_target = blackboard:GetValueAsObject(TargetKeyName)
     if current_target == nil or current_target ~= state.TargetActor then
         TaskStates[task] = nil
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     state.ElapsedSeconds =
         state.ElapsedSeconds + math.max(delta_seconds or 0.0, 0.0)
     if state.ElapsedSeconds >= MaximumTaskDurationSeconds then
         TaskStates[task] = nil
-        return "Failed"
+        return UE.ELuaBehaviorTreeTaskResult.Failed
     end
 
     if state.bAttackStarted ~= true then
         if pawn:GetHorizontalDistanceTo(current_target)
             > state.Config.AttackRange + 30.0 then
             TaskStates[task] = nil
-            return "Failed"
+            return UE.ELuaBehaviorTreeTaskResult.Failed
         end
 
         controller:StopMovement()
@@ -180,13 +180,13 @@ function SKCombatAttack.Tick(
             state.Config.FacingAngleDegrees) == true then
             if try_start_attack(state, controller) ~= true then
                 TaskStates[task] = nil
-                return "Failed"
+                return UE.ELuaBehaviorTreeTaskResult.Failed
             end
         elseif state.ElapsedSeconds >= state.Config.FacingWaitSeconds then
             TaskStates[task] = nil
-            return "Failed"
+            return UE.ELuaBehaviorTreeTaskResult.Failed
         end
-        return "InProgress"
+        return UE.ELuaBehaviorTreeTaskResult.InProgress
     end
 
     local combat_component = state.CombatComponent
@@ -194,18 +194,18 @@ function SKCombatAttack.Tick(
     if combat_state == UE.ESKCombatActionState.Neutral
         and combat_component:IsCombatAnimationPlaying() ~= true then
         TaskStates[task] = nil
-        return "Succeeded"
+        return UE.ELuaBehaviorTreeTaskResult.Succeeded
     end
-    return "InProgress"
+    return UE.ELuaBehaviorTreeTaskResult.InProgress
 end
 
 ---中止行为树攻击节点时只释放任务状态，不强行截断已经进入不可取消区间的战斗动画。
----@param task USekiroLuaBehaviorTreeTask 当前被中止的 Task 实例。
+---@param task ULuaBehaviorTreeTask 当前被中止的 Task 实例。
 ---@param _controller AAIController|nil 当前行为树所属控制器。
 ---@param _pawn APawn|nil 当前控制器拥有的 Pawn。
 ---@param _blackboard UBlackboardComponent|nil 当前行为树黑板。
 ---@param _configuration string 当前节点配置。
----@return string result 固定返回 Succeeded，同步完成 Abort。
+---@return userdata|number result ELuaBehaviorTreeTaskResult 原生枚举；固定返回 Succeeded，同步完成 Abort。
 function SKCombatAttack.Abort(
     task,
     _controller,
@@ -213,7 +213,7 @@ function SKCombatAttack.Abort(
     _blackboard,
     _configuration)
     TaskStates[task] = nil
-    return "Succeeded"
+    return UE.ELuaBehaviorTreeTaskResult.Succeeded
 end
 
 return SKCombatAttack

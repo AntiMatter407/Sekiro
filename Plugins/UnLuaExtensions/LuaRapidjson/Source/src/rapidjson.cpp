@@ -1,4 +1,4 @@
-#include <limits>
+﻿#include <limits>
 #include <cstdio>
 #include <vector>
 #include <algorithm>
@@ -33,7 +33,15 @@
 #include "file.hpp"
 #include "StringStream.hpp"
 
-using namespace rapidjson;
+using rapidjson::AutoUTFInputStream;
+using rapidjson::Document;
+using rapidjson::FileReadStream;
+using rapidjson::FileWriteStream;
+using rapidjson::PrettyWriter;
+using rapidjson::SchemaDocument;
+using rapidjson::SchemaValidator;
+using rapidjson::StringBuffer;
+using rapidjson::Writer;
 
 #ifndef LUA_RAPIDJSON_VERSION
 #define LUA_RAPIDJSON_VERSION "scm"
@@ -129,12 +137,12 @@ static int json_load(lua_State* L)
 
 struct Key
 {
-	Key(const char* k, SizeType l) : key(k), size(l) {}
+	Key(const char* k, rapidjson::SizeType l) : key(k), size(l) {}
 	bool operator<(const Key& rhs) const {
 		return strcmp(key, rhs.key) < 0;
 	}
 	const char* key;
-	SizeType size;
+	rapidjson::SizeType size;
 };
 
 
@@ -181,7 +189,7 @@ private:
 			return;
 		case LUA_TSTRING:
 			s = lua_tolstring(L, idx, &len);
-			writer->String(s, static_cast<SizeType>(len));
+			writer->String(s, static_cast<rapidjson::SizeType>(len));
 			return;
 		case LUA_TTABLE:
 			return encodeTable(L, writer, idx, depth + 1);
@@ -238,7 +246,7 @@ private:
 			{
 				size_t len = 0;
 				const char* key = lua_tolstring(L, -2, &len);
-				keys.push_back(Key(key, static_cast<SizeType>(len)));
+				keys.push_back(Key(key, static_cast<rapidjson::SizeType>(len)));
 			}
 
 			// pop value, leaving original key
@@ -264,7 +272,7 @@ private:
 			{
 				size_t len = 0;
 				const char* key = lua_tolstring(L, -2, &len);
-				writer->Key(key, static_cast<SizeType>(len));
+				writer->Key(key, static_cast<rapidjson::SizeType>(len));
 				encodeValue(L, writer, -1, depth);
 			}
 
@@ -289,7 +297,7 @@ private:
 		std::vector<Key>::const_iterator e = keys.end();
 		for (; i != e; ++i)
 		{
-			writer->Key(i->key, static_cast<SizeType>(i->size));
+			writer->Key(i->key, static_cast<rapidjson::SizeType>(i->size));
 			lua_pushlstring(L, i->key, i->size); // [key]
 			lua_gettable(L, idx); // [value]
 			encodeValue(L, writer, -1, depth);

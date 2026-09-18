@@ -49,6 +49,7 @@ public class SekiroAIBridge : ModuleRules
             // Animation Blueprint 编辑
             "AnimGraph",
             "AnimGraphRuntime",
+            "PoseSearch",
 
             // Physics Asset 创建
             "PhysicsUtilities",

@@ -12,7 +12,7 @@ Lua BehaviorTree 之上补齐双向战斗闭环。核心不是继续向弦一郎
 先接入角色 GAS 数值基础，再新增两个通用 Gameplay 组件：
 
 - `USKAbilitySystemComponent` 与 AttributeSet：生命、上限、攻击、护甲、架势等数值的唯一存储与效果入口；
-- `USKSurvivalComponent`：后续管理生命轮次、死亡、回生及躯干崩溃/恢复；不配置或保存生命/躯干数值；
+- `USKSurvivalComponent`：管理生命轮次、死亡、回生及躯干崩溃/恢复；不配置或保存生命/躯干数值；
 - `USKBossEncounterComponent`：Boss 阶段、忍杀节点、转换中和 Encounter 结束的唯一权威。
 
 继续复用并增强：
@@ -30,7 +30,7 @@ Lua BehaviorTree 之上补齐双向战斗闭环。核心不是继续向弦一郎
 |------|----------|
 | 生命、上限、攻击、护甲及全部躯干数值参数 | GAS AttributeSet |
 | 数值效果和无敌标签 | GAS AbilitySystemComponent / GameplayEffect |
-| 死亡、回生、生命轮次、躯干崩溃状态 | 后续 `USKSurvivalComponent` |
+| 死亡、回生、生命轮次、躯干崩溃状态 | `USKSurvivalComponent` |
 | 防御姿态、崩溃受击动画 | `USKCombatComponent` 与 Lua |
 | 战斗动作和 Serial | `USKCombatComponent` |
 | 武器攻击窗口和已命中集合 | `ASKWeapon`，由 CombatComponent 控制 |
@@ -87,7 +87,7 @@ BossEncounter.OnPhaseChanged → BossPhase / PhasePending → Phase Branch
 
 ### 4.1 命中请求
 
-建议在 `Source/Sekiro/Combat/SKCombatTypes.h` 新增：
+`Source/Sekiro/Combat/SKCombatTypes.h` 的统一请求由攻击者组件签发，核心字段如下（完整反射声明以代码为准）：
 
 ```cpp
 USTRUCT(BlueprintType)
@@ -98,6 +98,8 @@ struct SEKIRO_API FSKCombatHitRequest
     TObjectPtr<AActor> SourceActor = nullptr;
     TObjectPtr<AActor> TargetActor = nullptr;
     int32 SourceActionSerial = 0;
+    int64 SourceLifeSerial = 0;
+    int64 HitSourceSerial = 0;
     ESKIncomingAttackType AttackType = ESKIncomingAttackType::Light;
     ESKCombatDamageChannel DamageChannel = ESKCombatDamageChannel::Melee;
     float HealthDamage = 0.f;
@@ -112,9 +114,11 @@ struct SEKIRO_API FSKCombatHitRequest
 
 - Source/Target 必须有效且不同；
 - HealthDamage/PostureDamage 必须为有限非负数；
-- SourceActionSerial 非零时必须仍有效；
+- 来源必须通过 CombatComponent 签发有效 `HitSourceSerial`，并匹配来源、生命轮次、攻击类型、数值和通道；调用者不能随意构造一个有效序号绕过来源校验；
+- 近战票据绑定当前动作与碰撞窗口，动作结束/失效后拒绝；投射物在发射时校验动作并锁存生命轮次，允许已发射的箭在正常收招/换招后继续飞行，但死亡、回生和来源失效会使其不可结算；
 - Request 是一次接触事实，不保存 UObject 以外的运行策略；
 - Weapon、Projectile 和后续危险攻击都使用同一结构。
+- 同一个来源票据对同一个目标只允许一次受理接触，包含格挡、弹刀和闪避；拒绝的非法请求不能修改任何资源。两边组件在结算过程中阻止重入，避免委托嵌套造成重复命中。
 
 ### 4.2 命中结果
 
@@ -135,20 +139,43 @@ struct SEKIRO_API FSKCombatHitResult
 {
     GENERATED_BODY()
 
+    ESKCombatHitResultCode Code = ESKCombatHitResultCode::Rejected;
     ESKCombatHitOutcome Outcome = ESKCombatHitOutcome::Ignored;
     float AppliedHealthDamage = 0.f;
     float AppliedPostureDamage = 0.f;
     bool bPostureBroken = false;
     bool bKilled = false;
     int32 TargetActionSerial = 0;
-    FName ResultTag = NAME_None;
+    FName RejectionReason = NAME_None;
+    FSKNumericResult Numeric;
 };
 ```
 
 `PostureBroken` 和 `Killed` 是结果标志，不与接触 Outcome 混成互斥枚举。按 Survival 设计，同笔致死并打满躯干时死亡优先，不启动新崩溃。
 `Killed` 表示本次导致进入 Dying，不代表 Boss 已最终击败或不能回生；奖励/阶段结束不能仅据此标志决定。
+结果另记录攻击方实际躯干反馈及崩溃标志，不把目标与来源的两个 ASC 声称为可回滚的跨角色事务。
 
-### 4.3 事件映射
+### 4.3 纯裁决、复合提交与演出边界
+
+1. Weapon 开窗时从 Lua `ResolveOutgoingHealthDamage` 读取源 GAS `AttackPower`；Projectile 保留现有 Lua 伤害参数。原生碰撞端不再保存固定 `100` 伤害路径。
+2. `EvaluateCombatHit(Request)` 只读判断 Hit/Guarded/Deflected/Dodged，返回最终生命伤害与攻守双方的姿态语义，不播放 Montage、不写资源、不改动作号。
+3. `Survival.EvaluatePostureImpact(Reason, AttackType, AdditionalDamage)` 只读 GAS 全量参数，计算衰减与封顶；附加姿态在封顶之前累加，不能绕过成功弹刀的非崩溃上限。已经崩溃的目标返回合法零姿态，生命通道仍可结算。
+4. 目标通过 `ApplySurvivalImpact` 向 ASC 一次提交 Health/Posture，沿用逐通道免疫与死亡优先规则。数值回执保留真实 `Applied/NoChange/PolicyRejected` 与通道原因；免疫不等于非法接触，不能因生命免疫顺带阻断原本允许的姿态通道。
+5. 目标提交受理后，再处理攻击者姿态反馈。由于目标提交的委托可能修改攻击者资源，反馈前必须重新读取来源快照并计算封顶，同时再次校验生命轮次。该反馈是独立来源 ASC 的提交，不能回滚已经提交的目标伤害；反馈失败需保留诊断信息，不能伪造成功增加值。
+6. 最后调用 `HandlePostureImpactCommitted` 重置恢复计时、发布真实结果事件，并通过 `HandleCombatHitCommitted` 选择演出。演出只消费实际结果，不再调用旧 `ApplyPostureImpact`，动画失败也不能把弹刀改成普通命中。
+
+Hit 使用 `DeflectFailed` 姿态增长语义，Guarded 使用 `Guarded`，Deflected 使用 `DeflectSuccess`；攻击方对应 `AttackSuccess/AttackGuarded/AttackDeflected`。这些语义仅选取已有 GAS 参数，不在 Combat Lua 内复制姿态公式。
+
+旧 `HandlePostureImpact/ApplyPostureImpact` 保留给既有独立姿态演示入口，真实 Weapon/Projectile 不再使用；纯计算与提交后路径共用同一 Survival 公式。
+
+当前边界：
+
+- 阵营过滤使用引擎 `IGenericTeamAgentInterface` 已配置的有效 TeamId；`NoTeam` 不当作全员同队，完整阵营身份配置仍待后续。
+- 闪避沿用已有 Dodge/Step 状态，精确无敌帧曲线属于后续动作窗口基建，本轮不声称恢复原版帧数。
+- 未配置护甲曲线或招式倍率前不自造伤害公式；本轮近战伤害来自 GAS AttackPower，投射物来自已有 Lua Profile。GAS 的通用护甲曲线接口保持可用，完整配表另行接入。
+- 提交后的演出校验动作号；迟到箭可以造成合法伤害，但不得以旧动作反馈抢占射手的新动作。
+
+### 4.4 事件映射
 
 | HitResult/玩法事实 | 事件接收者 | 事件类型 |
 |-------------------|------------|----------|
@@ -160,7 +187,7 @@ struct SEKIRO_API FSKCombatHitResult
 | 架势崩溃/强制受击 | 反应执行者 | `ReactionRequested` |
 | 目标/路径/阶段事实失效 | 需要重新决策的 AI | `ForceReplan` |
 
-事件只描述事实。ReactionRouter 决定是否响应、选哪个动作以及优先级。
+事件只描述事实。ReactionRouter 决定是否响应、选哪个动作以及优先级。ProjectileImpact 沿用只发受击方的既有约定，避免射手把自己发射的箭识别为来袭；攻击方仍通过提交后通知消费弹刀反馈。
 
 ## 5. GAS 数值基础与生命、躯干状态组件
 
@@ -200,32 +227,35 @@ SurvivalComponent 不重新裁决 Guard/Deflect，不计算护甲，C++ 不选�
 
 ### 6.1 原子结算入口
 
-新增 BlueprintNativeEvent：
+统一入口为不可由 Lua 覆写提交过程的原生 `BlueprintCallable`：
 
 ```text
 ResolveCombatHit(Request) → Result
 ```
 
-推荐顺序：
+实际结算顺序：
 
-1. 验证对象、有限值、阵营和 SourceActionSerial；
-2. 若目标死亡，返回 Ignored；
-3. 检查无敌和闪避窗口；
-4. Lua 根据 GuardHeld、攻击方向、Deflect 窗口和 AttackType 决定 Outcome；
-5. 计算最终生命伤害，将攻防结果/攻击类型交给 Survival，后者读取 GAS 参数计算躯干变化并形成复合资源请求；
-6. Outcome 允许时经 Survival / GAS GameplayEffect 提交数值，并按最终快照收敛状态；
-7. 组装 Result；
-8. 发布 WeaponContact/DamageReceived/ReactionRequested；
-9. 返回同一个权威结果给 Weapon/Projectile。
+1. 验证游戏线程、对象、世界、权限、有限值、阵营与来源票据；
+2. 校验双方 Survival 就绪、存活以及生命轮次；为双方 Combat 设置结算重入保护；
+3. 通过只读 `EvaluateCombatHit` 取得接触结果和姿态语义。当前 Lua 使用 GuardRaise/Guarding 与 Dodge/Step 状态；方向门禁和精确窗口留到对应动作基建；
+4. 通过只读 `EvaluatePostureImpact` 取得目标与来源的姿态需求；非 Hit 结果不能携带生命伤害；
+5. 提交前重新验证来源票据和目标生命轮次，登记本票据已受理目标；
+6. 经 Survival / GAS 一次提交目标 Health/Posture，按实际回执收敛死亡/崩溃；免疫按资源通道处理，不预先把整个接触判为 Invulnerable；
+7. 重新计算并提交独立的来源姿态反馈，分别保留双方数值回执；
+8. 重置有效姿态接触的恢复计时，发布 WeaponContact/ProjectileImpact、实际 DamageReceived 及崩溃 ReactionRequested，再由 Lua 消费结果编排演出；
+9. 返回同一个权威结果给 Weapon/Projectile。非法请求返回 Rejected 和原因，规则缺失时失败关闭，不退回固定伤害。
 
-此处“原子”指一次命中只能形成一份对外结算结果；GAS 多属性修改不自带事务回滚，不能在单个属性回调中提前发布完整 HitResult。
+Lua 扩展点是 `ResolveOutgoingHealthDamage`、`EvaluateCombatHit`、`EvaluatePostureImpact` 与提交后通知，而不是整个结算函数。纯裁决不能播放动画、写资源或改变动作号。
+
+此处“原子”指目标 Health/Posture 使用同一复合入口、一次接触只形成一份对外结算结果；GAS 多属性修改不自带事务回滚，不能在单个属性回调中提前发布完整 HitResult，也不承诺攻守双方 ASC 的跨角色回滚。
 
 ### 6.2 ActionSerial 约束
 
 - `BeginCombatAction` 产生新 Serial；
 - Weapon 激活时锁存 Serial；
 - Sweep 命中时携带锁存值；
-- Serial 失效时忽略命中，不允许旧动画残留碰撞；
+- 近战 Serial 失效时忽略命中，不允许旧动画残留碰撞；
+- 投射物签发时校验动作号，离手后允许正常收招/换招，但来源死亡、回生或对象失效后拒绝；旧箭的提交后反馈不能抢占来源的新动作；
 - Abort 先失效 Serial，再关闭 Hitbox，再停止自己拥有的 Montage；
 - Montage End 只有身份和 Serial 同时匹配时才能收敛状态。
 
@@ -282,8 +312,8 @@ Attack 和 Guard 保持现有输入事件。UseItem 应发布独立 Gameplay 意
 - 到达有效姿态后进入 Guarding；
 - Guard Completed 进入 GuardLower；
 - Deflect 窗口是 Guard Started 后的短时间语义窗口；
-- 命中时根据方向、AttackType 和窗口返回 Guarded 或 Deflected；
-- 攻防结果交给双方 Survival 的 `ApplyPostureImpact` 计算并更新躯干；已有 Combat 的 `HandlePostureImpact` 若保留只作转发；
+- 当前根据 GuardRaise/Guarding 返回 Deflected 或 Guarded，后续补方向、AttackType 与精确窗口约束；
+- 攻防结果交给双方 Survival 的纯 `EvaluatePostureImpact`，由统一原生命中入口提交资源；已有 Combat 的 `HandlePostureImpact` 仅保留给独立姿态演示入口，不参与真实 Weapon/Projectile 结算；
 - Deflect 产生 WeaponContact，供 Boss Kengeki 路由消费。
 
 ### 8.3 Dodge
@@ -415,6 +445,15 @@ InvalidateAction
 回生不使用上述普通 Reset 序列：按 Survival 的 Begin/Complete/Cancel 协议执行，不能在 Dead 状态直接调用普通 RestoreHealth 或 ResetPosture。
 世界 Reset 同样需要专门的受控资源入口，不得借重复初始化绕过生命周期门禁。
 
+### 12.1 原版战斗 UI 独立子需求
+
+[原版战斗 UI](original-combat-ui.md) 对应父任务 10.5：从原版游戏资产提取敌我血量条、架势条和锁定素材，按原版布局实现显示。
+复用现有 HUD/UIManager；资源条只读 GAS/Survival，锁定 UI 保留 CameraManager 目标和投影，只替换程序绘制外观。
+原版图集与锁定素材已导入为两张 UE Texture2D，主要坐标/UV 已核查，基础 HUD/Lua 绑定与 C++ 导入窗口已实现并编译；资产设置/来源与保存结果已核对。完整原版显隐、成长条长和动画仍待后续复原，尚未运行验收。
+普通敌人资源条与 Boss 固定 HUD 分别处理展示来源，不把所有敌方显示对象强制等同锁定目标。
+可通过 LuaGameplay 顶层菜单增加独立资源导入功能，通用编辑器能力留在插件，项目 HUD 与角色规则留在 Source/Sekiro 和项目 Lua。
+资源提取及玩家 HUD 可在 GAS/Survival 之后先实施；完整普通敌人受击显示和 Boss 阶段装饰分别依赖命中协议与 Encounter 系统。
+
 ## 13. 文件变更规划
 
 ### 13.1 预计新增
@@ -428,8 +467,10 @@ InvalidateAction
 | `Source/Sekiro/Combat/SKBossEncounterComponent.h/.cpp` | Boss 阶段、忍杀节点和 Encounter 生命周期 |
 | `Content/Script/Gameplay/Sekiro/AbilitySystem/**` | GAS 项目初始参数 |
 | `Content/Script/Gameplay/Sekiro/Combat/SKBossEncounterComponent.lua` | 项目 Boss 阶段工作流 |
-| `Script/tests/test_combat_hit_contract.py` | 命中协议静态契约 |
+| `Source/Sekiro/Tests/SKCombatHitTestComponent.h/.cpp`、`SKSurvivalTests.cpp` | 原生命中票据、资源提交与事件契约测试，当前仅编译 |
+| `Script/tests/lua/test_combat_hit_rules.lua` | 命中纯裁决、姿态封顶、提交后演出规则测试，当前仅语法编译 |
 | `Script/tests/lua/test_player_boss_combat_foundation.lua` | 玩家/Boss 双向规则离线测试 |
+| `Content/UI/Combat/**`、`Content/Script/Gameplay/Sekiro/UI/CombatHUDStyle.lua`（规划） | 原版血量/架势/锁定素材、Widget 及项目布局配置，详见独立 UI 设计 |
 
 ### 13.2 预计修改
 
@@ -445,7 +486,7 @@ InvalidateAction
 | `Content/Script/AI/Genichiro/BT_Genichiro.lua` | Pending Decorator/Service 和阶段 Producer 契约 |
 | `Content/Script/AI/Tasks/SKGenichiro*.lua` | 统一 Hit/Reaction/Phase 状态消费 |
 
-默认不修改 `Plugins/`。若 BehaviorTree 现有 DSL 无法声明所需 Decorator/Service，应先证明缺少的是通用能力，
+除已独立规划的 Gameplay 工具及 UI 通用导入入口外，默认不修改 `Plugins/`。若 BehaviorTree 现有 DSL 无法声明所需 Decorator/Service，应先证明缺少的是通用能力，
 再单独建立插件接口子需求。
 
 ## 14. 测试策略
@@ -467,6 +508,7 @@ InvalidateAction
 - BehaviorTree/Blackboard Key、Decorator、Abort Mode 静态检查；
 - AnimBlueprint Slot、Root Motion 和语义曲线检查；
 - Weapon/Projectile 资产引用和碰撞通道检查。
+- 原版战斗 UI 的素材来源、图集映射、Widget/Material 编译与 GAS 绑定静态检查，实际视觉验收另行授权。
 
 ### 14.3 用户 PIE 测试
 
@@ -500,6 +542,8 @@ DebugFailureReason。
 每个 Batch 独立完成代码、离线测试、编译和文档更新；需要编辑器或 PIE 时按用户约定暂停。
 
 ## 16. 变更记录
+
+2026-08-26 实施补充：统一命中原生入口、来源票据、Weapon/Projectile 迁移及 Lua 纯裁决/姿态求值/提交后演出已完成。近战取 GAS AttackPower，护甲曲线与具体招式倍率仍待配表。Development UBT 与增量确认通过，Lua 仅语法编译；新增契约测试尚未执行，DebugGame 编辑器重载与场景验收仍待授权。准确验证范围见主计划任务 3.5，不能据此视为完整对战闭环验收。
 
 | 日期 | 变更 |
 |------|------|

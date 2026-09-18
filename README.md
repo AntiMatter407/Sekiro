@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Sekiro → Unreal Engine 5.2</h1>
+  <h1 align="center">Sekiro → Unreal Engine 5.8</h1>
   <p align="center">
     《只狼：影逝二度》游戏系统迁移与研究项目
     <br />
@@ -12,7 +12,7 @@
 
 ## 项目定位
 
-本项目以 Unreal Engine 5.2 重建《只狼》的角色、战斗、输入、动画和资产工作流。当前重点不是把游戏逻辑全部写死在动画蓝图或 C++ 中，而是形成一套可检查、可编译、可调试的分层架构：
+本项目是《只狼》在 Unreal Engine 5.8.2 上的升级版本，也是后续开发的主力工程。项目持续重建和扩展角色、战斗、输入、动画与资产工作流；当前重点不是把游戏逻辑全部写死在动画蓝图或 C++ 中，而是形成一套可检查、可编译、可调试的分层架构：
 
 - C++ 提供角色、移动、战斗、动画和编辑器插件的通用能力。
 - Lua 通过 UnLua 编排玩法，并以声明式 DSL 描述动画图和强类型 Transition Rule AST。
@@ -36,15 +36,15 @@
 ### 环境要求
 
 - Windows 10 / 11
-- Unreal Engine 5.2 源码版或已编译版本
+- Unreal Engine 5.8.2 源码版或已编译版本（`F:\UnrealEngine-5.8`）
 - Visual Studio 2022，安装“使用 C++ 的游戏开发”工作负载
 - PowerShell 7（推荐）
 - Blender、Yabber、DSAnimStudio 等资产工具仅在执行对应管线时需要
 
-仓库已包含项目使用的 UnLua、动画扩展、资产管理和 AI Bridge 插件。先将本机 UE5.2 根目录写入当前 PowerShell 会话：
+仓库已包含项目使用的 UnLua、动画扩展、资产管理和 AI Bridge 插件。先将本机 UE5.8 根目录写入当前 PowerShell 会话：
 
 ```powershell
-$env:UE_ENGINE_DIR = "F:\UnrealEngine-5.2"
+$env:UE_ENGINE_DIR = "F:\UnrealEngine-5.8"
 ```
 
 生成 Visual Studio 工程文件可直接右键 `Sekiro.uproject`，选择 **Generate Visual Studio project files**。随后编译编辑器目标：
@@ -56,7 +56,7 @@ $env:UE_ENGINE_DIR = "F:\UnrealEngine-5.2"
     -WaitMutex
 ```
 
-编译成功后，通过 `Sekiro.uproject` 启动编辑器。若本机项目仍绑定到另一份引擎安装，请先使用 UnrealVersionSelector 重新关联 UE5.2。
+编译成功后，通过 `Sekiro.uproject` 启动编辑器。若本机项目仍绑定到另一份引擎安装，请先使用 UnrealVersionSelector 重新关联 UE5.8.2。
 
 ## 项目结构
 

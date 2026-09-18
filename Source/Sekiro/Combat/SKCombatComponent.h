@@ -7,6 +7,7 @@
 #include "Combat/SKCombatTypes.h"
 #include "AttributeSet.h"
 #include "Character/SKSurvivalTypes.h"
+#include "Movement/SKMovementComponent.h"
 #include "UnLuaInterface.h"
 #include "SKCombatComponent.generated.h"
 
@@ -17,6 +18,18 @@ class AController;
 class ASKAIBattleProjectile;
 class UDamageType;
 class USKAbilitySystemComponent;
+
+struct FSKCombatHitSourceState
+{
+    TWeakObjectPtr<AActor> Emitter; // 实际窗口载体，销毁后票据失效
+    int64 LifeSerial = 0; // 签发时源生命轮次
+    int32 ActionSerial = 0; // 签发时源动作序号
+    ESKIncomingAttackType AttackType = ESKIncomingAttackType::Light; // 锁存攻击类型
+    ESKCombatDamageChannel Channel = ESKCombatDamageChannel::Melee; // 近战严格校验当前动作，飞行物只校验生命
+    float HealthDamage = 0.f; // 签发的基础伤害，禁止请求任意篡改
+    float PostureDamage = 0.f; // 签发的额外躯干伤害
+    TSet<TWeakObjectPtr<AActor>> ResolvedTargets; // 每个来源对每个目标最多提交一次
+};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSKCombatInputEventSignature, const FSKCombatInputEvent&, InputEvent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FSKCombatAnimationEndedSignature, int32, ActionSerial, bool, bInterrupted);
@@ -51,6 +64,26 @@ public:
     ESKWeaponContactResult ResolveIncomingWeaponContact(
         USKCombatComponent* AttackerCombat,
         ESKIncomingAttackType AttackType);
+
+    // ── 统一命中协议 ────────────────────────────────────────
+    UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "Combat|Hit")
+    float ResolveOutgoingHealthDamage(ESKIncomingAttackType AttackType) const;
+
+    UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "Combat|Hit")
+    FSKCombatHitEvaluation EvaluateCombatHit(const FSKCombatHitRequest& Request) const;
+
+    UFUNCTION(BlueprintNativeEvent, Category = "Combat|Hit")
+    void HandleCombatHitCommitted(const FSKCombatHitRequest& Request, const FSKCombatHitResult& Result, bool bAsSource);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Hit")
+    bool RegisterCombatHitSource(AActor* Emitter, ESKCombatDamageChannel Channel, float HealthDamage,
+        float PostureDamage, FSKCombatHitRequest& OutRequest);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Hit")
+    void ReleaseCombatHitSource(int64 HitSourceSerial);
+
+    UFUNCTION(BlueprintCallable, Category = "Combat|Hit")
+    FSKCombatHitResult ResolveCombatHit(const FSKCombatHitRequest& Request);
 
     /** 将一个抽象 AI 攻击请求交给 Lua 战斗规则启动。 */
     UFUNCTION(BlueprintNativeEvent, Category = "Combat|AI")
@@ -266,19 +299,16 @@ private:
     UFUNCTION()
     void HandleGASAttributesReady();
 
-    // ── AI 事件内部 ──────────────────────────────────────────
-
-    UFUNCTION()
-    void HandleOwnerTakeAnyDamage(
-        AActor* DamagedActor,
-        float Damage,
-        const UDamageType* DamageType,
-        AController* InstigatedBy,
-        AActor* DamageCauser);
+    // ── 命中内部 ────────────────────────────────────────────
+    FName ValidateCombatHitSource(const FSKCombatHitRequest& Request) const;
+    void PublishCombatHitEvents(const FSKCombatHitRequest& Request, const FSKCombatHitResult& Result,
+        USKCombatComponent* SourceCombat);
 
     // ── 动画内部 ──────────────────────────────────────────────
 
     UAnimInstance* ResolveAnimInstance() const;
+    bool AcquireCombatRootMotionOwnership();
+    void ReleaseCombatRootMotionOwnership();
     bool ResolveSequencePosition(float MontagePosition, float& OutSequencePosition) const;
     float EvaluateSequenceCurve(FName CurveName, float SequencePosition) const;
     void HandleCombatMontageEnded(UAnimMontage* Montage, bool bInterrupted, int32 EndedActionSerial);
@@ -320,10 +350,16 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<UAnimMontage> ActiveMontage; // 当前战斗组件拥有的动态 Montage
 
+    FSKRootMotionOwnerToken ActiveRootMotionOwnerToken; // 当前战斗全身 Montage 保存的排他根运动令牌
+
     UPROPERTY(Transient)
     TArray<FSKAICombatEvent> PendingAICombatEvents; // 等待 ReactionRouter 消费的通用事件
 
     TArray<FSKCombatInputEvent> PendingInputEvents; // 等待 Lua 消费的有序输入事件
+    TMap<int64, FSKCombatHitSourceState> CombatHitSources; // 本角色签发的有效窗口与飞行物
+    int64 LastHitSourceSerial = 0; // 永不复用的单调来源序号
+    bool bResolvingCombatHit = false; // 攻守双方同步结算及通知重入门禁
+    bool bCombatEndedPlay = false; // 离场后禁止注册和结算
     FSKIncomingAttackAnimationContext IncomingAttackContext; // 当前模拟来袭上下文
     int32 ActionSerial = 0; // 当前动作序列号
     int32 LastAICombatEventSerial = 0; // 最近分配的 AI 战斗事件序列号

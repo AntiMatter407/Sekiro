@@ -1,0 +1,53 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "1.0.0",
+    "FriendlyName": "Lua Editor Extensions",
+    "Description": "Project-agnostic Lua authoring and editor integration modules for Animation Blueprints, Behavior Trees, and gameplay data.",
+    "Category": "Scripting",
+    "CreatedBy": "Project Tools",
+    "EnabledByDefault": true,
+    "CanContainContent": false,
+    "IsBetaVersion": true,
+    "Plugins": [
+        {
+            "Name": "UnLua",
+            "Enabled": true
+        },
+        {
+            "Name": "AnimationWarping",
+            "Enabled": true
+        },
+        {
+            "Name": "Chooser",
+            "Enabled": true
+        }
+    ],
+    "Modules": [
+        {
+            "Name": "LuaAnimBlueprint",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        },
+        {
+            "Name": "LuaAnimBlueprintEditor",
+            "Type": "UncookedOnly",
+            "LoadingPhase": "Default"
+        },
+        {
+            "Name": "LuaBehaviorTree",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        },
+        {
+            "Name": "LuaBehaviorTreeEditor",
+            "Type": "UncookedOnly",
+            "LoadingPhase": "Default"
+        },
+        {
+            "Name": "LuaGameplayEditor",
+            "Type": "Editor",
+            "LoadingPhase": "PostEngineInit"
+        }
+    ]
+}

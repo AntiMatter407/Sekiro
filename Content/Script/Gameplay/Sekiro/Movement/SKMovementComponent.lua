@@ -24,6 +24,10 @@ function SKMovementComponent:Initialize(_initializer)
     self.TurnInPlaceEnterAngle = Tuning.IdleTurnEnterAngle
     self.TurnInPlaceExitAngle = Tuning.IdleTurnExitAngle
     self.MoveInputFacingThreshold = 0.1
+    self.FreeRootMotionSteeringRate = 120.0
+    self.LockedRootMotionFacingSteeringRate = 360.0
+    self.LockedRootMotionTranslationSteeringRate = 360.0
+    self.MaxRootMotionSteeringDegreesPerFrame = 6.0
     self.bTurningInPlace = false
     self.LockedCycleDirection = Direction.Cardinal.Forward
     self.LastLockOnRootMotionWorldYaw = 0.0
@@ -39,6 +43,12 @@ function SKMovementComponent:ReceiveBeginPlay()
     self.RunSpeed = 407.0
     self.SprintSpeed = 853.0
     self:SetMovementSpeedProfileForScript(self.WalkSpeed, self.RunSpeed, self.SprintSpeed)
+    -- Lua 只发布项目调参；实际修正由 CharacterMovement 的唯一 PostConvert Coordinator 完成。
+    self:SetRootMotionSteeringSettingsForScript(
+        self.FreeRootMotionSteeringRate,
+        self.LockedRootMotionFacingSteeringRate,
+        self.LockedRootMotionTranslationSteeringRate,
+        self.MaxRootMotionSteeringDegreesPerFrame)
     LuaLog.Debug(Debug, "SKMovementComponent", "ReceiveBeginPlay", "movement property overrides applied")
 end
 
@@ -156,7 +166,44 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
     self:SetMovementSpeedProfileForScript(self.WalkSpeed, self.RunSpeed, self.SprintSpeed)
     self:SetMaxWalkSpeedForScript(self:ResolveMaxWalkSpeed())
 
-    -- ActorYaw 只由本脚本更新，关闭 CharacterMovement 的两套内置自动旋转，避免同帧争抢所有权。
+    -- 正式 Intent 在原生移动求值前整体提交；只有装配了轨迹组件的角色参与，Classic 不创建组件。
+    -- Gait/Stance 是输入层持久发布的独立请求，不从当前速度档位或角色已经实现的蹲伏事实反推。
+    -- 因此输入释放只清空 MoveIntent，不会把期望动画族错误重置为 Idle。
+    local owner = self:GetOwner()
+    local trajectory = owner:GetComponentByClass(UE.USKMotionMatchingTrajectoryComponent.StaticClass())
+    if UE.UKismetSystemLibrary.IsValid(trajectory) then
+        local intent = UE.FSKMotionMatchingIntentInput()
+        intent.RequestedGait = self.RequestedMotionMatchingGait
+        intent.RequestedStance = self.RequestedMotionMatchingStance
+
+        local input_x = self:GetMoveInputX() or 0
+        local input_y = self:GetMoveInputY() or 0
+        local controller_yaw = math.rad(self:GetControllerYawOrFallback(self:GetOwnerYaw()))
+        -- 输入 X 为右、Y 为前；这里只旋转到世界平面，不归一化、不二次过滤死区。
+        local cos_yaw = math.cos(controller_yaw)
+        local sin_yaw = math.sin(controller_yaw)
+        intent.MoveIntentWorldDirection = UE.FVector(
+            input_y * cos_yaw - input_x * sin_yaw,
+            input_y * sin_yaw + input_x * cos_yaw,
+            0)
+        intent.MoveIntentAmount = self:GetMoveInputAmount() or 0
+        intent.bHasFacingTarget = self:IsLockedOn() == true and self:HasLockTargetYaw() == true
+        intent.RotationMode = intent.bHasFacingTarget == true
+                and UE.ESKMotionMatchingRotationMode.Locked
+                or UE.ESKMotionMatchingRotationMode.Free
+        intent.DesiredFacingYaw = intent.bHasFacingTarget == true
+                and self:GetLockTargetYawOrFallback(self:GetOwnerYaw())
+                or self:GetOwnerYaw()
+
+        -- 提交失败保留原快照；仅在失败边沿输出，避免每帧刷屏，也不回退到另一套提交接口。
+        local accepted = trajectory:SubmitMotionMatchingIntent(intent) == true
+        if accepted ~= true and self.bMotionMatchingIntentSubmitFailed ~= true then
+            LuaLog.Debug(true, "SKMovementComponent", "SubmitIntent", "Motion Matching intent submission rejected")
+        end
+        self.bMotionMatchingIntentSubmitFailed = accepted ~= true
+    end
+
+    -- Classic 继续由本脚本分配 ActorYaw；Motion Matching 的原生门禁会把两项强制保持为 false。
     self:SetMovementRotationSettingsForScript(false, false)
 
     local has_desired_yaw, desired_move_yaw = self:PublishMoveFacingSnapshot()
@@ -201,6 +248,16 @@ function SKMovementComponent:UpdateMovementLogic(delta_seconds)
         end
         return true
     end
+
+    if UE.UKismetSystemLibrary.IsValid(trajectory) then
+        -- Motion Matching 普通移动只发布 DesiredMoveYaw/DesiredFacingYaw；本阶段尚未建立 Coordinator，
+        -- 因此宁可保留动画原始根旋转，也不允许 Lua ActorYaw 或 Classic 平移重定向提前争抢所有权。
+        self:SetLockOnLocomotionSnapshotForScript(false, Direction.Cardinal.Forward)
+        self:SetRootMotionDirectionWarpingForScript(false, 0.0)
+        self.bHasLastLockOnRootMotionWorldYaw = false
+        return true
+    end
+
     local locked_locomotion = self:IsLockedOn()
         and self:HasLockTargetYaw()
         and has_desired_yaw

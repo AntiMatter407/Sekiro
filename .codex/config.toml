@@ -2,3 +2,22 @@ sandbox_mode = "workspace-write"
 
 [sandbox_workspace_write]
 network_access = true
+
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+ANTHROPIC_BASE_URL = "http://127.0.0.1:4000"
+ANTHROPIC_AUTH_TOKEN = ""
+ANTHROPIC_API_KEY = "anything"
+ANTHROPIC_MODEL = "claude-deepseek-v4-pro"
+ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-deepseek-v4-pro"
+ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-qwen-plus"
+ANTHROPIC_DEFAULT_HAIKU_MODEL = "claude-glm-4-flash"
+ANTHROPIC_DEFAULT_FABLE_MODEL = "claude-qwen3-coder-plus"
+ANTHROPIC_CUSTOM_MODEL_OPTION = "claude-glm-5.2"
+ANTHROPIC_CUSTOM_MODEL_OPTION_NAME = "GLM 5.2"
+ANTHROPIC_CUSTOM_MODEL_OPTION2 = "claude-qwen-max"
+ANTHROPIC_CUSTOM_MODEL_OPTION_NAME2 = "Qwen Max"
+UE_ENGINE_DIR = "F:/UnrealEngine-5.2"
+SEKIRO_GAME_DIR = "F:/SteamLibrary/steamapps/common/Sekiro"

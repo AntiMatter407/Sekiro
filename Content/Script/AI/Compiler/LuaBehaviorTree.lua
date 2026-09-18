@@ -1,7 +1,7 @@
 -- Lua 类型：纯 Lua 工具模块。负责声明通用行为树 DSL 与强类型 IR，不创建 UObject、不保存资产。
 
 ---@class LuaBehaviorTreeValue
----@field Type string 显式 IR 类型标签。
+---@field Type number 原生 ELuaBehaviorTreeValueType 类型标签。
 ---@field Value any 与类型标签对应的原始值。
 
 ---@class LuaBehaviorTreeSourceLocation
@@ -64,13 +64,14 @@
 ---@field DeclareBlackboard fun(self: LuaBehaviorTreeDefinition, blackboard: LuaBehaviorTreeDefinition):nil|nil Blackboard 声明回调。
 
 local Value = {}
+local ValueType = UE.ELuaBehaviorTreeValueType
 local Node = {}
 Node.__index = Node
 local Definition = {}
 Definition.__index = Definition
 
 ---创建一个显式类型值，禁止编译器根据 Lua 原生类型猜测 FProperty。
----@param type_name string C++ importer 支持的稳定类型标签。
+---@param type_name number C++ importer 支持的原生 ELuaBehaviorTreeValueType。
 ---@param value any 标签对应的值。
 ---@return LuaBehaviorTreeValue typed_value 强类型 IR 值。
 local function typed_value(type_name, value)
@@ -84,91 +85,92 @@ end
 ---@param value boolean 布尔值。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Bool(value)
-    return typed_value("Bool", value)
+    return typed_value(ValueType.Bool, value)
 end
 
 ---创建 Integer 强类型值。
 ---@param value number 整数值。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Integer(value)
-    return typed_value("Integer", value)
+    return typed_value(ValueType.Integer, value)
 end
 
 ---创建 Float 强类型值。
 ---@param value number 浮点值。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Float(value)
-    return typed_value("Float", value)
+    return typed_value(ValueType.Float, value)
 end
 
 ---创建 String 强类型值。
 ---@param value string 字符串值。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.String(value)
-    return typed_value("String", value)
+    return typed_value(ValueType.String, value)
 end
 
 ---创建 Name 强类型值。
 ---@param value string FName 文本。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Name(value)
-    return typed_value("Name", value)
+    return typed_value(ValueType.Name, value)
 end
 
 ---创建 Text 强类型值。
 ---@param value string 本地化源文本。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Text(value)
-    return typed_value("Text", value)
+    return typed_value(ValueType.Text, value)
 end
 
 ---创建 Enum 强类型值。
----@param value string 枚举成员名称。
+---@param value number UnLua 暴露的原生 UENUM 成员值，例如 UE.EPathFollowingRequestResult.RequestSuccessful。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Enum(value)
-    return typed_value("Enum", value)
+    assert(type(value) == "number", "Enum 强类型值必须直接传入 UE.EEnumType.Member")
+    return typed_value(ValueType.Enum, value)
 end
 
 ---创建硬对象引用强类型值。
 ---@param path string UObject 路径；空字符串表示 nullptr。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Object(path)
-    return typed_value("Object", path)
+    return typed_value(ValueType.Object, path)
 end
 
 ---创建软对象引用强类型值。
 ---@param path string UObject 软路径。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.SoftObject(path)
-    return typed_value("SoftObject", path)
+    return typed_value(ValueType.SoftObject, path)
 end
 
 ---创建硬类引用强类型值。
 ---@param path string UClass 路径；空字符串表示 nullptr。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Class(path)
-    return typed_value("Class", path)
+    return typed_value(ValueType.Class, path)
 end
 
 ---创建软类引用强类型值。
 ---@param path string UClass 软路径。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.SoftClass(path)
-    return typed_value("SoftClass", path)
+    return typed_value(ValueType.SoftClass, path)
 end
 
 ---创建 Struct 强类型值，每个字段仍必须使用 Value 构造器。
 ---@param fields table<string, LuaBehaviorTreeValue> 结构体字段。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Struct(fields)
-    return typed_value("Struct", fields)
+    return typed_value(ValueType.Struct, fields)
 end
 
 ---创建 Array 强类型值，每个元素仍必须使用 Value 构造器。
 ---@param items LuaBehaviorTreeValue[] 数组元素。
 ---@return LuaBehaviorTreeValue typed_value 强类型值。
 function Value.Array(items)
-    return typed_value("Array", items)
+    return typed_value(ValueType.Array, items)
 end
 
 ---捕获声明调用点；行号只用于诊断，不参与稳定 ID。
@@ -197,7 +199,7 @@ local function compile_properties(properties)
     local result = {}
     for index, name in ipairs(names) do
         local value = properties[name]
-        assert(type(value) == "table" and type(value.Type) == "string",
+        assert(type(value) == "table" and type(value.Type) == "number",
             "属性 " .. name .. " 必须使用 LuaBehaviorTree.Value 构造器")
         result[#result + 1] = {
             Name = name,
@@ -284,7 +286,7 @@ function Node:LuaTask(name, lua_module_name, configuration)
     assert(type(lua_module_name) == "string" and lua_module_name ~= "",
         "LuaTask 的 lua_module_name 不能为空")
     return self:Task(
-        "/Script/SekiroLuaBehaviorTreeExt.SekiroLuaBehaviorTreeTask",
+        "/Script/LuaBehaviorTree.LuaBehaviorTreeTask",
         name,
         {
             LuaModuleName = Value.String(lua_module_name),

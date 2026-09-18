@@ -45,14 +45,19 @@
 #include "Serialization/JsonWriter.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Misc/FileHelper.h"
+#include "Misc/EngineVersionComparison.h"
 #include "HAL/FileManager.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
+#include "UObject/UnrealType.h"
 #include "Misc/PackageName.h"
 #include "FileHelpers.h"
 #include "Misc/Paths.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "PoseSearch/PoseSearchDatabase.h"
+#include "PoseSearch/PoseSearchIndex.h"
+#include "PoseSearch/PoseSearchSchema.h"
 
 // Commandlet 模式下资产加载辅助函数
 // 尝试多种方式加载资产：FullObjectPath、LoadPackage+FindObject、StaticLoadObject
@@ -216,16 +221,18 @@ static bool ResolveFloatCurveIdentifier(const UAnimSequence* AnimSequence, FName
 {
     if (!AnimSequence || CurveName.IsNone()) return false;
 
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    OutCurveId = FAnimationCurveIdentifier(CurveName, ERawCurveTrackTypes::RCT_Float);
+#else
     const USkeleton* Skeleton = AnimSequence->GetSkeleton();
     if (!Skeleton) return false;
-
     FSmartName SmartName;
     if (!Skeleton->GetSmartNameByName(USkeleton::AnimCurveMappingName, CurveName, SmartName))
     {
         return false;
     }
-
     OutCurveId = FAnimationCurveIdentifier(SmartName, ERawCurveTrackTypes::RCT_Float);
+#endif
     return AnimSequence->GetDataModel() && AnimSequence->GetDataModel()->FindCurve(OutCurveId) != nullptr;
 }
 
@@ -264,7 +271,7 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
     return TEXT("{"
         "\"type\":\"object\","
         "\"properties\":{"
-            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"upsert_skeleton_slot\",\"remove_state_machine\",\"add_curve\",\"set_anim_curves\",\"batch_tae_curves\",\"remove_anim_curves\",\"get_info\",\"compile\",\"setup_anim_graph\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
+            "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"add_state\",\"add_transition\",\"delete_transition\",\"add_node\",\"add_slot\",\"upsert_skeleton_slot\",\"remove_state_machine\",\"add_curve\",\"set_anim_curves\",\"batch_tae_curves\",\"remove_anim_curves\",\"get_info\",\"compile\",\"setup_anim_graph\",\"setup_motion_matching_probe\",\"pose_search_diagnostics\",\"create_blend_space\",\"set_anim_class\",\"layout\"]},"
             "\"path\":{\"type\":\"string\",\"description\":\"AnimBlueprint或BlendSpace资产路径\"},"
             "\"skeleton_path\":{\"type\":\"string\",\"description\":\"目标骨架路径\"},"
             "\"slot_name\":{\"type\":\"string\",\"description\":\"Slot 名称\"},"
@@ -284,6 +291,9 @@ FString USKAnimBlueprintTool::GetInputSchemaJson() const
             "\"loop\":{\"type\":\"boolean\",\"default\":true},"
             "\"pin_connections\":{\"type\":\"object\",\"description\":\"add_node blend_space_player: {X:VariableName, Y:VariableName}\"},"
             "\"blend_space_path\":{\"type\":\"string\",\"description\":\"setup_anim_graph: BlendSpace资产路径\"},"
+            "\"database_path\":{\"type\":\"string\",\"description\":\"setup_motion_matching_probe: Pose Search Searchable资产路径\"},"
+            "\"trajectory_variable\":{\"type\":\"string\",\"description\":\"setup_motion_matching_probe: 轨迹变量名\"},"
+            "\"active_tags_variable\":{\"type\":\"string\",\"description\":\"setup_motion_matching_probe: ActiveTags变量名\"},"
             "\"axes\":{\"type\":\"array\",\"description\":\"create_blend_space: 坐标轴 [{name,min,max,grid}]\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"min\":{\"type\":\"number\"},\"max\":{\"type\":\"number\"},\"grid\":{\"type\":\"integer\"}}}},"
             "\"samples\":{\"type\":\"array\",\"description\":\"create_blend_space: 样本 [{anim_path,x,y}]\",\"items\":{\"type\":\"object\",\"properties\":{\"anim_path\":{\"type\":\"string\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}},"
             "\"character_bp_path\":{\"type\":\"string\",\"description\":\"set_anim_class: 角色Blueprint路径\"},"
@@ -339,6 +349,8 @@ FString USKAnimBlueprintTool::Execute(const FString& ArgsJson, FString& OutError
     if (Action == TEXT("get_info"))            return HandleGetInfo(ArgsObj, OutError);
     if (Action == TEXT("compile"))             return HandleCompile(ArgsObj, OutError);
     if (Action == TEXT("setup_anim_graph"))    return HandleSetupAnimGraph(ArgsObj, OutError);
+    if (Action == TEXT("setup_motion_matching_probe")) return HandleSetupMotionMatchingProbe(ArgsObj, OutError);
+    if (Action == TEXT("pose_search_diagnostics")) return HandlePoseSearchDiagnostics(ArgsObj, OutError);
     if (Action == TEXT("create_blend_space"))  return HandleCreateBlendSpace(ArgsObj, OutError);
     if (Action == TEXT("set_anim_class"))      return HandleSetAnimClass(ArgsObj, OutError);
     if (Action == TEXT("layout"))              return HandleLayout(ArgsObj, OutError);
@@ -1144,6 +1156,300 @@ FString USKAnimBlueprintTool::HandleSetupAnimGraph(const TSharedPtr<FJsonObject>
     TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
         TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
     FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+    return Output;
+}
+
+/**
+ * 在独立 AnimBlueprint 主图中创建或更新 Motion Matching 节点，并连接继承的轨迹与标签变量。
+ * 本函数仅在编辑器游戏线程修改目标资产；节点类和 Searchable 类型通过反射加载，因此 AIBridge 不建立 PoseSearch 编译依赖。
+ * 它会替换 Root Result 的现有输入、编译并保存目标 AnimBlueprint，但不绑定 Character、不启动 PIE，也不执行运行时搜索。
+ *
+ * @param Args JSON 参数；path 为目标 AnimBlueprint，database_path 为 Searchable 资产路径，trajectory_variable 与
+ * active_tags_variable 可选且默认分别为 MotionMatchingTrajectory、LocomotionSearchTags。
+ * @param OutError 输出失败原因；成功时保持为空。
+ * @return 成功时返回包含目标资产、节点和变量名的 JSON；失败时返回空字符串。
+ */
+FString USKAnimBlueprintTool::HandleSetupMotionMatchingProbe(
+    const TSharedPtr<FJsonObject>& Args,
+    FString& OutError)
+{
+    const FString AssetPath = Args->GetStringField(TEXT("path"));
+    FString DatabasePath;
+    if (!Args->TryGetStringField(TEXT("database_path"), DatabasePath))
+    {
+        OutError = TEXT("缺少 database_path 参数");
+        return FString();
+    }
+
+    FString TrajectoryVariable = TEXT("MotionMatchingTrajectory");
+    FString ActiveTagsVariable = TEXT("LocomotionSearchTags");
+    Args->TryGetStringField(TEXT("trajectory_variable"), TrajectoryVariable);
+    Args->TryGetStringField(TEXT("active_tags_variable"), ActiveTagsVariable);
+
+    UAnimBlueprint* AnimBP = LoadAnimBlueprint(AssetPath, OutError);
+    UObject* SearchableAsset = UEditorAssetLibrary::LoadAsset(DatabasePath);
+    UClass* MotionMatchingNodeClass = LoadClass<UEdGraphNode>(
+        nullptr,
+        TEXT("/Script/PoseSearchEditor.AnimGraphNode_MotionMatching"));
+    if (!AnimBP || !SearchableAsset || !MotionMatchingNodeClass)
+    {
+        if (OutError.IsEmpty())
+        {
+            OutError = FString::Printf(
+                TEXT("Motion Matching 依赖无效: Database=%s NodeClass=%s"),
+                *GetNameSafe(SearchableAsset),
+                *GetNameSafe(MotionMatchingNodeClass));
+        }
+        return FString();
+    }
+
+    FStructProperty* RuntimeNodeProperty = CastField<FStructProperty>(
+        MotionMatchingNodeClass->FindPropertyByName(TEXT("Node")));
+    FObjectProperty* SearchableProperty = RuntimeNodeProperty
+        ? CastField<FObjectProperty>(RuntimeNodeProperty->Struct->FindPropertyByName(TEXT("Searchable")))
+        : nullptr;
+    if (!RuntimeNodeProperty || !SearchableProperty)
+    {
+        OutError = TEXT("Motion Matching 节点反射属性不完整");
+        return FString();
+    }
+    if (!SearchableAsset->IsA(SearchableProperty->PropertyClass))
+    {
+        OutError = FString::Printf(
+            TEXT("资产不是节点要求的 Searchable 类型: %s（实际 %s，要求 %s）"),
+            *DatabasePath,
+            *SearchableAsset->GetClass()->GetPathName(),
+            *SearchableProperty->PropertyClass->GetPathName());
+        return FString();
+    }
+
+    const FName TrajectoryVariableName(*TrajectoryVariable);
+    const FName ActiveTagsVariableName(*ActiveTagsVariable);
+    if (!AnimBP->ParentClass
+        || !AnimBP->ParentClass->FindPropertyByName(TrajectoryVariableName)
+        || !AnimBP->ParentClass->FindPropertyByName(ActiveTagsVariableName))
+    {
+        OutError = FString::Printf(
+            TEXT("AnimInstance 父类缺少 Probe 变量: %s / %s"),
+            *TrajectoryVariable,
+            *ActiveTagsVariable);
+        return FString();
+    }
+
+    UAnimationGraph* AnimGraph = nullptr;
+    for (UEdGraph* Graph : AnimBP->FunctionGraphs)
+    {
+        AnimGraph = Cast<UAnimationGraph>(Graph);
+        if (AnimGraph) break;
+    }
+    if (!AnimGraph)
+    {
+        for (UEdGraph* Graph : AnimBP->UbergraphPages)
+        {
+            AnimGraph = Cast<UAnimationGraph>(Graph);
+            if (AnimGraph) break;
+        }
+    }
+    if (!AnimGraph)
+    {
+        OutError = TEXT("未找到 AnimGraph");
+        return FString();
+    }
+
+    UAnimGraphNode_Root* RootNode = nullptr;
+    UEdGraphNode* MotionMatchingNode = nullptr;
+    UK2Node_VariableGet* TrajectoryGetter = nullptr;
+    UK2Node_VariableGet* ActiveTagsGetter = nullptr;
+    for (UEdGraphNode* GraphNode : AnimGraph->Nodes)
+    {
+        if (!RootNode) RootNode = Cast<UAnimGraphNode_Root>(GraphNode);
+        if (!MotionMatchingNode && GraphNode->IsA(MotionMatchingNodeClass)) MotionMatchingNode = GraphNode;
+        if (UK2Node_VariableGet* VariableGetter = Cast<UK2Node_VariableGet>(GraphNode))
+        {
+            const FName MemberName = VariableGetter->VariableReference.GetMemberName();
+            if (!TrajectoryGetter && MemberName == TrajectoryVariableName) TrajectoryGetter = VariableGetter;
+            if (!ActiveTagsGetter && MemberName == ActiveTagsVariableName) ActiveTagsGetter = VariableGetter;
+        }
+    }
+
+    if (!RootNode)
+    {
+        FGraphNodeCreator<UAnimGraphNode_Root> RootCreator(*AnimGraph);
+        RootNode = RootCreator.CreateNode();
+        RootCreator.Finalize();
+    }
+    if (!MotionMatchingNode)
+    {
+        MotionMatchingNode = NewObject<UEdGraphNode>(AnimGraph, MotionMatchingNodeClass);
+        MotionMatchingNode->CreateNewGuid();
+        MotionMatchingNode->AllocateDefaultPins();
+        AnimGraph->AddNode(MotionMatchingNode, false, false);
+        MotionMatchingNode->PostPlacedNewNode();
+    }
+
+    auto FindOrCreateVariableGetter = [AnimGraph](
+        const FName& VariableName,
+        UK2Node_VariableGet* Existing) -> UK2Node_VariableGet*
+    {
+        if (Existing) return Existing;
+        UK2Node_VariableGet* Getter = NewObject<UK2Node_VariableGet>(AnimGraph);
+        Getter->CreateNewGuid();
+        Getter->VariableReference.SetSelfMember(VariableName);
+        Getter->AllocateDefaultPins();
+        AnimGraph->AddNode(Getter, false, false);
+        Getter->PostPlacedNewNode();
+        return Getter;
+    };
+
+    TrajectoryGetter = FindOrCreateVariableGetter(TrajectoryVariableName, TrajectoryGetter);
+    ActiveTagsGetter = FindOrCreateVariableGetter(ActiveTagsVariableName, ActiveTagsGetter);
+    RootNode->NodePosX = 500;
+    RootNode->NodePosY = 0;
+    MotionMatchingNode->NodePosX = 50;
+    MotionMatchingNode->NodePosY = 0;
+    TrajectoryGetter->NodePosX = -450;
+    TrajectoryGetter->NodePosY = -100;
+    ActiveTagsGetter->NodePosX = -450;
+    ActiveTagsGetter->NodePosY = 150;
+
+    void* RuntimeNodeAddress = RuntimeNodeProperty->ContainerPtrToValuePtr<void>(MotionMatchingNode);
+    SearchableProperty->SetObjectPropertyValue(
+        SearchableProperty->ContainerPtrToValuePtr<void>(RuntimeNodeAddress),
+        SearchableAsset);
+
+    UEdGraphPin* SearchablePin = MotionMatchingNode->FindPin(TEXT("Searchable"), EGPD_Input);
+    UEdGraphPin* TrajectoryPin = MotionMatchingNode->FindPin(TEXT("Trajectory"), EGPD_Input);
+    UEdGraphPin* ActiveTagsPin = MotionMatchingNode->FindPin(TEXT("ActiveTagsContainer"), EGPD_Input);
+    UEdGraphPin* PoseOutputPin = MotionMatchingNode->FindPin(TEXT("Pose"), EGPD_Output);
+    UEdGraphPin* ResultInputPin = RootNode->FindPin(TEXT("Result"), EGPD_Input);
+    if (!SearchablePin || !TrajectoryPin || !ActiveTagsPin || !PoseOutputPin || !ResultInputPin)
+    {
+        OutError = TEXT("Motion Matching Probe 缺少必要 Pin");
+        return FString();
+    }
+    SearchablePin->DefaultObject = SearchableAsset;
+
+    auto ConnectReplacingInput = [](UEdGraphPin* OutputPin, UEdGraphPin* InputPin)
+    {
+        InputPin->BreakAllPinLinks();
+        OutputPin->MakeLinkTo(InputPin);
+    };
+    ConnectReplacingInput(TrajectoryGetter->GetValuePin(), TrajectoryPin);
+    ConnectReplacingInput(ActiveTagsGetter->GetValuePin(), ActiveTagsPin);
+    ConnectReplacingInput(PoseOutputPin, ResultInputPin);
+
+    AnimBP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(AnimBP);
+    if (AnimBP->Status == BS_Error)
+    {
+        OutError = TEXT("Motion Matching Probe AnimBlueprint 编译失败");
+        return FString();
+    }
+    if (!UEditorAssetLibrary::SaveAsset(AssetPath, false))
+    {
+        OutError = TEXT("Motion Matching Probe AnimBlueprint 保存失败");
+        return FString();
+    }
+
+    TSharedPtr<FJsonObject> ResultObject = MakeShareable(new FJsonObject());
+    ResultObject->SetStringField(TEXT("blueprint"), AssetPath);
+    ResultObject->SetStringField(TEXT("database"), DatabasePath);
+    ResultObject->SetStringField(TEXT("motion_matching_node"), MotionMatchingNode->GetFName().ToString());
+    ResultObject->SetStringField(TEXT("trajectory_variable"), TrajectoryVariable);
+    ResultObject->SetStringField(TEXT("active_tags_variable"), ActiveTagsVariable);
+    ResultObject->SetBoolField(TEXT("success"), true);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObject.ToSharedRef(), Writer);
+    return Output;
+}
+
+/**
+ * 读取 UE5.8 Pose Search Database 的公开派生索引摘要，用于核对索引规模、PCA 数组和 Schema 维度是否一致。
+ * 本函数只能在编辑器游戏线程执行；它通过 PoseSearch 公开只读 API 访问 5.8 已取消反射的 SearchIndexPrivate，
+ * 不触发搜索、不重建索引、不修改或保存资产。
+ *
+ * @param Args JSON 参数；path 为待检查的 Pose Search Database 资产路径，不接受包路径或空值。
+ * @param OutError 输出加载失败、字段布局不兼容或派生索引尚未就绪的原因；成功时保持为空。
+ * @return 成功时返回索引姿势数、数组规模、PCA 解释方差和一致性标记的 JSON；失败时返回空字符串。
+ */
+FString USKAnimBlueprintTool::HandlePoseSearchDiagnostics(
+    const TSharedPtr<FJsonObject>& Args,
+    FString& OutError)
+{
+    const FString DatabasePath = Args->GetStringField(TEXT("path"));
+    UPoseSearchDatabase* Database = Cast<UPoseSearchDatabase>(
+        UEditorAssetLibrary::LoadAsset(DatabasePath));
+    if (!Database)
+    {
+        OutError = FString::Printf(TEXT("UE5.8 Pose Search Database 加载或类型校验失败: %s"), *DatabasePath);
+        return FString();
+    }
+
+    const UE::PoseSearch::FSearchIndex& SearchIndex = Database->GetSearchIndex();
+    const UPoseSearchSchema* Schema = Database->Schema;
+    const int32 NumPoses = SearchIndex.GetNumPoses();
+    const int32 ValuesCount = SearchIndex.Values.Num();
+    const int32 PoseMetadataCount = SearchIndex.PoseMetadata.Num();
+    const int32 IndexAssetCount = SearchIndex.Assets.Num();
+    const int32 PCAValuesCount = SearchIndex.PCAValues.Num();
+    const int32 PCAProjectionCount = SearchIndex.PCAProjectionMatrix.Num();
+    const int32 MeanCount = SearchIndex.Mean.Num();
+    const int32 WeightsCount = SearchIndex.WeightsSqrt.Num();
+    const int32 DeviationCount = SearchIndex.DeviationEditorOnly.Num();
+    const int32 SchemaCardinality = Schema ? Schema->SchemaCardinality : INDEX_NONE;
+    const int32 PrincipalComponents = Database->GetNumberOfPrincipalComponents();
+    const bool bPCARequired = Database->PoseSearchMode == EPoseSearchMode::PCAKDTree;
+    const FString SearchModeName = StaticEnum<EPoseSearchMode>()->GetNameStringByValue(
+        static_cast<int64>(Database->PoseSearchMode));
+
+    const bool bFullValuesConsistent = ValuesCount > 0
+        && SchemaCardinality > 0
+        && ValuesCount == NumPoses * SchemaCardinality;
+    const bool bPCAValuesConsistent = !bPCARequired
+        || (PrincipalComponents > 0 && PCAValuesCount == NumPoses * PrincipalComponents);
+    const bool bProjectionConsistent = !bPCARequired
+        || (SchemaCardinality > 0
+            && PrincipalComponents > 0
+            && PCAProjectionCount == SchemaCardinality * PrincipalComponents);
+    const bool bSearchDataReady = bPCARequired
+        ? bPCAValuesConsistent && bProjectionConsistent
+        : bFullValuesConsistent;
+    const bool bIndexReady = NumPoses > 0 && IndexAssetCount > 0 && bSearchDataReady;
+    if (!bIndexReady)
+    {
+        OutError = FString::Printf(TEXT("Pose Search 派生索引尚未就绪: %s"), *DatabasePath);
+        return FString();
+    }
+
+    TSharedPtr<FJsonObject> ResultObject = MakeShareable(new FJsonObject());
+    ResultObject->SetBoolField(TEXT("success"), true);
+    ResultObject->SetStringField(TEXT("database"), DatabasePath);
+    ResultObject->SetStringField(TEXT("search_mode"), SearchModeName);
+    ResultObject->SetBoolField(TEXT("pca_required"), bPCARequired);
+    ResultObject->SetNumberField(TEXT("num_poses"), NumPoses);
+    ResultObject->SetNumberField(TEXT("schema_cardinality"), SchemaCardinality);
+    ResultObject->SetNumberField(TEXT("index_asset_count"), IndexAssetCount);
+    ResultObject->SetNumberField(TEXT("values_count"), ValuesCount);
+    ResultObject->SetNumberField(TEXT("pose_metadata_count"), PoseMetadataCount);
+    ResultObject->SetNumberField(TEXT("principal_components"), PrincipalComponents);
+    ResultObject->SetNumberField(TEXT("pca_values_count"), PCAValuesCount);
+    ResultObject->SetNumberField(TEXT("pca_projection_count"), PCAProjectionCount);
+    ResultObject->SetNumberField(TEXT("mean_count"), MeanCount);
+    ResultObject->SetNumberField(TEXT("weights_count"), WeightsCount);
+    ResultObject->SetNumberField(TEXT("deviation_count"), DeviationCount);
+    ResultObject->SetNumberField(TEXT("min_cost_addend"), SearchIndex.MinCostAddend);
+    ResultObject->SetNumberField(TEXT("pca_explained_variance"), SearchIndex.PCAExplainedVarianceEditorOnly);
+    ResultObject->SetBoolField(TEXT("full_values_consistent"), bFullValuesConsistent);
+    ResultObject->SetBoolField(TEXT("pca_values_consistent"), bPCAValuesConsistent);
+    ResultObject->SetBoolField(TEXT("projection_consistent"), bProjectionConsistent);
+
+    FString Output;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Output);
+    FJsonSerializer::Serialize(ResultObject.ToSharedRef(), Writer);
     return Output;
 }
 
@@ -2442,16 +2748,20 @@ FString USKAnimBlueprintTool::HandleAddCurve(const TSharedPtr<FJsonObject>& Args
         return FString();
     }
 
-    // 注册 SmartName 到骨骼
+    // 注册曲线标识；UE5.8 起曲线直接使用 FName，不再依赖 Skeleton SmartName。
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    FAnimationCurveIdentifier CurveId(CurveFName, ERawCurveTrackTypes::RCT_Float);
+#else
     FSmartName SmartName;
     Skeleton->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, CurveFName, SmartName);
+    FAnimationCurveIdentifier CurveId(SmartName, ERawCurveTrackTypes::RCT_Float);
+#endif
 
     // 选择曲线类型：int → RCIM_Constant 阶跃保持，默认 → RCIM_Linear
     FString CurveType;
     Args->TryGetStringField(TEXT("curve_type"), CurveType);
     const bool bIsIntegerCurve = CurveType.Equals(TEXT("int"), ESearchCase::IgnoreCase);
 
-    FAnimationCurveIdentifier CurveId(SmartName, ERawCurveTrackTypes::RCT_Float);
     if (!CurveId.IsValid())
     {
         OutError = TEXT("无法获取曲线标识");
@@ -2626,9 +2936,13 @@ FString USKAnimBlueprintTool::HandleSetAnimCurves(const TSharedPtr<FJsonObject>&
                 CompressionGuard = MakeUnique<UE::Anim::Compression::FScopedCompressionGuard>(AnimSequence);
             }
 
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+            FAnimationCurveIdentifier CurveId(FName(*CurveNameText), ERawCurveTrackTypes::RCT_Float);
+#else
             FSmartName SmartName;
             Skeleton->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName(*CurveNameText), SmartName);
             FAnimationCurveIdentifier CurveId(SmartName, ERawCurveTrackTypes::RCT_Float);
+#endif
             if (!CurveId.IsValid())
             {
                 ++CurvesSkipped;
@@ -3002,6 +3316,11 @@ FString USKAnimBlueprintTool::HandleBatchTaeCurves(const TSharedPtr<FJsonObject>
             if (!Sk) { ER++; continue; }
             IAnimationDataController& Ctrl = ASq->GetController();
 
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+            FAnimationCurveIdentifier IFF(FName("FrameFlags"), ERawCurveTrackTypes::RCT_Float);
+            FAnimationCurveIdentifier ICA(FName("CancelActions"), ERawCurveTrackTypes::RCT_Float);
+            FAnimationCurveIdentifier IAH(FName("AttackHitbox"), ERawCurveTrackTypes::RCT_Float);
+#else
             FSmartName SFF, SCA, SAH;
             Sk->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName("FrameFlags"), SFF);
             Sk->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, FName("CancelActions"), SCA);
@@ -3010,6 +3329,7 @@ FString USKAnimBlueprintTool::HandleBatchTaeCurves(const TSharedPtr<FJsonObject>
             FAnimationCurveIdentifier IFF(SFF, ERawCurveTrackTypes::RCT_Float);
             FAnimationCurveIdentifier ICA(SCA, ERawCurveTrackTypes::RCT_Float);
             FAnimationCurveIdentifier IAH(SAH, ERawCurveTrackTypes::RCT_Float);
+#endif
 
             TArray<FRichCurveKey> KFF = BuildKeys(*EV, TFr, JTFrameFlags, true);
             TArray<FRichCurveKey> KCA = BuildKeys(*EV, TFr, JTCancelActions, false);

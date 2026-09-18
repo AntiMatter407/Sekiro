@@ -4,7 +4,7 @@
 #include "Editor.h"
 #include "Engine/Engine.h"
 #include "HAL/PlatformMisc.h"
-#include "Misc/OutputDevice.h"
+#include "Misc/StringOutputDevice.h"
 #include "Misc/Parse.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"

@@ -1,4 +1,4 @@
-// Tencent is pleased to support the open source community by making UnLua available.
+﻿// Tencent is pleased to support the open source community by making UnLua available.
 // 
 // Copyright (C) 2019 THL A29 Limited, a Tencent company. All rights reserved.
 //
@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "Engine/CollisionProfile.h"
+#include "Misc/EngineVersionComparison.h"
 #include "CollisionHelper.h"
 
 TArray<FName> FCollisionHelper::ChannelNames;
@@ -22,9 +23,15 @@ UEnum* FCollisionHelper::TraceTypeQueryEnum;
 
 void FCollisionHelper::Initialize()
 {
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+    CollisionChannelEnum = FindFirstObject<UEnum>(TEXT("ECollisionChannel"));
+    ObjectTypeQueryEnum = FindFirstObject<UEnum>(TEXT("EObjectTypeQuery"));
+    TraceTypeQueryEnum = FindFirstObject<UEnum>(TEXT("ETraceTypeQuery"));
+#else
     CollisionChannelEnum = FindObject<UEnum>(ANY_PACKAGE, TEXT("ECollisionChannel"));
     ObjectTypeQueryEnum = FindObject<UEnum>(ANY_PACKAGE, TEXT("EObjectTypeQuery"));
     TraceTypeQueryEnum = FindObject<UEnum>(ANY_PACKAGE, TEXT("ETraceTypeQuery"));
+#endif
     check(CollisionChannelEnum && ObjectTypeQueryEnum && TraceTypeQueryEnum);
 
     if (ChannelNames.Num() > 0)

@@ -1,4 +1,4 @@
-#include "Misc/EngineVersionComparison.h"
+﻿#include "Misc/EngineVersionComparison.h"
 #include "PropertyRegistry.h"
 #include "Binding.h"
 #include "ClassRegistry.h"
@@ -11,7 +11,11 @@ namespace UnLua
     FPropertyRegistry::FPropertyRegistry(FLuaEnv* Env)
         : Env(Env)
     {
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+        PropertyCollector = FindFirstObject<UScriptStruct>(TEXT("PropertyCollector"));
+#else
         PropertyCollector = FindObject<UScriptStruct>(ANY_PACKAGE, TEXT("PropertyCollector"));
+#endif
         check(PropertyCollector);
     }
 
@@ -102,14 +106,24 @@ namespace UnLua
                 nullptr,
                 CPF_None,
                 UECodeGen_Private::EPropertyGenFlags::Bool | UECodeGen_Private::EPropertyGenFlags::NativeBool,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
+#endif
                 sizeof(bool),
                 sizeof(FPropertyCollector),
                 nullptr,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto Property = new FBoolProperty(PropertyCollector, Params);
 #endif
@@ -131,12 +145,23 @@ namespace UnLua
                 nullptr,
                 CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Int,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto Property = new FIntProperty(PropertyCollector, Params);
 #endif
@@ -158,12 +183,23 @@ namespace UnLua
                 nullptr,
                 CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Float,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto Property = new FFloatProperty(PropertyCollector, Params);
 #endif
@@ -185,12 +221,23 @@ namespace UnLua
                 nullptr,
                 CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Str,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto Property = new FStrProperty(PropertyCollector, Params);
 #endif
@@ -212,12 +259,23 @@ namespace UnLua
                 nullptr,
                 CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Name,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto Property = new FNameProperty(PropertyCollector, Params);
 #endif
@@ -239,12 +297,23 @@ namespace UnLua
                 nullptr,
                 CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Text,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto Property = new FTextProperty(PropertyCollector, Params);
 #endif
@@ -270,13 +339,24 @@ namespace UnLua
                 nullptr,
                 CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Object,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
                 nullptr,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto ObjectProperty = new FObjectProperty(PropertyCollector, Params);
             ObjectProperty->PropertyClass = Class;
@@ -296,13 +376,24 @@ namespace UnLua
                     ? ScriptStruct->GetCppStructOps()->GetComputedPropertyFlags() | CPF_HasGetValueTypeHash
                     : CPF_HasGetValueTypeHash,
                 UECodeGen_Private::EPropertyGenFlags::Struct,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                nullptr,
+                nullptr,
+                1,
+                0,
+#else
                 RF_Transient,
                 1,
                 nullptr,
                 nullptr,
                 0,
+#endif
                 nullptr,
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+                METADATA_PARAMS(0, nullptr)
+#else
                 METADATA_PARAMS(nullptr, 0)
+#endif
             };
             const auto StructProperty = new FStructProperty(PropertyCollector, Params);
             StructProperty->Struct = ScriptStruct;
@@ -312,7 +403,13 @@ namespace UnLua
         }
         else if (const auto Enum = Cast<UEnum>(Field))
         {
+#if UE_VERSION_NEWER_THAN(5, 7, 0)
+            const auto EnumProperty = new FEnumProperty(PropertyCollector, NAME_None, RF_Transient);
+            EnumProperty->SetEnum(Enum);
+            EnumProperty->PropertyFlags |= CPF_HasGetValueTypeHash;
+#else
             const auto EnumProperty = new FEnumProperty(PropertyCollector, NAME_None, RF_Transient, 0, CPF_HasGetValueTypeHash, Enum);
+#endif
             const auto UnderlyingProperty = new FByteProperty(EnumProperty, TEXT("UnderlyingType"), RF_Transient);
             Property = EnumProperty;
             Property->AddCppProperty(UnderlyingProperty);
